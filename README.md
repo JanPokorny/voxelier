@@ -5,7 +5,7 @@ furniture out of ~10 cm voxel cubes, viewed in a true isometric (orthographic)
 projection. Everything lives in a single self-contained `index.html` — no build
 step.
 
-**Live demo:** https://janpokorny.github.io/voxelier/ (deployed from `main` via GitHub Pages).
+**Live demo:** https://voxelier-xmyv5z.surge.sh
 
 ## Running
 
@@ -78,6 +78,19 @@ internet connection (it's cached afterwards).
 
 The scene autosaves to `localStorage`. Use **Export** / **Import** to move a scene
 as a JSON file, or **Clear** to wipe the room and placements (library objects are kept).
+
+## Deploying
+
+The live demo is hosted on [surge.sh](https://surge.sh) (free static hosting, works
+with private source repos since it serves the built file, not the repo). To publish
+your own copy:
+
+```
+npx surge ./ your-name.surge.sh
+```
+
+To update the existing demo URL you need the surge account it was published under
+(see the credentials shared when it was first deployed).
 
 ## Tech
 
