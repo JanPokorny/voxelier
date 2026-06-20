@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#14161b" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <title>Voxelier — Voxel Room Editor</title>
 <style>
   :root{
@@ -96,12 +100,60 @@
   #status b{color:var(--ink);font-weight:600}
   kbd{background:var(--panel-2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:1px 5px;
       font:inherit;font-size:10px;color:var(--ink)}
+
+  /* ---- touch + mobile ---- */
+  #c,#stage{touch-action:none}
+  .mobile-only{display:none}
+  #sheetbar{align-items:center;justify-content:space-between;padding:11px 14px;background:var(--panel);
+            border-bottom:1px solid var(--line)}
+  #sheetbar b{font-size:13px}
+  #sheetClose{border:1px solid var(--line);background:var(--panel-2);padding:8px 16px;font-weight:600}
+
+  @media (max-width:820px){
+    body{font-size:14px}
+    #app{grid-template-columns:1fr;grid-template-rows:auto 1fr auto;
+         grid-template-areas:"top" "stage" "left";}
+
+    #topbar{gap:8px;padding:8px 10px;padding-top:calc(8px + env(safe-area-inset-top));
+            overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
+    #topbar::-webkit-scrollbar{display:none}
+    .brand{display:none}
+    .group{flex:none}
+    .group .lbl{display:none}
+    .sep{display:none}
+    button{padding:9px 12px}
+    .mobile-only{display:inline-flex}
+    #sheetbar.mobile-only{display:flex}
+
+    /* tools become a thumb-friendly bottom row */
+    #tools{flex-direction:row;justify-content:flex-start;gap:8px;
+           padding:8px 10px;padding-bottom:calc(8px + env(safe-area-inset-bottom));
+           border-right:none;border-top:1px solid var(--line);overflow-x:auto}
+    #tools::-webkit-scrollbar{display:none}
+    .tool{flex:none;width:62px;height:58px;font-size:11px}
+    .tool .ic{font-size:20px}
+
+    /* side panel becomes a slide-up bottom sheet */
+    #side{position:fixed;left:0;right:0;bottom:0;max-height:66vh;
+          border-left:none;border-top:1px solid var(--line);border-radius:16px 16px 0 0;
+          transform:translateY(110%);transition:transform .22s ease;
+          box-shadow:0 -12px 34px rgba(0,0,0,.5);z-index:20;overflow:auto}
+    #side.open{transform:translateY(0)}
+    #sheetbar{position:sticky;top:0;z-index:2}
+    #objlist{max-height:30vh}
+    #status{display:none}
+    #stagehint{max-width:78%;font-size:12px}
+    .swatches{gap:8px}
+    .sw{border-radius:7px}
+  }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="topbar">
     <div class="brand"><b>VOXELIER</b><span>room editor · 1 voxel = 10cm</span></div>
+
+    <button id="panelToggle" class="mobile-only ghostbtn icon" title="Palette &amp; objects">▤ Panel</button>
 
     <div class="group" id="modegroup">
       <span class="lbl">Mode</span>
@@ -138,6 +190,7 @@
   </div>
 
   <div id="side">
+    <div id="sheetbar" class="mobile-only"><b>Editor panel</b><button id="sheetClose">Done</button></div>
     <div class="section">
       <h3>Palette <span id="palhint" style="color:var(--ink-dim);font-weight:400;text-transform:none;letter-spacing:0">muted · 16</span></h3>
       <div class="swatches" id="swatches"></div>
@@ -240,6 +293,8 @@ let nextObjId=1, nextPlacedId=1;
 const canvas=document.getElementById('c');
 const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 const scene=new THREE.Scene();
 scene.background=new THREE.Color('#0f1115');
 
@@ -249,10 +304,16 @@ const goal={azim:cam.azim, elev:cam.elev, zoom:cam.zoom, target:cam.target.clone
 const CAM_DIST=400;
 const camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,2000);
 
-// lights — flat, no shadows, just enough to read cube faces
-scene.add(new THREE.AmbientLight(0xffffff,0.72));
-const dir=new THREE.DirectionalLight(0xffffff,0.55); dir.position.set(0.6,1,0.35); scene.add(dir);
-const dir2=new THREE.DirectionalLight(0xffffff,0.18); dir2.position.set(-0.5,0.4,-0.6); scene.add(dir2);
+// lights — soft fill plus one shadow-casting key light to read depth
+scene.add(new THREE.AmbientLight(0xffffff,0.62));
+const dir=new THREE.DirectionalLight(0xffffff,0.78);
+dir.castShadow=true;
+dir.shadow.mapSize.set(2048,2048);
+dir.shadow.normalBias=0.6;        // boxes: kills shadow acne without peter-panning
+dir.shadow.bias=-0.0002;
+{ const s=dir.shadow.camera; s.left=-32;s.right=32;s.top=32;s.bottom=-32;s.near=1;s.far=120; }
+scene.add(dir); scene.add(dir.target);   // target must be in the graph to update
+const dir2=new THREE.DirectionalLight(0xffffff,0.16); dir2.position.set(-6,5,-7); scene.add(dir2);
 
 // reusable geometry/materials
 const boxGeo=new THREE.BoxGeometry(1,1,1);
@@ -265,9 +326,11 @@ const _m=new THREE.Matrix4();
 let meshSolid=null, meshGhost=null;
 let solidData=[], ghostData=[];  // per-instance metadata for picking
 
-// grid + ground
+// grid + a transparent shadow-catcher ground (only shows where shadows land)
 let grid=new THREE.GridHelper(64,64,0x2e3340,0x22252e);
 grid.position.y=0; scene.add(grid);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(1000,1000), new THREE.ShadowMaterial({opacity:0.26}));
+ground.rotation.x=-Math.PI/2; ground.position.y=0.002; ground.receiveShadow=true; scene.add(ground);
 
 // hover/selection helpers
 const hoverBox=new THREE.LineSegments(
@@ -379,6 +442,8 @@ function rebuild(){
 
   meshSolid=makeInstanced(solidData,matSolid);
   meshGhost=makeInstanced(ghostData,matGhost);
+  if(meshSolid){ meshSolid.castShadow=true; meshSolid.receiveShadow=true; }
+  if(meshGhost){ meshGhost.castShadow=false; meshGhost.receiveShadow=false; } // faded walls don't cast
   updateSelBox();
 }
 
@@ -408,10 +473,10 @@ const groundPlane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
 const _hit=new THREE.Vector3();
 let pointer={x:0,y:0,inside:false};
 
-function screenToNdc(e){
+function setNdc(cx,cy){
   const r=canvas.getBoundingClientRect();
-  ndc.x=((e.clientX-r.left)/r.width)*2-1;
-  ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+  ndc.x=((cx-r.left)/r.width)*2-1;
+  ndc.y=-((cy-r.top)/r.height)*2+1;
 }
 
 // returns {cell, addCell, kind, pid} or null
@@ -456,33 +521,83 @@ function toolTarget(){
   return null;
 }
 
-// ---- pointer interaction ------------------------------------
+// ---- pointer / touch interaction ----------------------------
+// Mouse: left = tool (drag paints), right/middle = pan, wheel = zoom.
+// Touch: one-finger tap = use tool once, one-finger drag = pan,
+//        two fingers = pinch-zoom + pan. (Select-tool drag moves an object.)
+const pointers=new Map();          // active pointer id -> {x,y}
 let painting=false, panning=false, panLast=null, draggingPlaced=null;
+let touchMode=null;                // 'tap' | 'pan' | 'pinch' | 'dragobj'
+let tapInfo=null;                  // {x,y,moved}
+let pinch=null;                    // {dist,zoom,mx,my}
+const TAP_SLOP=9;                  // px of movement before a tap becomes a drag
+const dist2=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 
 canvas.addEventListener('pointerdown',e=>{
   canvas.setPointerCapture(e.pointerId);
-  screenToNdc(e);
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+
+  if(e.pointerType==='touch'){
+    if(pointers.size===2){                       // second finger → pinch, cancel tool intent
+      const p=[...pointers.values()];
+      pinch={dist:dist2(p[0],p[1]),zoom:goal.zoom,mx:(p[0].x+p[1].x)/2,my:(p[0].y+p[1].y)/2};
+      touchMode='pinch'; tapInfo=null; draggingPlaced=null; painting=false;
+      hoverBox.visible=false; footBox.visible=false;
+      return;
+    }
+    if(pointers.size>2) return;
+    tapInfo={x:e.clientX,y:e.clientY,moved:false};  // first finger: wait to see tap vs drag
+    panLast={x:e.clientX,y:e.clientY};
+    touchMode='tap';
+    if(state.tool==='select'){                    // grab a placed object to drag it
+      setNdc(e.clientX,e.clientY);
+      const {voxHit}=pick();
+      if(voxHit && voxHit.kind==='placed'){ selectPlaced(voxHit.pid); draggingPlaced=voxHit.pid; touchMode='dragobj'; }
+    }
+    return;
+  }
+
+  // mouse / pen
+  setNdc(e.clientX,e.clientY); pointer.inside=true;
   if(e.button===2 || e.button===1){ panning=true; panLast={x:e.clientX,y:e.clientY}; return; }
   if(e.button!==0) return;
-
   if(state.tool==='select'){
     const {voxHit}=pick();
     if(voxHit && voxHit.kind==='placed'){ selectPlaced(voxHit.pid); draggingPlaced=voxHit.pid; }
-    else { selectPlaced(null); }
+    else selectPlaced(null);
     return;
   }
-  painting=true;
-  applyTool();
+  painting=true; applyTool();
 });
 
 canvas.addEventListener('pointermove',e=>{
-  screenToNdc(e);
-  pointer.inside=true;
+  if(pointers.has(e.pointerId)) pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+
+  if(e.pointerType==='touch'){
+    if(touchMode==='pinch' && pointers.size>=2){
+      const p=[...pointers.values()];
+      const nd=dist2(p[0],p[1]);
+      if(nd>0) goal.zoom=Math.max(6,Math.min(120, pinch.zoom*pinch.dist/nd));
+      const mx=(p[0].x+p[1].x)/2, my=(p[0].y+p[1].y)/2;
+      panCamera(mx-pinch.mx, my-pinch.my); pinch.mx=mx; pinch.my=my;
+      return;
+    }
+    if(pointers.size===1 && tapInfo){
+      const dx=e.clientX-panLast.x, dy=e.clientY-panLast.y;
+      if(!tapInfo.moved && dist2({x:e.clientX,y:e.clientY},tapInfo)>TAP_SLOP) tapInfo.moved=true;
+      if(touchMode==='dragobj' && draggingPlaced!==null){
+        setNdc(e.clientX,e.clientY); dragPlacedTo(); panLast={x:e.clientX,y:e.clientY}; return;
+      }
+      if(tapInfo.moved){ panCamera(dx,dy); panLast={x:e.clientX,y:e.clientY}; }
+    }
+    return;
+  }
+
+  // mouse / pen
+  setNdc(e.clientX,e.clientY); pointer.inside=true;
   if(panning && panLast){
     const dx=e.clientX-panLast.x, dy=e.clientY-panLast.y;
-    panLast={x:e.clientX,y:e.clientY};
-    panCamera(dx,dy);
-    return;
+    panLast={x:e.clientX,y:e.clientY}; panCamera(dx,dy); return;
   }
   if(draggingPlaced!==null){ dragPlacedTo(); return; }
   if(painting){ applyTool(); }
@@ -490,9 +605,39 @@ canvas.addEventListener('pointermove',e=>{
 });
 
 canvas.addEventListener('pointerup',e=>{
-  painting=false; panning=false; panLast=null; draggingPlaced=null;
+  const touch=e.pointerType==='touch';
+  pointers.delete(e.pointerId);
   try{canvas.releasePointerCapture(e.pointerId);}catch(_){ }
+
+  if(touch){
+    if(touchMode==='pinch'){
+      if(pointers.size===1){           // dropped to one finger → continue as a pan
+        const p=[...pointers.values()][0];
+        panLast={x:p.x,y:p.y}; tapInfo={x:p.x,y:p.y,moved:true}; touchMode='pan';
+      }else if(pointers.size===0){ touchMode=null; pinch=null; }
+      save(); return;
+    }
+    if(pointers.size===0){
+      if(touchMode==='dragobj'){ draggingPlaced=null; }
+      else if(tapInfo && !tapInfo.moved){          // a clean tap → use the tool once
+        setNdc(tapInfo.x,tapInfo.y);
+        if(state.tool==='select'){ const {voxHit}=pick(); selectPlaced(voxHit&&voxHit.kind==='placed'?voxHit.pid:null); }
+        else applyTool();
+      }
+      tapInfo=null; touchMode=null; panLast=null; pinch=null; draggingPlaced=null;
+      save();
+    }
+    return;
+  }
+
+  // mouse / pen
+  painting=false; panning=false; panLast=null; draggingPlaced=null;
   save();
+});
+
+canvas.addEventListener('pointercancel',e=>{
+  pointers.delete(e.pointerId);
+  if(pointers.size===0){ painting=panning=false; panLast=null; draggingPlaced=null; touchMode=null; tapInfo=null; pinch=null; }
 });
 canvas.addEventListener('pointerleave',()=>{ pointer.inside=false; hoverBox.visible=false; footBox.visible=false; });
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
@@ -607,6 +752,11 @@ function updateCamera(){
   camera.up.set(0,1,0);
   camera.lookAt(cam.target);
 
+  // keep the shadow-casting light (and its shadow frustum) centred on the view
+  dir.position.set(cam.target.x+20, 38, cam.target.z+14);
+  dir.target.position.set(cam.target.x, 0, cam.target.z);
+  dir.target.updateMatrixWorld();
+
   const r=canvas.getBoundingClientRect();
   const aspect=r.width/r.height;
   const h=cam.zoom, w=h*aspect;
@@ -665,7 +815,7 @@ function buildSwatches(){
     s.className='sw'+(i===state.selectedColor?' active':'');
     s.style.background=hex;
     s.title='Color '+(i+1);
-    s.onclick=()=>{ state.selectedColor=i; buildSwatches(); };
+    s.onclick=()=>{ state.selectedColor=i; buildSwatches(); if(isSheet()) closeSheet(); };
     w.appendChild(s);
   });
 }
@@ -711,7 +861,7 @@ function buildObjList(){
     const ed=document.createElement('div'); ed.className='edit'; ed.textContent='edit';
     ed.onclick=(e)=>{ e.stopPropagation(); enterObjectMode(id); };
     el.appendChild(ed);
-    el.onclick=()=>{ state.activeObjectId=id; state.tool='place'; buildTools(); buildObjList(); updateStatus(); };
+    el.onclick=()=>{ state.activeObjectId=id; state.tool='place'; buildTools(); buildObjList(); updateStatus(); if(isSheet()) closeSheet(); };
     wrap.appendChild(el);
   }
 }
@@ -779,12 +929,14 @@ function updateStatus(){
 function updateCellStatus(cell){
   document.getElementById('statCell').textContent=cell?`cell ${cell.x}, ${cell.y}, ${cell.z}`:'';
 }
+const COARSE=matchMedia('(pointer:coarse)').matches;
+const TAP=COARSE?'Tap':'Click';
 function updateHint(){
   const h=document.getElementById('stagehint');
   if(state.mode==='object'){ h.textContent='Object editor — build a reusable piece. Done → place it in the scene.'; }
-  else if(state.tool==='place'){ h.textContent= state.activeObjectId?'Click to place the selected object. R rotates it.':'Pick an object on the right to place.'; }
+  else if(state.tool==='place'){ h.textContent= state.activeObjectId?(TAP+' to place the selected object.'):('Open '+(COARSE?'▤ Panel':'the panel')+' and pick an object to place.'); }
   else if(state.tool==='room'){ h.textContent='Draw room walls/floor. Toggle See-through to peek inside.'; }
-  else if(state.tool==='select'){ h.textContent='Click a placed object to select. Drag to move, R rotate, ⌫ delete.'; }
+  else if(state.tool==='select'){ h.textContent=TAP+' a placed object to select; drag to move it.'; }
   else h.textContent='';
 }
 
@@ -873,6 +1025,13 @@ function seed(){
 // ============================================================
 //  EVENT WIRING
 // ============================================================
+// mobile bottom-sheet panel
+const sideEl=document.getElementById('side');
+const isSheet=()=>matchMedia('(max-width:820px)').matches;
+const closeSheet=()=>sideEl.classList.remove('open');
+document.getElementById('panelToggle').onclick=()=>sideEl.classList.toggle('open');
+document.getElementById('sheetClose').onclick=closeSheet;
+
 document.querySelectorAll('#modegroup button').forEach(b=>{
   b.onclick=()=>setMode(b.dataset.mode);
 });
