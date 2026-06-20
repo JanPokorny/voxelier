@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Voxelier — Voxel Room Editor</title>
+<style>
+  :root{
+    --bg:#14161b;
+    --panel:#1c1f27;
+    --panel-2:#232733;
+    --line:#2e3340;
+    --ink:#e7e3d8;
+    --ink-dim:#9aa0ad;
+    --accent:#a7c4bc;
+    --accent-ink:#14161b;
+    --danger:#b5838d;
+    --radius:9px;
+    --shadow:0 6px 22px rgba(0,0,0,.35);
+    font-synthesis:none;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:13px;
+    overflow:hidden;
+    -webkit-user-select:none;user-select:none;
+  }
+  #app{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:62px 1fr 232px;
+       grid-template-areas:"top top top" "left stage right" "left status status";}
+  canvas{display:block}
+
+  /* ---- top bar ---- */
+  #topbar{grid-area:top;display:flex;align-items:center;gap:14px;padding:8px 12px;background:var(--panel);
+          border-bottom:1px solid var(--line);z-index:5}
+  .brand{display:flex;align-items:baseline;gap:8px}
+  .brand b{font-weight:700;letter-spacing:.4px}
+  .brand span{color:var(--ink-dim);font-size:11px}
+  .group{display:flex;align-items:center;gap:4px;padding:3px;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius)}
+  .group .lbl{color:var(--ink-dim);font-size:10px;text-transform:uppercase;letter-spacing:.6px;padding:0 6px}
+  button{font:inherit;color:var(--ink);background:transparent;border:1px solid transparent;border-radius:6px;
+          padding:6px 10px;cursor:pointer;line-height:1;white-space:nowrap}
+  button:hover{background:#2b3140}
+  button.active{background:var(--accent);color:var(--accent-ink);font-weight:600}
+  button.icon{padding:6px 9px;font-size:14px}
+  .sep{flex:1}
+  .ghostbtn{border-color:var(--line)}
+
+  /* ---- left tools ---- */
+  #tools{grid-area:left;background:var(--panel);border-right:1px solid var(--line);
+         display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;z-index:4}
+  .tool{width:48px;height:48px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line);
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10px;color:var(--ink-dim);cursor:pointer}
+  .tool .ic{font-size:18px;line-height:1}
+  .tool:hover{color:var(--ink);border-color:#3a4252}
+  .tool.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  .tool.active .ic{color:var(--accent-ink)}
+
+  /* ---- stage ---- */
+  #stage{grid-area:stage;position:relative;overflow:hidden}
+  #c{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #stagehint{position:absolute;left:12px;top:10px;color:var(--ink-dim);font-size:11px;background:rgba(20,22,27,.55);
+             padding:6px 9px;border-radius:7px;border:1px solid var(--line);pointer-events:none}
+
+  /* ---- right panel ---- */
+  #side{grid-area:right;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;
+        overflow:hidden;z-index:4}
+  .section{border-bottom:1px solid var(--line);padding:12px}
+  .section h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--ink-dim);font-weight:600;
+              display:flex;align-items:center;justify-content:space-between}
+  .swatches{display:grid;grid-template-columns:repeat(8,1fr);gap:5px}
+  .sw{aspect-ratio:1;border-radius:5px;cursor:pointer;border:2px solid transparent;outline:1px solid rgba(0,0,0,.35);outline-offset:-1px}
+  .sw.active{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+  #objlist{display:flex;flex-direction:column;gap:5px;overflow:auto;max-height:38vh}
+  .obj{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:7px;background:var(--panel-2);
+       border:1px solid var(--line);cursor:pointer}
+  .obj:hover{border-color:#3a4252}
+  .obj.active{border-color:var(--accent);background:#222a2a}
+  .obj canvas{width:34px;height:34px;border-radius:5px;background:#0f1115;flex:none}
+  .obj .meta{flex:1;min-width:0}
+  .obj .nm{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .obj .ct{font-size:10px;color:var(--ink-dim)}
+  .obj .edit{font-size:11px;color:var(--accent)}
+  .row{display:flex;gap:6px}
+  .row button{flex:1;border:1px solid var(--line);background:var(--panel-2)}
+  input[type=text]{width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+                   border-radius:7px;padding:7px 9px;font:inherit}
+  .hide{display:none!important}
+
+  /* ---- status ---- */
+  #status{grid-area:status;background:var(--panel);border-top:1px solid var(--line);
+          padding:5px 12px;color:var(--ink-dim);font-size:11px;display:flex;gap:18px;align-items:center}
+  #status b{color:var(--ink);font-weight:600}
+  kbd{background:var(--panel-2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:1px 5px;
+      font:inherit;font-size:10px;color:var(--ink)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div class="brand"><b>VOXELIER</b><span>room editor · 1 voxel = 10cm</span></div>
+
+    <div class="group" id="modegroup">
+      <span class="lbl">Mode</span>
+      <button data-mode="scene" class="active">Scene</button>
+      <button data-mode="object">Object</button>
+    </div>
+
+    <div class="group">
+      <span class="lbl">View</span>
+      <button id="viewIso" class="active icon" title="Isometric (1)">◈ Iso</button>
+      <button id="viewBird" class="icon" title="Birdseye (2)">▦ Bird</button>
+      <button id="rotL" class="icon" title="Rotate view left (Q)">⟲</button>
+      <button id="rotR" class="icon" title="Rotate view right (E)">⟳</button>
+    </div>
+
+    <button id="seethrough" class="ghostbtn icon" title="See-through walls (X)">◐ See-through</button>
+    <button id="gridtoggle" class="ghostbtn icon" title="Toggle grid (G)">▥ Grid</button>
+
+    <div class="sep"></div>
+
+    <div class="group">
+      <button id="btnExport" class="icon" title="Export JSON">⤓ Export</button>
+      <button id="btnImport" class="icon" title="Import JSON">⤒ Import</button>
+      <button id="btnClear" class="icon" title="Clear scene">🗑 Clear</button>
+    </div>
+    <input type="file" id="fileInput" accept="application/json" class="hide" />
+  </div>
+
+  <div id="tools"><!-- tool buttons injected --></div>
+
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="stagehint"></div>
+  </div>
+
+  <div id="side">
+    <div class="section">
+      <h3>Palette <span id="palhint" style="color:var(--ink-dim);font-weight:400;text-transform:none;letter-spacing:0">muted · 16</span></h3>
+      <div class="swatches" id="swatches"></div>
+    </div>
+
+    <div class="section" id="objSection">
+      <h3>Objects <button id="newObj" style="padding:3px 8px;border:1px solid var(--line);background:var(--panel-2);font-size:11px">+ New</button></h3>
+      <div id="objlist"></div>
+    </div>
+
+    <div class="section" id="objEditSection">
+      <h3>Editing object</h3>
+      <input type="text" id="objName" placeholder="Object name" />
+      <div class="row" style="margin-top:8px">
+        <button id="objDone">✓ Done</button>
+        <button id="objDelete" style="color:var(--danger)">Delete</button>
+      </div>
+      <p style="color:var(--ink-dim);font-size:11px;margin:10px 0 0;line-height:1.5">
+        Build the object voxel-by-voxel. <kbd>Done</kbd> returns to the scene where you can place it.
+      </p>
+    </div>
+
+    <div class="section" id="selSection">
+      <h3>Selected placement</h3>
+      <div id="selInfo" style="color:var(--ink-dim);font-size:12px">Nothing selected.</div>
+      <div class="row" style="margin-top:8px">
+        <button id="selRotate">⟳ Rotate (R)</button>
+        <button id="selDelete" style="color:var(--danger)">Delete (⌫)</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="status">
+    <span id="statMode"></span>
+    <span id="statTool"></span>
+    <span id="statCell"></span>
+    <span class="sep" style="flex:1"></span>
+    <span><kbd>LMB</kbd> use tool · <kbd>RMB</kbd> drag pan · <kbd>wheel</kbd> zoom · <kbd>Q/E</kbd> rotate · <kbd>X</kbd> see-through</span>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ============================================================
+   VOXELIER — isometric voxel room editor
+   - Scene mode: build a room from voxels + place objects
+   - Object mode: edit a reusable object voxel-by-voxel
+   - True isometric (orthographic) + birdseye, 90° rotation only
+   - See-through room: near walls fade so you can see inside
+   ============================================================ */
+
+// ---- 16-color muted palette ---------------------------------
+const PALETTE = [
+  '#6b705c','#a5a58d','#b7b7a4','#dcd6c4',
+  '#cb997e','#ddbea9','#f0e6d2','#8d6e63',
+  '#d4a373','#9c6644','#b5838d','#6d6875',
+  '#7d8597','#5c677d','#6a994e','#a7c4bc'
+];
+const ROOM_DEFAULT_COLOR = 2; // light sage for room shells
+
+// ---- coord helpers ------------------------------------------
+const key = (x,y,z)=>x+','+y+','+z;
+const parseKey = k=>{const a=k.split(',');return {x:+a[0],y:+a[1],z:+a[2]};};
+// rotate integer voxel r*90° about vertical (Y) axis
+function rotateY(v,r){
+  let {x,y,z}=v;
+  r=((r%4)+4)%4;
+  for(let i=0;i<r;i++){const nx=-z, nz=x; x=nx; z=nz;}
+  return {x,y,z};
+}
+
+// ---- application state --------------------------------------
+const state = {
+  mode:'scene',            // 'scene' | 'object'
+  tool:'place',            // current tool id
+  view:'iso',              // 'iso' | 'bird'
+  seeThrough:false,
+  showGrid:true,
+  selectedColor:8,
+  objects:{},              // id -> {id,name,voxels:Map(key->colorIdx)}
+  objOrder:[],             // display order of object ids
+  activeObjectId:null,     // object selected for placing (scene) / editing (object mode)
+  editingId:null,          // object currently being edited
+  room:new Map(),          // key -> colorIdx  (room shell voxels)
+  placed:[],               // [{id,objectId,x,y,z,rot}]
+  selectedPlaced:null,
+};
+let nextObjId=1, nextPlacedId=1;
+
+// ---- three.js setup -----------------------------------------
+const canvas=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene=new THREE.Scene();
+scene.background=new THREE.Color('#0f1115');
+
+const ISO_ELEV=Math.atan(1/Math.SQRT2); // ~35.264° -> true 2:1 isometric
+const cam={azim:Math.PI/4, elev:ISO_ELEV, zoom:26, target:new THREE.Vector3(0,1.5,0)};
+const goal={azim:cam.azim, elev:cam.elev, zoom:cam.zoom, target:cam.target.clone()};
+const CAM_DIST=400;
+const camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,2000);
+
+// lights — flat, no shadows, just enough to read cube faces
+scene.add(new THREE.AmbientLight(0xffffff,0.72));
+const dir=new THREE.DirectionalLight(0xffffff,0.55); dir.position.set(0.6,1,0.35); scene.add(dir);
+const dir2=new THREE.DirectionalLight(0xffffff,0.18); dir2.position.set(-0.5,0.4,-0.6); scene.add(dir2);
+
+// reusable geometry/materials
+const boxGeo=new THREE.BoxGeometry(1,1,1);
+const matSolid=new THREE.MeshLambertMaterial({});
+const matGhost=new THREE.MeshLambertMaterial({transparent:true,opacity:0.12,depthWrite:false});
+const _color=new THREE.Color();
+const _m=new THREE.Matrix4();
+
+// dynamic meshes
+let meshSolid=null, meshGhost=null;
+let solidData=[], ghostData=[];  // per-instance metadata for picking
+
+// grid + ground
+let grid=new THREE.GridHelper(64,64,0x2e3340,0x22252e);
+grid.position.y=0; scene.add(grid);
+
+// hover/selection helpers
+const hoverBox=new THREE.LineSegments(
+  new THREE.EdgesGeometry(boxGeo),
+  new THREE.LineBasicMaterial({color:0xa7c4bc}));
+hoverBox.visible=false; scene.add(hoverBox);
+const footBox=new THREE.LineSegments(
+  new THREE.EdgesGeometry(boxGeo),
+  new THREE.LineBasicMaterial({color:0xddbea9}));
+footBox.visible=false; scene.add(footBox);
+const selBox=new THREE.LineSegments(
+  new THREE.EdgesGeometry(boxGeo),
+  new THREE.LineBasicMaterial({color:0xf0e6d2}));
+selBox.visible=false; scene.add(selBox);
+
+// ---- mesh building ------------------------------------------
+function disposeMesh(m){ if(m){scene.remove(m); m.dispose?.();} } // keep shared boxGeo alive
+
+function makeInstanced(data,material){
+  if(data.length===0) return null;
+  const mesh=new THREE.InstancedMesh(boxGeo,material,data.length);
+  for(let i=0;i<data.length;i++){
+    const d=data[i];
+    _m.makeTranslation(d.x+0.5,d.y+0.5,d.z+0.5);
+    mesh.setMatrixAt(i,_m);
+    _color.set(PALETTE[d.c]); mesh.setColorAt(i,_color);
+  }
+  mesh.instanceMatrix.needsUpdate=true;
+  if(mesh.instanceColor) mesh.instanceColor.needsUpdate=true;
+  scene.add(mesh);
+  return mesh;
+}
+
+// expand a placed object instance into world voxels
+function expandPlaced(p){
+  const obj=state.objects[p.objectId];
+  const out=[];
+  if(!obj) return out;
+  let minx=Infinity,miny=Infinity,minz=Infinity;
+  const rv=[];
+  for(const [k,c] of obj.voxels){
+    const r=rotateY(parseKey(k),p.rot);
+    rv.push({...r,c});
+    if(r.x<minx)minx=r.x; if(r.y<miny)miny=r.y; if(r.z<minz)minz=r.z;
+  }
+  for(const r of rv){
+    out.push({x:p.x+(r.x-minx), y:p.y+(r.y-miny), z:p.z+(r.z-minz), c:r.c});
+  }
+  return out;
+}
+function placedFootprint(p){
+  const obj=state.objects[p.objectId];
+  if(!obj||obj.voxels.size===0) return {w:1,h:1,d:1};
+  let minx=Infinity,miny=Infinity,minz=Infinity,maxx=-Infinity,maxy=-Infinity,maxz=-Infinity;
+  for(const [k] of obj.voxels){
+    const r=rotateY(parseKey(k),p.rot);
+    minx=Math.min(minx,r.x); maxx=Math.max(maxx,r.x);
+    miny=Math.min(miny,r.y); maxy=Math.max(maxy,r.y);
+    minz=Math.min(minz,r.z); maxz=Math.max(maxz,r.z);
+  }
+  return {w:maxx-minx+1,h:maxy-miny+1,d:maxz-minz+1};
+}
+
+// decide which room voxels are "near" the camera and should fade
+function roomGhostSet(){
+  const hidden=new Set();
+  if(!state.seeThrough || state.room.size===0) return hidden;
+  let minY=Infinity, cx=0,cz=0,n=0,maxX=-1e9,minX=1e9,maxZ=-1e9,minZ=1e9;
+  for(const [k] of state.room){
+    const v=parseKey(k); minY=Math.min(minY,v.y);
+    cx+=v.x; cz+=v.z; n++;
+    maxX=Math.max(maxX,v.x);minX=Math.min(minX,v.x);
+    maxZ=Math.max(maxZ,v.z);minZ=Math.min(minZ,v.z);
+  }
+  cx/=n; cz/=n;
+  if(state.view==='bird'){
+    // floor-plan: keep only the lowest layer, fade everything above
+    for(const [k] of state.room){ if(parseKey(k).y>minY) hidden.add(k); }
+    return hidden;
+  }
+  // iso: fade non-floor voxels on the camera-facing half
+  const hx=Math.sin(goal.azim), hz=Math.cos(goal.azim); // horizontal dir toward camera
+  for(const [k] of state.room){
+    const v=parseKey(k);
+    if(v.y<=minY) continue;            // never hide the floor
+    const d=(v.x+0.5-cx)*hx + (v.z+0.5-cz)*hz;
+    if(d>0.001) hidden.add(k);
+  }
+  return hidden;
+}
+
+function rebuild(){
+  disposeMesh(meshSolid); disposeMesh(meshGhost);
+  solidData=[]; ghostData=[];
+
+  if(state.mode==='object'){
+    const obj=state.objects[state.editingId];
+    if(obj){ for(const [k,c] of obj.voxels){ const v=parseKey(k); solidData.push({x:v.x,y:v.y,z:v.z,c,kind:'obj'}); } }
+  }else{
+    const ghost=roomGhostSet();
+    for(const [k,c] of state.room){
+      const v=parseKey(k); const rec={x:v.x,y:v.y,z:v.z,c,kind:'room'};
+      if(ghost.has(k)) ghostData.push(rec); else solidData.push(rec);
+    }
+    for(const p of state.placed){
+      for(const wv of expandPlaced(p)) solidData.push({x:wv.x,y:wv.y,z:wv.z,c:wv.c,kind:'placed',pid:p.id});
+    }
+  }
+
+  meshSolid=makeInstanced(solidData,matSolid);
+  meshGhost=makeInstanced(ghostData,matGhost);
+  updateSelBox();
+}
+
+// ---- voxel mutation -----------------------------------------
+function objVox(){ return state.objects[state.editingId]?.voxels; }
+
+function setVoxel(cell){
+  if(state.mode==='object'){ objVox()?.set(key(cell.x,cell.y,cell.z),state.selectedColor); }
+  else { state.room.set(key(cell.x,cell.y,cell.z),state.selectedColor); } // room build
+}
+function delVoxel(cell){
+  if(state.mode==='object'){ objVox()?.delete(key(cell.x,cell.y,cell.z)); }
+  else { state.room.delete(key(cell.x,cell.y,cell.z)); }
+}
+function paintVoxel(cell){
+  const k=key(cell.x,cell.y,cell.z);
+  if(state.mode==='object'){ if(objVox()?.has(k)) objVox().set(k,state.selectedColor); }
+  else { if(state.room.has(k)) state.room.set(k,state.selectedColor); }
+}
+
+// ============================================================
+//  PICKING
+// ============================================================
+const raycaster=new THREE.Raycaster();
+const ndc=new THREE.Vector2();
+const groundPlane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+const _hit=new THREE.Vector3();
+let pointer={x:0,y:0,inside:false};
+
+function screenToNdc(e){
+  const r=canvas.getBoundingClientRect();
+  ndc.x=((e.clientX-r.left)/r.width)*2-1;
+  ndc.y=-((e.clientY-r.top)/r.height)*2+1;
+}
+
+// returns {cell, addCell, kind, pid} or null
+function pick(){
+  raycaster.setFromCamera(ndc,camera);
+  const targets=[]; if(meshSolid)targets.push(meshSolid); if(meshGhost)targets.push(meshGhost);
+  const hits=targets.length?raycaster.intersectObjects(targets,false):[];
+  let voxHit=null;
+  if(hits.length){
+    const h=hits[0];
+    const data=(h.object===meshSolid)?solidData:ghostData;
+    const d=data[h.instanceId];
+    if(d){
+      const n=h.face?h.face.normal:new THREE.Vector3(0,1,0);
+      voxHit={
+        dist:h.distance,
+        cell:{x:d.x,y:d.y,z:d.z},
+        addCell:{x:d.x+Math.round(n.x), y:d.y+Math.round(n.y), z:d.z+Math.round(n.z)},
+        kind:d.kind, pid:d.pid
+      };
+    }
+  }
+  let ground=null;
+  if(raycaster.ray.intersectPlane(groundPlane,_hit)){
+    ground={dist:raycaster.ray.origin.distanceTo(_hit),
+            cell:{x:Math.floor(_hit.x),y:0,z:Math.floor(_hit.z)}};
+  }
+  return {voxHit,ground};
+}
+
+// compute the target cell for the active tool
+function toolTarget(){
+  const {voxHit,ground}=pick();
+  const t=state.tool;
+  if(t==='add'||t==='room'||t==='place'){
+    if(voxHit && (!ground || voxHit.dist<=ground.dist+0.01)) return {cell:voxHit.addCell, voxHit};
+    if(ground) return {cell:ground.cell, voxHit:null};
+    return null;
+  }
+  // remove / paint / erase / select need a voxel
+  if(voxHit) return {cell:voxHit.cell, voxHit};
+  return null;
+}
+
+// ---- pointer interaction ------------------------------------
+let painting=false, panning=false, panLast=null, draggingPlaced=null;
+
+canvas.addEventListener('pointerdown',e=>{
+  canvas.setPointerCapture(e.pointerId);
+  screenToNdc(e);
+  if(e.button===2 || e.button===1){ panning=true; panLast={x:e.clientX,y:e.clientY}; return; }
+  if(e.button!==0) return;
+
+  if(state.tool==='select'){
+    const {voxHit}=pick();
+    if(voxHit && voxHit.kind==='placed'){ selectPlaced(voxHit.pid); draggingPlaced=voxHit.pid; }
+    else { selectPlaced(null); }
+    return;
+  }
+  painting=true;
+  applyTool();
+});
+
+canvas.addEventListener('pointermove',e=>{
+  screenToNdc(e);
+  pointer.inside=true;
+  if(panning && panLast){
+    const dx=e.clientX-panLast.x, dy=e.clientY-panLast.y;
+    panLast={x:e.clientX,y:e.clientY};
+    panCamera(dx,dy);
+    return;
+  }
+  if(draggingPlaced!==null){ dragPlacedTo(); return; }
+  if(painting){ applyTool(); }
+  updateHover();
+});
+
+canvas.addEventListener('pointerup',e=>{
+  painting=false; panning=false; panLast=null; draggingPlaced=null;
+  try{canvas.releasePointerCapture(e.pointerId);}catch(_){ }
+  save();
+});
+canvas.addEventListener('pointerleave',()=>{ pointer.inside=false; hoverBox.visible=false; footBox.visible=false; });
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  goal.zoom*=(e.deltaY>0?1/0.9:0.9); // scroll up = zoom in
+  goal.zoom=Math.max(6,Math.min(120,goal.zoom));
+},{passive:false});
+
+let lastPaintCell=null;
+function applyTool(){
+  const tt=toolTarget();
+  if(!tt){ return; }
+  const c=tt.cell;
+  const ck=key(c.x,c.y,c.z);
+  if((state.tool==='add'||state.tool==='room') && ck===lastPaintCell && painting) return;
+  switch(state.tool){
+    case 'add': case 'room': setVoxel(c); break;
+    case 'remove': case 'erase':
+      // only erase room voxels in scene mode (not placed objects)
+      if(state.mode==='scene' && tt.voxHit && tt.voxHit.kind!=='room') return;
+      delVoxel(c); break;
+    case 'paint':
+      if(state.mode==='scene' && tt.voxHit && tt.voxHit.kind!=='room') return;
+      paintVoxel(c); break;
+    case 'place': placeObject(c); break;
+  }
+  lastPaintCell=ck;
+  rebuild();
+}
+
+function updateHover(){
+  if(!pointer.inside || painting || panning){ return; }
+  if(state.tool==='select'){ hoverBox.visible=false; footBox.visible=false; return; }
+  if(state.tool==='place'){
+    hoverBox.visible=false;
+    const tt=toolTarget();
+    if(tt && state.activeObjectId){
+      const fp=placedFootprint({objectId:state.activeObjectId,rot:placeRot});
+      footBox.visible=true;
+      footBox.scale.set(fp.w,fp.h,fp.d);
+      footBox.position.set(tt.cell.x+fp.w/2, tt.cell.y+fp.h/2, tt.cell.z+fp.d/2);
+    }else footBox.visible=false;
+    updateCellStatus(tt?tt.cell:null);
+    return;
+  }
+  footBox.visible=false;
+  const tt=toolTarget();
+  if(tt){
+    hoverBox.visible=true;
+    hoverBox.material.color.set(state.tool==='remove'||state.tool==='erase'?0xb5838d:0xa7c4bc);
+    hoverBox.position.set(tt.cell.x+0.5,tt.cell.y+0.5,tt.cell.z+0.5);
+    updateCellStatus(tt.cell);
+  }else{ hoverBox.visible=false; updateCellStatus(null); }
+}
+
+// ---- object placement ---------------------------------------
+let placeRot=0;
+function placeObject(cell){
+  if(!state.activeObjectId || !state.objects[state.activeObjectId]) return;
+  const p={id:nextPlacedId++,objectId:state.activeObjectId,x:cell.x,y:cell.y,z:cell.z,rot:placeRot};
+  state.placed.push(p);
+}
+function selectPlaced(pid){
+  state.selectedPlaced=pid;
+  updateSelBox(); renderSidePanels();
+}
+function updateSelBox(){
+  const p=state.placed.find(p=>p.id===state.selectedPlaced);
+  if(!p || state.mode!=='scene'){ selBox.visible=false; return; }
+  const vox=expandPlaced(p);
+  if(!vox.length){selBox.visible=false;return;}
+  let minx=Infinity,miny=Infinity,minz=Infinity,maxx=-Infinity,maxy=-Infinity,maxz=-Infinity;
+  for(const v of vox){minx=Math.min(minx,v.x);maxx=Math.max(maxx,v.x);miny=Math.min(miny,v.y);maxy=Math.max(maxy,v.y);minz=Math.min(minz,v.z);maxz=Math.max(maxz,v.z);}
+  selBox.visible=true;
+  selBox.scale.set(maxx-minx+1,maxy-miny+1,maxz-minz+1);
+  selBox.position.set((minx+maxx+1)/2,(miny+maxy+1)/2,(minz+maxz+1)/2);
+}
+function dragPlacedTo(){
+  const p=state.placed.find(p=>p.id===state.selectedPlaced);
+  if(!p) return;
+  const {voxHit,ground}=pick();
+  let cell=null;
+  if(voxHit && voxHit.pid!==p.id) cell=voxHit.addCell;
+  else if(ground) cell=ground.cell;
+  if(cell){ p.x=cell.x; p.y=cell.y; p.z=cell.z; rebuild(); }
+}
+
+// ============================================================
+//  CAMERA
+// ============================================================
+function panCamera(dx,dy){
+  const r=canvas.getBoundingClientRect();
+  const worldPerPx=(camera.top-camera.bottom)/camera.zoom/r.height;
+  // screen-right and screen-up in world (ground projected)
+  const fwd=new THREE.Vector3(); camera.getWorldDirection(fwd);
+  const right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+  const up=new THREE.Vector3().crossVectors(right,fwd).normalize();
+  goal.target.addScaledVector(right,-dx*worldPerPx);
+  goal.target.addScaledVector(up, dy*worldPerPx);
+}
+function updateCamera(){
+  // ease toward goal
+  cam.azim+=(goal.azim-cam.azim)*0.22;
+  cam.elev+=(goal.elev-cam.elev)*0.22;
+  cam.zoom+=(goal.zoom-cam.zoom)*0.25;
+  cam.target.lerp(goal.target,0.25);
+
+  const ce=Math.cos(cam.elev), se=Math.sin(cam.elev);
+  const dirv=new THREE.Vector3(ce*Math.sin(cam.azim), se, ce*Math.cos(cam.azim));
+  camera.position.copy(cam.target).addScaledVector(dirv,CAM_DIST);
+  camera.up.set(0,1,0);
+  camera.lookAt(cam.target);
+
+  const r=canvas.getBoundingClientRect();
+  const aspect=r.width/r.height;
+  const h=cam.zoom, w=h*aspect;
+  camera.left=-w/2; camera.right=w/2; camera.top=h/2; camera.bottom=-h/2;
+  camera.near=0.1; camera.far=2000;
+  camera.zoom=1;
+  camera.updateProjectionMatrix();
+}
+function setView(v){
+  state.view=v;
+  goal.elev = v==='bird' ? Math.PI/2-0.0001 : ISO_ELEV;
+  document.getElementById('viewIso').classList.toggle('active',v==='iso');
+  document.getElementById('viewBird').classList.toggle('active',v==='bird');
+  rebuild(); // see-through behaves differently per view
+}
+let azimIndex=0; // 45° base => index*90+45 (matches cam.azim init)
+function rotateView(dir){
+  azimIndex+=dir;
+  goal.azim=azimIndex*Math.PI/2 + Math.PI/4;
+  rebuild(); // recompute near walls
+}
+
+// ============================================================
+//  UI
+// ============================================================
+const SCENE_TOOLS=[
+  {id:'place', ic:'❒', label:'Place'},
+  {id:'select',ic:'➤', label:'Select'},
+  {id:'room',  ic:'▦', label:'Wall'},
+  {id:'erase', ic:'⌫', label:'Erase'},
+  {id:'paint', ic:'❖', label:'Paint'},
+];
+const OBJ_TOOLS=[
+  {id:'add',   ic:'＋', label:'Add'},
+  {id:'remove',ic:'－', label:'Erase'},
+  {id:'paint', ic:'❖', label:'Paint'},
+];
+function buildTools(){
+  const wrap=document.getElementById('tools'); wrap.innerHTML='';
+  const list=state.mode==='scene'?SCENE_TOOLS:OBJ_TOOLS;
+  if(!list.find(t=>t.id===state.tool)) state.tool=list[0].id;
+  for(const t of list){
+    const el=document.createElement('div');
+    el.className='tool'+(state.tool===t.id?' active':'');
+    el.innerHTML=`<span class="ic">${t.ic}</span>${t.label}`;
+    el.title=t.label;
+    el.onclick=()=>{ state.tool=t.id; buildTools(); updateStatus(); selectPlaced(state.tool==='select'?state.selectedPlaced:null); };
+    wrap.appendChild(el);
+  }
+}
+
+function buildSwatches(){
+  const w=document.getElementById('swatches'); w.innerHTML='';
+  PALETTE.forEach((hex,i)=>{
+    const s=document.createElement('div');
+    s.className='sw'+(i===state.selectedColor?' active':'');
+    s.style.background=hex;
+    s.title='Color '+(i+1);
+    s.onclick=()=>{ state.selectedColor=i; buildSwatches(); };
+    w.appendChild(s);
+  });
+}
+
+function objThumb(obj){
+  const c=document.createElement('canvas'); c.width=c.height=34;
+  const g=c.getContext('2d');
+  g.fillStyle='#0f1115'; g.fillRect(0,0,34,34);
+  if(obj.voxels.size===0) return c;
+  // tiny isometric splat
+  let minx=Infinity,miny=Infinity,minz=Infinity,maxx=-Infinity,maxy=-Infinity,maxz=-Infinity;
+  for(const [k] of obj.voxels){const v=parseKey(k);minx=Math.min(minx,v.x);maxx=Math.max(maxx,v.x);miny=Math.min(miny,v.y);maxy=Math.max(maxy,v.y);minz=Math.min(minz,v.z);maxz=Math.max(maxz,v.z);}
+  const span=Math.max(maxx-minx,maxy-miny,maxz-minz,1)+1;
+  const s=Math.min(8, 26/span);
+  const ox=17, oy=24;
+  const list=[...obj.voxels].map(([k,ci])=>({...parseKey(k),ci}));
+  list.sort((a,b)=>(a.x+a.z-a.y)-(b.x+b.z-b.y));
+  for(const v of list){
+    const px=ox+(v.x-v.z)*s*0.5;
+    const py=oy-(v.y)*s*0.6 + (v.x+v.z)*s*0.28 - (span*s*0.14);
+    g.fillStyle=PALETTE[v.ci];
+    g.fillRect(px-s*0.5,py-s*0.5,s,s);
+    g.strokeStyle='rgba(0,0,0,.35)'; g.strokeRect(px-s*0.5,py-s*0.5,s,s);
+  }
+  return c;
+}
+
+function buildObjList(){
+  const wrap=document.getElementById('objlist'); wrap.innerHTML='';
+  if(state.objOrder.length===0){
+    wrap.innerHTML='<div style="color:var(--ink-dim);font-size:11px">No objects yet. Click <b>+ New</b> to build one.</div>';
+    return;
+  }
+  for(const id of state.objOrder){
+    const obj=state.objects[id]; if(!obj)continue;
+    const el=document.createElement('div');
+    el.className='obj'+(id===state.activeObjectId?' active':'');
+    const t=objThumb(obj);
+    el.appendChild(t);
+    const meta=document.createElement('div'); meta.className='meta';
+    meta.innerHTML=`<div class="nm">${escapeHtml(obj.name)}</div><div class="ct">${obj.voxels.size} voxels</div>`;
+    el.appendChild(meta);
+    const ed=document.createElement('div'); ed.className='edit'; ed.textContent='edit';
+    ed.onclick=(e)=>{ e.stopPropagation(); enterObjectMode(id); };
+    el.appendChild(ed);
+    el.onclick=()=>{ state.activeObjectId=id; state.tool='place'; buildTools(); buildObjList(); updateStatus(); };
+    wrap.appendChild(el);
+  }
+}
+
+function renderSidePanels(){
+  const inScene=state.mode==='scene';
+  document.getElementById('objSection').classList.toggle('hide',!inScene);
+  document.getElementById('selSection').classList.toggle('hide',!inScene);
+  document.getElementById('objEditSection').classList.toggle('hide',inScene);
+  if(inScene){
+    buildObjList();
+    const p=state.placed.find(p=>p.id===state.selectedPlaced);
+    const info=document.getElementById('selInfo');
+    if(p){ const o=state.objects[p.objectId];
+      info.innerHTML=`<b style="color:var(--ink)">${o?escapeHtml(o.name):'?'}</b><br>at (${p.x}, ${p.y}, ${p.z}) · rot ${p.rot*90}°`; }
+    else info.textContent='Nothing selected. Use the Select tool and click a placed object.';
+  }else{
+    const obj=state.objects[state.editingId];
+    document.getElementById('objName').value=obj?obj.name:'';
+  }
+}
+
+function escapeHtml(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+// ---- mode switching -----------------------------------------
+function setMode(m){
+  state.mode=m;
+  document.querySelectorAll('#modegroup button').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));
+  if(m==='object'){
+    if(!state.editingId){ // need something to edit
+      if(state.activeObjectId) state.editingId=state.activeObjectId; else newObject(false);
+    }
+    goal.target.set(2,2,2);
+  }else{
+    goal.target.set(5,2,4); // frame the seeded room nicely
+  }
+  buildTools(); renderSidePanels(); rebuild(); updateStatus();
+}
+function enterObjectMode(id){
+  state.editingId=id; state.activeObjectId=id;
+  setMode('object');
+}
+function newObject(switchToEdit=true){
+  const id='o'+(nextObjId++);
+  state.objects[id]={id,name:'Object '+(state.objOrder.length+1),voxels:new Map()};
+  state.objOrder.push(id);
+  state.activeObjectId=id; state.editingId=id;
+  if(switchToEdit) setMode('object'); else renderSidePanels();
+  save();
+}
+function deleteObject(id){
+  delete state.objects[id];
+  state.objOrder=state.objOrder.filter(x=>x!==id);
+  // drop placements of this object
+  state.placed=state.placed.filter(p=>p.objectId!==id);
+  if(state.activeObjectId===id) state.activeObjectId=state.objOrder[0]||null;
+  if(state.editingId===id) state.editingId=state.objOrder[0]||null;
+}
+
+// ---- status -------------------------------------------------
+function updateStatus(){
+  document.getElementById('statMode').innerHTML='Mode: <b>'+(state.mode==='scene'?'Scene':'Object: '+(state.objects[state.editingId]?.name||''))+'</b>';
+  document.getElementById('statTool').innerHTML='Tool: <b>'+state.tool+'</b>';
+}
+function updateCellStatus(cell){
+  document.getElementById('statCell').textContent=cell?`cell ${cell.x}, ${cell.y}, ${cell.z}`:'';
+}
+function updateHint(){
+  const h=document.getElementById('stagehint');
+  if(state.mode==='object'){ h.textContent='Object editor — build a reusable piece. Done → place it in the scene.'; }
+  else if(state.tool==='place'){ h.textContent= state.activeObjectId?'Click to place the selected object. R rotates it.':'Pick an object on the right to place.'; }
+  else if(state.tool==='room'){ h.textContent='Draw room walls/floor. Toggle See-through to peek inside.'; }
+  else if(state.tool==='select'){ h.textContent='Click a placed object to select. Drag to move, R rotate, ⌫ delete.'; }
+  else h.textContent='';
+}
+
+// ============================================================
+//  PERSISTENCE
+// ============================================================
+const LS_KEY='voxelier-state-v1';
+function serialize(){
+  return {
+    nextObjId,nextPlacedId,
+    selectedColor:state.selectedColor,
+    objOrder:state.objOrder,
+    objects:Object.fromEntries(state.objOrder.map(id=>{
+      const o=state.objects[id];
+      return [id,{id,name:o.name,voxels:[...o.voxels]}];
+    })),
+    activeObjectId:state.activeObjectId,
+    room:[...state.room],
+    placed:state.placed,
+    seeThrough:state.seeThrough,
+  };
+}
+function deserialize(d){
+  try{
+    nextObjId=d.nextObjId||1; nextPlacedId=d.nextPlacedId||1;
+    state.selectedColor=d.selectedColor??8;
+    state.objOrder=d.objOrder||[];
+    state.objects={};
+    for(const id of state.objOrder){
+      const o=d.objects[id];
+      state.objects[id]={id,name:o.name,voxels:new Map(o.voxels)};
+    }
+    state.activeObjectId=d.activeObjectId||state.objOrder[0]||null;
+    state.room=new Map(d.room||[]);
+    state.placed=d.placed||[];
+    state.seeThrough=!!d.seeThrough;
+    return true;
+  }catch(e){ console.warn('load failed',e); return false; }
+}
+let saveTimer=null;
+function save(){
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>{ try{localStorage.setItem(LS_KEY,JSON.stringify(serialize()));}catch(_){ } },250);
+}
+
+// ---- seed demo content --------------------------------------
+function seed(){
+  // a room shell: 12x10 floor, walls 4 high
+  const W=12,D=10,H=4;
+  const set=(x,y,z,c)=>state.room.set(key(x,y,z),c);
+  for(let x=0;x<W;x++)for(let z=0;z<D;z++) set(x,0,z,0);          // floor
+  for(let y=1;y<=H;y++){
+    for(let x=0;x<W;x++){ set(x,y,0,ROOM_DEFAULT_COLOR); set(x,y,D-1,ROOM_DEFAULT_COLOR); }
+    for(let z=0;z<D;z++){ set(0,y,z,ROOM_DEFAULT_COLOR); set(W-1,y,z,ROOM_DEFAULT_COLOR); }
+  }
+  // doorway gap
+  for(let y=1;y<=2;y++){ state.room.delete(key(5,y,0)); state.room.delete(key(6,y,0)); }
+
+  // --- Table object ---
+  const table=new Map();
+  const tv=(x,y,z,c)=>table.set(key(x,y,z),c);
+  for(let x=0;x<3;x++)for(let z=0;z<3;z++) tv(x,2,z,9);   // top
+  tv(0,0,0,7);tv(0,1,0,7);tv(2,0,0,7);tv(2,1,0,7);
+  tv(0,0,2,7);tv(0,1,2,7);tv(2,0,2,7);tv(2,1,2,7);        // legs
+  // --- Chair object ---
+  const chair=new Map();
+  const cv=(x,y,z,c)=>chair.set(key(x,y,z),c);
+  for(let x=0;x<2;x++)for(let z=0;z<2;z++) cv(x,2,z,13);  // seat
+  cv(0,0,0,7);cv(1,0,0,7);cv(0,0,1,7);cv(1,0,1,7);
+  cv(0,1,0,7);cv(1,1,0,7);cv(0,1,1,7);cv(1,1,1,7);        // legs (filled)
+  cv(0,3,0,13);cv(1,3,0,13);cv(0,4,0,13);cv(1,4,0,13);    // back
+  // --- Plant object ---
+  const plant=new Map();
+  const pv=(x,y,z,c)=>plant.set(key(x,y,z),c);
+  pv(0,0,0,9);pv(0,1,0,9);                                 // pot
+  pv(0,2,0,14);pv(0,3,0,14);pv(1,2,0,14);pv(0,2,1,14);pv(0,4,0,14); // foliage
+
+  const mk=(name,vox)=>{const id='o'+(nextObjId++);state.objects[id]={id,name,voxels:vox};state.objOrder.push(id);return id;};
+  const tId=mk('Table',table); mk('Chair',chair); mk('Plant',plant);
+  state.activeObjectId=tId;
+
+  // place a couple of pieces
+  state.placed.push({id:nextPlacedId++,objectId:tId,x:4,y:1,z:4,rot:0});
+}
+
+// ============================================================
+//  EVENT WIRING
+// ============================================================
+document.querySelectorAll('#modegroup button').forEach(b=>{
+  b.onclick=()=>setMode(b.dataset.mode);
+});
+document.getElementById('viewIso').onclick=()=>setView('iso');
+document.getElementById('viewBird').onclick=()=>setView('bird');
+document.getElementById('rotL').onclick=()=>rotateView(+1);
+document.getElementById('rotR').onclick=()=>rotateView(-1);
+const stBtn=document.getElementById('seethrough');
+stBtn.onclick=()=>{ state.seeThrough=!state.seeThrough; stBtn.classList.toggle('active',state.seeThrough); rebuild(); save(); };
+const gridBtn=document.getElementById('gridtoggle');
+gridBtn.classList.add('active');
+gridBtn.onclick=()=>{ state.showGrid=!state.showGrid; grid.visible=state.showGrid; gridBtn.classList.toggle('active',state.showGrid); };
+
+document.getElementById('newObj').onclick=()=>newObject(true);
+document.getElementById('objDone').onclick=()=>{ const name=document.getElementById('objName').value.trim(); if(name&&state.objects[state.editingId])state.objects[state.editingId].name=name; setMode('scene'); save(); };
+document.getElementById('objDelete').onclick=()=>{ if(state.editingId && confirm('Delete this object?')){ deleteObject(state.editingId); setMode('scene'); save(); } };
+document.getElementById('objName').oninput=e=>{ if(state.objects[state.editingId]){ state.objects[state.editingId].name=e.target.value; } };
+
+document.getElementById('selRotate').onclick=()=>rotateSelected();
+document.getElementById('selDelete').onclick=()=>deleteSelected();
+
+document.getElementById('btnExport').onclick=()=>{
+  const blob=new Blob([JSON.stringify(serialize(),null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='voxelier-scene.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+};
+document.getElementById('btnImport').onclick=()=>document.getElementById('fileInput').click();
+document.getElementById('fileInput').onchange=e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{ try{ if(deserialize(JSON.parse(r.result))){ placeRot=0; setMode('scene'); buildSwatches(); stBtn.classList.toggle('active',state.seeThrough); save(); } }catch(err){ alert('Invalid file'); } };
+  r.readAsText(f); e.target.value='';
+};
+document.getElementById('btnClear').onclick=()=>{
+  if(!confirm('Clear room voxels and all placed objects? (Objects in the library are kept.)'))return;
+  state.room.clear(); state.placed=[]; selectPlaced(null); rebuild(); save();
+};
+
+function rotateSelected(){
+  const p=state.placed.find(p=>p.id===state.selectedPlaced);
+  if(p){ p.rot=(p.rot+1)%4; rebuild(); save(); }
+}
+function deleteSelected(){
+  if(state.selectedPlaced===null)return;
+  state.placed=state.placed.filter(p=>p.id!==state.selectedPlaced);
+  selectPlaced(null); rebuild(); save();
+}
+
+// keyboard
+window.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT')return;
+  switch(e.key.toLowerCase()){
+    case 'q': rotateView(+1); break;
+    case 'e': rotateView(-1); break;
+    case '1': setView('iso'); break;
+    case '2': setView('bird'); break;
+    case 'x': stBtn.click(); break;
+    case 'g': gridBtn.click(); break;
+    case 'r':
+      if(state.mode==='scene' && state.tool==='select' && state.selectedPlaced!==null) rotateSelected();
+      else { placeRot=(placeRot+1)%4; updateHover(); }
+      break;
+    case 'tab': e.preventDefault(); setMode(state.mode==='scene'?'object':'scene'); break;
+    case 'delete': case 'backspace':
+      if(state.mode==='scene' && state.selectedPlaced!==null){ e.preventDefault(); deleteSelected(); }
+      break;
+    default:
+      // tool number shortcuts handled via list order
+      break;
+  }
+});
+
+// ============================================================
+//  BOOT
+// ============================================================
+function resize(){
+  const r=canvas.getBoundingClientRect();
+  const w=Math.max(1,Math.round(r.width)), h=Math.max(1,Math.round(r.height));
+  const pr=Math.min(devicePixelRatio,2);
+  if(canvas.width!==Math.round(w*pr) || canvas.height!==Math.round(h*pr)){
+    renderer.setSize(w,h,false);
+  }
+}
+window.addEventListener('resize',resize);
+
+function tick(){
+  requestAnimationFrame(tick);
+  resize(); // guard against layout/timing so the canvas always fills the stage
+  updateCamera();
+  grid.visible=state.showGrid;
+  renderer.render(scene,camera);
+  updateHint();
+  updateStatus();
+}
+
+function start(){
+  const saved=localStorage.getItem(LS_KEY);
+  if(!saved || !deserialize(JSON.parse(saved))) seed();
+  buildSwatches(); buildTools(); renderSidePanels();
+  stBtn.classList.toggle('active',state.seeThrough);
+  setMode('scene');
+  resize(); rebuild(); tick();
+}
+start();
+</script>
+</body>
+</html>
