@@ -5,6 +5,8 @@ furniture out of ~10 cm voxel cubes, viewed in a true isometric (orthographic)
 projection. Everything lives in a single self-contained `index.html` — no build
 step.
 
+**Live demo:** https://janpokorny.github.io/voxelier/ (deployed from `main` via GitHub Pages).
+
 ## Running
 
 Just open `index.html` in a modern browser:
