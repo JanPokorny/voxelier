@@ -52,6 +52,16 @@
 
   #side{grid-area:right;background:var(--panel);border-left:1px solid var(--line);padding:12px;overflow:auto}
   h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--ink-dim);font-weight:600}
+  h3 button{font-size:12px;padding:3px 8px;border:1px solid var(--line);background:var(--panel-2);border-radius:6px;float:right;margin-top:-3px}
+  #layers{display:flex;flex-direction:column;gap:5px}
+  .layer{display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:7px;border:1px solid var(--line);background:var(--panel-2);cursor:pointer}
+  .layer.active{border-color:var(--accent)}
+  .layer.active .lname{color:var(--accent);font-weight:600}
+  .layer.hidden .lname{color:var(--ink-dim);text-decoration:line-through}
+  .layer .lname{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+  .layer .vis,.layer .del{flex:none;width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+       border:1px solid var(--line);border-radius:5px;background:transparent;padding:0;font-size:13px;color:var(--ink-dim)}
+  .layer .vis:hover,.layer .del:hover{color:var(--ink);border-color:#3a4252}
   .swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
   .sw{aspect-ratio:1;border-radius:6px;cursor:pointer;border:2px solid transparent;outline:1px solid rgba(0,0,0,.35);outline-offset:-1px}
   .sw.active{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
@@ -86,7 +96,9 @@
   </div>
 
   <div id="side">
-    <h3>Palette</h3>
+    <h3>Layers <button id="addLayer" title="New layer">＋</button></h3>
+    <div id="layers"></div>
+    <h3 style="margin-top:14px">Palette</h3>
     <div class="swatches" id="swatches"></div>
   </div>
 
@@ -124,8 +136,11 @@ function rotY(v,r){ let{x,y,z}=v; r=((r%4)+4)%4; for(let i=0;i<r;i++){const nx=-
 let _uid=1; const uid=()=>'n'+(_uid++);
 
 // ---- data model ---------------------------------------------
-let root;                          // root scene
-let path;                          // array of scenes root..context
+// The document is a list of named "layers" (root scenes). Each layer is
+// visible / hidden / deemphasised. You edit within one active layer.
+let layers=[];                     // layer scene nodes (each has .name and .vis)
+let activeLayer;                   // the layer currently being edited
+let path;                          // array of scenes activeLayer..context
 let context;                       // current scene (= path[last])
 let editObject=null;               // object being voxel-edited, or null
 let selection=new Set();           // selected child ids within context
@@ -133,12 +148,13 @@ let clipboard=[];                  // detached node clones
 let tool='add';                    // voxel tool when editing an object
 let selColor=8;
 
-const newObject=()=>({type:'object',id:uid(),pos:{x:0,y:0,z:0},rot:0,deemph:false,voxels:new Map()});
-const newScene =()=>({type:'scene', id:uid(),pos:{x:0,y:0,z:0},rot:0,deemph:false,children:[]});
+const newObject=()=>({type:'object',id:uid(),pos:{x:0,y:0,z:0},rot:0,voxels:new Map()});
+const newScene =()=>({type:'scene', id:uid(),pos:{x:0,y:0,z:0},rot:0,children:[]});
+function newLayer(name,vis='visible'){ const s=newScene(); s.name=name; s.vis=vis; return s; }
 function clone(n){
   return n.type==='object'
-    ? {type:'object',id:uid(),pos:{...n.pos},rot:n.rot,deemph:n.deemph,voxels:new Map(n.voxels)}
-    : {type:'scene', id:uid(),pos:{...n.pos},rot:n.rot,deemph:n.deemph,children:n.children.map(clone)};
+    ? {type:'object',id:uid(),pos:{...n.pos},rot:n.rot,voxels:new Map(n.voxels)}
+    : {type:'scene', id:uid(),pos:{...n.pos},rot:n.rot,children:n.children.map(clone)};
 }
 const childById=id=>context.children.find(c=>c.id===id);
 
@@ -222,15 +238,16 @@ function nodeBox(node,off,rot,box){
 }
 const emptyBox=()=>({min:{x:1e9,y:1e9,z:1e9},max:{x:-1e9,y:-1e9,z:-1e9}});
 
-// gather every world voxel (skipping the object being edited).
-// `dm` marks voxels under a deemphasised node (inherited down the tree).
-function walk(node,off,rot,owner,deemph,out){
+// gather every world voxel of one layer (skipping the object being edited).
+//   dm     = this layer is deemphasised -> drawn to the lower render layer
+//   active = this is the layer being edited (its context children are pickable)
+//   owner  = id of the active context's direct child this voxel belongs to
+function walk(node,off,rot,owner,active,dm,out){
   if(node===editObject) return;
-  const dm=deemph||!!node.deemph;
   if(node.type==='object'){
-    for(const [k,c] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off); out.push({x:w.x,y:w.y,z:w.z,c,owner,dm}); }
+    for(const [k,c] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off); out.push({x:w.x,y:w.y,z:w.z,c,owner,active,dm}); }
   }else for(const ch of node.children){
-    walk(ch, addv(off,rotY(ch.pos,rot)), (rot+ch.rot)&3, node===context?ch.id:owner, dm, out);
+    walk(ch, addv(off,rotY(ch.pos,rot)), (rot+ch.rot)&3, (active&&node===context)?ch.id:owner, active, dm, out);
   }
 }
 
@@ -243,7 +260,11 @@ function editVoxels(){ // edited object's voxels in world space + parallel local
 
 function rebuild(){
   disposeMeshes(); pickMeshes=[]; childMeshes={}; childBox={}; editMesh=null;
-  const all=[]; walk(root,{x:0,y:0,z:0},0,null,false,all);
+  const all=[];
+  for(const L of layers){
+    if(L.vis==='hidden') continue;
+    walk(L,{x:0,y:0,z:0},0,null,L===activeLayer,L.vis==='deemph',all);
+  }
 
   if(editObject){
     const x=contextXform();
@@ -255,16 +276,19 @@ function rebuild(){
     editMesh=addMesh(evox,c=>palColor[c],{emph:true});
     if(editMesh){ editMesh.userData.local=local; pickMeshes=[editMesh]; }
   }else{
-    const gE={},gD={},ctxE=[],ctxD=[];
+    // owner -> active layer's context children (full colour, pickable);
+    // active & !owner -> dimmed (you've descended past it); other layers -> full colour backdrop.
+    const gE={},gD={},ctxE=[],ctxD=[],othE=[],othD=[];
     for(const v of all){
       if(v.owner){ (v.dm?(gD[v.owner]||(gD[v.owner]=[])):(gE[v.owner]||(gE[v.owner]=[]))).push(v);
         const b=childBox[v.owner]||(childBox[v.owner]=emptyBox());
         b.min.x=Math.min(b.min.x,v.x);b.min.y=Math.min(b.min.y,v.y);b.min.z=Math.min(b.min.z,v.z);
         b.max.x=Math.max(b.max.x,v.x+1);b.max.y=Math.max(b.max.y,v.y+1);b.max.z=Math.max(b.max.z,v.z+1);
-      }else (v.dm?ctxD:ctxE).push(v);
+      }else if(v.active){ (v.dm?ctxD:ctxE).push(v); }
+      else { (v.dm?othD:othE).push(v); }
     }
-    addMesh(ctxE,c=>dimColor[c],{emph:true});
-    addMesh(ctxD,c=>dimColor[c],{emph:false});
+    addMesh(othE,c=>palColor[c],{emph:true});  addMesh(othD,c=>palColor[c],{emph:false});
+    addMesh(ctxE,c=>dimColor[c],{emph:true});  addMesh(ctxD,c=>dimColor[c],{emph:false});
     for(const id of new Set([...Object.keys(gE),...Object.keys(gD)])){
       if(gE[id]) addMesh(gE[id],c=>palColor[c],{emph:true,  pick:true,childId:id});
       if(gD[id]) addMesh(gD[id],c=>palColor[c],{emph:false, pick:true,childId:id});
@@ -290,8 +314,7 @@ function refreshOverlay(){
   for(const c of overlay.children) c.geometry.dispose?.();
   overlay.clear(); overlay.position.set(0,0,0);
   if(editObject) return;
-  for(const id of selection){ const b=childBox[id]; if(b){ const ch=childById(id);
-    overlay.add(boxLines(b.min,b.max, ch&&ch.deemph?0x7d8597:0xf0e6d2)); } }
+  for(const id of selection){ const b=childBox[id]; if(b) overlay.add(boxLines(b.min,b.max,0xf0e6d2)); }
 }
 
 // ============================================================
@@ -428,6 +451,16 @@ function enterObject(o){ editObject=o; selection.clear(); tool='add'; rebuild();
 function exitObject(){ const o=editObject; editObject=null; selection=new Set([o.id]); rebuild(); updateChrome(); }
 function escapeUp(){ if(editObject) exitObject(); else ascend(); }
 
+// ---- layers -------------------------------------------------
+const VIS_NEXT={visible:'deemph',deemph:'hidden',hidden:'visible'};
+function setActiveLayer(L){ if(L===activeLayer&&!editObject) return;
+  editObject=null; activeLayer=L; path=[L]; context=L; selection.clear(); rebuild(); buildLayers(); updateChrome(); }
+function addLayer(){ const L=newLayer('Layer '+(layers.length+1)); layers.push(L); setActiveLayer(L); save(); }
+function deleteLayer(L){ if(layers.length<=1) return;
+  layers=layers.filter(x=>x!==L); if(activeLayer===L) setActiveLayer(layers[0]); else { rebuild(); buildLayers(); } save(); }
+function cycleVis(L){ L.vis=VIS_NEXT[L.vis]; rebuild(); buildLayers(); save(); }
+function renameLayer(L){ const n=prompt('Layer name',L.name); if(n!=null){ L.name=n.trim()||L.name; buildLayers(); updateChrome(); save(); } }
+
 function createObject(){
   const o=newObject(); o.pos={x:Math.round(goal.target.x),y:0,z:Math.round(goal.target.z)};
   context.children.push(o); enterObject(o); save();
@@ -477,13 +510,6 @@ function rotateSelection(){
   if(selection.size){ rebuild(); save(); }
 }
 function nudgeY(d){ for(const id of selection){ const c=childById(id); if(c) c.pos.y+=d; } if(selection.size){rebuild();save();} }
-function toggleDeemph(){
-  if(!selection.size) return;
-  const sel=[...selection].map(childById).filter(Boolean);
-  const target=!sel.every(n=>n.deemph);     // all on -> turn off, otherwise turn on
-  for(const n of sel) n.deemph=target;
-  rebuild(); updateChrome(); save();
-}
 
 // ============================================================
 //  CAMERA
@@ -538,7 +564,6 @@ const SCENE_ACTIONS=[
   {id:'ungroup',ic:'⊟',label:'Ungroup',fn:ungroupSelection},
   {id:'dup',  ic:'⧉',label:'Dupl.',  fn:duplicateSelection},
   {id:'rot',  ic:'⟳',label:'Rotate', fn:rotateSelection},
-  {id:'deemph',ic:'◐',label:'Deemph.',fn:toggleDeemph, toggle:true},
   {id:'del',  ic:'⌫',label:'Delete', fn:deleteSelection},
 ];
 const VOX_TOOLS=[{id:'add',ic:'＋',label:'Add'},{id:'erase',ic:'－',label:'Erase'},{id:'paint',ic:'❖',label:'Paint'}];
@@ -552,22 +577,22 @@ function updateChrome(){
     const fin=document.createElement('button'); fin.className='tool'; fin.innerHTML='<span class="ic">✓</span>Finish'; fin.onclick=exitObject; tw.appendChild(fin);
   }else{
     const has=selection.size>0;
-    const allDe=has && [...selection].map(childById).every(n=>n&&n.deemph);
     for(const a of SCENE_ACTIONS){ const el=document.createElement('button');
-      el.className='tool'+((a.always||has)?'':' disabled')+(a.toggle&&allDe?' active':'');
+      el.className='tool'+((a.always||has)?'':' disabled');
       el.innerHTML=`<span class="ic">${a.ic}</span>${a.label}`; el.onclick=a.fn; tw.appendChild(el); }
   }
-  // breadcrumb
+  // breadcrumb (active layer name, then any groups you've descended into)
   const cr=document.getElementById('crumb'); cr.innerHTML='';
   path.forEach((n,i)=>{ const s=document.createElement('span'); s.className='c'+(!editObject&&i===path.length-1?' cur':'');
-    s.textContent=i===0?'Scene':'group'; if(i>0)cr.appendChild(sep()); cr.appendChild(s); });
+    s.textContent=i===0?(activeLayer.name||'Layer'):'group'; if(i>0)cr.appendChild(sep()); cr.appendChild(s); });
   if(editObject){ cr.appendChild(sep()); const s=document.createElement('span'); s.className='c cur'; s.textContent='✏ object'; cr.appendChild(s); }
   document.getElementById('up').disabled = !editObject && path.length<=1;
+  buildLayers();
   // status hint
   document.getElementById('statHint').textContent = editObject
     ? 'Editing object — Add / Erase / Paint voxels · Esc to finish'
     : (selection.size
-        ? `${selection.size} selected — drag to move · R rotate · X deemphasise · Ctrl+G group · Del delete`
+        ? `${selection.size} selected — drag to move · R rotate · Ctrl+G group · Del delete`
         : 'Click to select · double-click to enter · N new object');
   document.getElementById('hint').textContent = editObject
     ? 'Painting voxels (1 voxel = 1 cm). Esc returns to the scene.'
@@ -579,6 +604,24 @@ function buildSwatches(){ const w=document.getElementById('swatches'); w.innerHT
   PALETTE.forEach((hex,i)=>{ const s=document.createElement('div'); s.className='sw'+(i===selColor?' active':'');
     s.style.background=hex; s.onclick=()=>{selColor=i; buildSwatches();}; w.appendChild(s); }); }
 
+const VIS_ICON={visible:'●',deemph:'◐',hidden:'○'};
+const VIS_TITLE={visible:'Visible (click: deemphasise)',deemph:'Deemphasised (click: hide)',hidden:'Hidden (click: show)'};
+function buildLayers(){
+  const w=document.getElementById('layers'); w.innerHTML='';
+  for(const L of layers){
+    const row=document.createElement('div'); row.className='layer'+(L===activeLayer?' active':'')+(L.vis==='hidden'?' hidden':'');
+    const vis=document.createElement('button'); vis.className='vis'; vis.textContent=VIS_ICON[L.vis]; vis.title=VIS_TITLE[L.vis];
+    vis.onclick=e=>{e.stopPropagation(); cycleVis(L);};
+    const nm=document.createElement('span'); nm.className='lname'; nm.textContent=L.name; nm.title='Click to edit here · double-click to rename';
+    nm.ondblclick=e=>{e.stopPropagation(); renameLayer(L);};
+    const del=document.createElement('button'); del.className='del'; del.textContent='×'; del.title='Delete layer';
+    del.onclick=e=>{e.stopPropagation(); if(layers.length>1&&confirm('Delete layer “'+L.name+'”?')) deleteLayer(L);};
+    row.append(vis,nm,del);
+    row.onclick=()=>setActiveLayer(L);
+    w.appendChild(row);
+  }
+}
+
 // ---- view / toggle wiring -----------------------------------
 document.getElementById('viewIso').onclick=()=>setView('iso');
 document.getElementById('viewBird').onclick=()=>setView('bird');
@@ -586,6 +629,7 @@ document.getElementById('rotL').onclick=()=>rotateView(+1);
 document.getElementById('rotR').onclick=()=>rotateView(-1);
 document.getElementById('fit').onclick=frameView;
 document.getElementById('up').onclick=escapeUp;
+document.getElementById('addLayer').onclick=addLayer;
 const gridBtn=document.getElementById('gridtoggle');
 gridBtn.onclick=()=>{ showGrid=!showGrid; grid.visible=showGrid; gridBtn.classList.toggle('active',showGrid); };
 
@@ -606,7 +650,6 @@ window.addEventListener('keydown',e=>{
     case '1': setView('iso'); break;
     case '2': setView('bird'); break;
     case 'f': frameView(); break;
-    case 'x': if(!editObject) toggleDeemph(); break;   // X = deemphasise selection
     case 'g': gridBtn.click(); break;
     case 'escape': escapeUp(); break;
     case 'n': if(!editObject) createObject(); break;
@@ -620,18 +663,20 @@ window.addEventListener('keydown',e=>{
 // ============================================================
 //  PERSISTENCE
 // ============================================================
-const LS='voxelier-v4';
+const LS='voxelier-v5';
 function ser(n){ return n.type==='object'
-  ? {t:'o',id:n.id,p:n.pos,r:n.rot,d:n.deemph,v:[...n.voxels]}
-  : {t:'s',id:n.id,p:n.pos,r:n.rot,d:n.deemph,c:n.children.map(ser)}; }
+  ? {t:'o',id:n.id,p:n.pos,r:n.rot,v:[...n.voxels]}
+  : {t:'s',id:n.id,p:n.pos,r:n.rot,c:n.children.map(ser)}; }
 function de(d){ return d.t==='o'
-  ? {type:'object',id:d.id,pos:d.p,rot:d.r,deemph:!!d.d,voxels:new Map(d.v)}
-  : {type:'scene',id:d.id,pos:d.p,rot:d.r,deemph:!!d.d,children:d.c.map(de)}; }
+  ? {type:'object',id:d.id,pos:d.p,rot:d.r,voxels:new Map(d.v)}
+  : {type:'scene',id:d.id,pos:d.p,rot:d.r,children:d.c.map(de)}; }
 let saveT=null;
 function save(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{
-  localStorage.setItem(LS,JSON.stringify({uid:_uid,root:ser(root)})); }catch(_){}} ,250); }
-function load(){ try{ const d=JSON.parse(localStorage.getItem(LS)); if(!d)return false;
-  _uid=d.uid||1; root=de(d.root); return true; }catch(_){ return false; } }
+  localStorage.setItem(LS,JSON.stringify({uid:_uid, active:layers.indexOf(activeLayer),
+    layers:layers.map(L=>({name:L.name,vis:L.vis,node:ser(L)}))})); }catch(_){}} ,250); }
+function load(){ try{ const d=JSON.parse(localStorage.getItem(LS)); if(!d||!d.layers)return false;
+  _uid=d.uid||1; layers=d.layers.map(L=>{ const n=de(L.node); n.name=L.name; n.vis=L.vis||'visible'; return n; });
+  activeLayer=layers[d.active]||layers[0]; return true; }catch(_){ return false; } }
 
 // ============================================================
 //  EXAMPLE SCENE
@@ -672,16 +717,20 @@ function seed(){
     if(Math.hypot(x-4,(y-22)*0.8,z-4)<6) pv(x,y,z,14);                 // foliage blob
   }
 
-  // --- assemble ---
-  root=newScene(); _uid=1; // ids reassigned via uid() below
+  // --- assemble into layers ---
   const dws=newScene(); dws.pos={x:6,y:1,z:30};                        // "Desk with computer" subscene
   desk.pos={x:0,y:0,z:0}; comp.pos={x:6,y:18,z:4};
   dws.children=[desk,comp];
-
-  room.pos={x:0,y:0,z:0}; room.deemph=true;   // walls are deemphasised by default
   chair.pos={x:20,y:1,z:14}; chair.rot=2;
   plant.pos={x:46,y:1,z:6};
-  root.children=[room,dws,chair,plant];
+
+  const roomLayer=newLayer('Room','deemph');     // walls deemphasised by default
+  room.pos={x:0,y:0,z:0}; roomLayer.children=[room];
+  const furnLayer=newLayer('Furniture','visible');
+  furnLayer.children=[dws,chair,plant];
+
+  layers=[roomLayer,furnLayer];
+  activeLayer=furnLayer;
 }
 
 // ============================================================
@@ -711,9 +760,9 @@ function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); renderFr
 
 function start(){
   if(!load()) seed();
-  path=[root]; context=root; editObject=null; selection.clear();
+  path=[activeLayer]; context=activeLayer; editObject=null; selection.clear();
   gridBtn.classList.toggle('active',showGrid);
-  buildSwatches(); rebuild(); updateChrome(); frameView(); save(); tick();
+  buildSwatches(); buildLayers(); rebuild(); updateChrome(); frameView(); save(); tick();
 }
 start();
 </script>

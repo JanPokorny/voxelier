@@ -7,16 +7,31 @@ projection. Everything is a single self-contained `index.html` — no build step
 
 ## Model
 
-There are only two kinds of things, nested like SVG groups in Inkscape:
+Things nest like SVG groups in Inkscape:
 
 - **object** — a set of voxels. A *singular unit*: copying an object gives an
   independent duplicate (editing one never changes the other — there are no
   shared instances/prefabs).
 - **scene** — a group of objects and sub-scenes.
+- **layer** — a named top-level scene with its own visibility. You edit within one
+  active layer at a time; the rest render as a backdrop.
 
-The example that opens is a room: the room shell is just an object like any other,
-a *Desk-with-computer* sub-scene holds separate **desk** and **computer** objects,
-plus a **chair** and a **plant**.
+The example that opens has two layers: a **Room** layer (the room shell, set to
+*deemphasised*) and an active **Furniture** layer holding a *Desk-with-computer*
+sub-scene (separate **desk** and **computer** objects), a **chair**, and a **plant**.
+
+## Layers
+
+Each layer is **visible**, **hidden**, or **deemphasised** — cycle a layer's state
+with the dot button in the Layers panel (● visible → ◐ deemphasised → ○ hidden).
+Click a layer's name to make it active (you edit its contents); double-click to
+rename; **＋** adds one, **×** deletes.
+
+A **deemphasised** layer still lives in 3D — it casts and receives shadows — but
+it's drawn to a separate, lower render layer, so it can **never appear in front
+of** the ordinary layers (much like a game compositing the player onto its own
+buffer). That's why the room walls stay solid and shadow-casting yet never hide
+what's inside.
 
 ## Editing — the mode is implicit
 
@@ -48,20 +63,12 @@ edit its voxels). **Esc** / the **↑ Up** button goes back up a level.
 | Rotate view 90° | `Q` / `E` |
 | Isometric / Birdseye | `1` / `2` |
 | Fit to view | `F` |
-| Deemphasise selection | `X` (or the **◐ Deemph.** tool) |
 | Toggle grid | `G` |
+| Layer visibility / active / rename | Layers panel (top-right) |
 
 Placement is strictly orthogonal and rotation is limited to 90° steps. Birdseye is
 an axis-aligned top-down view (a clean floor plan). Soft shadows are drawn for depth.
-The scene autosaves to `localStorage`.
-
-### Deemphasised pieces
-
-Any object or group can be **deemphasised** (the room walls are, by default). A
-deemphasised piece still lives in 3D — it casts and receives shadows — but it's
-drawn to a separate, lower layer, so it can **never appear in front of** the
-ordinary pieces (much like a game compositing the player onto its own buffer). The
-result is that walls stay solid and shadow-casting yet never hide what's inside.
+The document autosaves to `localStorage`.
 
 ## Tech
 
