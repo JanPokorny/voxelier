@@ -1,101 +1,69 @@
 # voxelier
 
-A low-fi, browser-based **voxel editor for room design**. Build rooms and
-furniture out of ~10 cm voxel cubes, viewed in a true isometric (orthographic)
-projection. Everything lives in a single self-contained `index.html` — no build
-step.
+A lo-fi, browser-based **voxel scene editor** (1 voxel = 1 cm), in a true isometric
+projection. Everything is a single self-contained `index.html` — no build step.
 
 **Live demo:** https://voxelier-xmyv5z.surge.sh
 
-## Running
+## Model
 
-Just open `index.html` in a modern browser:
+There are only two kinds of things, nested like SVG groups in Inkscape:
 
-```
-# either double-click index.html, or serve it (recommended):
-npx http-server -p 8099
-# then visit http://localhost:8099/index.html
-```
+- **object** — a set of voxels. A *singular unit*: copying an object gives an
+  independent duplicate (editing one never changes the other — there are no
+  shared instances/prefabs).
+- **scene** — a group of objects and sub-scenes.
 
-Three.js is loaded from a CDN via an import map, so the first load needs an
-internet connection (it's cached afterwards).
+The example that opens is a room: the room shell is just an object like any other,
+a *Desk-with-computer* sub-scene holds separate **desk** and **computer** objects,
+plus a **chair** and a **plant**.
 
-## Concepts
+## Editing — the mode is implicit
 
-- **Voxels** — 1 voxel = 10 cm. Placement is strictly orthogonal (grid-aligned);
-  rotation is limited to 90° steps. No shadows or other visual candy — just flat
-  face shading so the cubes read as 3D.
-- **Objects** — reusable pieces (a chair, a table, a plant…) edited on their own
-  in *Object* mode, then dropped into the room as whole units in *Scene* mode.
-- **Room** — also built from voxels, but flagged as the room shell. It can be made
-  **see-through** so the walls nearest the camera fade away and you can see what's
-  inside.
-- **16-color muted palette** — a fixed, deliberately desaturated palette suited to
-  interiors.
+There's no mode switch; what you can do depends on what you've entered (like
+double-clicking into a group in Inkscape):
 
-## Modes
+- **Inside a scene** you arrange its contents: select, move, rotate, delete,
+  copy/cut/paste, **group** a selection into a sub-scene, or **ungroup** one.
+- **Inside an object** you paint voxels (add / erase / paint) with the 16-colour
+  muted palette.
 
-| Mode | What you do |
-|------|-------------|
-| **Scene** | Build the room shell (Wall/Erase/Paint), place & arrange objects (Place/Select). |
-| **Object** | Edit a single reusable object voxel-by-voxel (Add/Erase/Paint). |
-
-## Views
-
-- **Iso** — true 2:1 isometric. Rotate in 90° steps with the ⟲ / ⟳ buttons or `Q` / `E`.
-- **Bird** — top-down birdseye (great as a floor plan, especially with See-through on).
+**Double-click** a piece to enter it (a sub-scene to descend into it, an object to
+edit its voxels). **Esc** / the **↑ Up** button goes back up a level.
 
 ## Controls
 
-| Action | Control |
-|--------|---------|
-| Use current tool | **Left mouse** (click or drag to paint) |
-| Pan | **Right / middle mouse** drag |
-| Zoom | **Mouse wheel** |
+| | |
+|---|---|
+| Select | **click** (Shift-click to multi-select) |
+| Move selection | **drag** (on the floor plane) · `[` / `]` lower / raise |
+| Enter a piece | **double-click** |
+| Go up a level | `Esc` |
+| New object | `N` |
+| Duplicate | `Ctrl+D` · copy / cut / paste `Ctrl+C` / `Ctrl+X` / `Ctrl+V` |
+| Group / Ungroup | `Ctrl+G` / `Ctrl+Shift+G` |
+| Rotate 90° | `R` (scene selection) |
+| Delete | `Delete` / `Backspace` |
+| Pan / zoom | **right-drag** / **wheel** |
 | Rotate view 90° | `Q` / `E` |
 | Isometric / Birdseye | `1` / `2` |
-| Toggle see-through walls | `X` |
+| Fit to view | `F` |
+| See-through walls | `X` |
 | Toggle grid | `G` |
-| Switch Scene ⇄ Object | `Tab` |
-| Rotate placement / selected object | `R` |
-| Delete selected placement | `Delete` / `Backspace` |
 
-## Tools
-
-**Scene mode**
-
-- **Place** — drop the object selected in the Objects list at the cursor (`R` to rotate first).
-- **Select** — click a placed object to select it; drag to move, `R` to rotate, `Delete` to remove.
-- **Wall** — paint room voxels with the active color.
-- **Erase** — remove room voxels.
-- **Paint** — recolor existing room voxels.
-
-**Object mode**
-
-- **Add / Erase / Paint** — build the object cube by cube. **Done** returns to the scene.
-
-## Saving
-
-The scene autosaves to `localStorage`. Use **Export** / **Import** to move a scene
-as a JSON file, or **Clear** to wipe the room and placements (library objects are kept).
-
-## Deploying
-
-The live demo is hosted on [surge.sh](https://surge.sh) (free static hosting, works
-with private source repos since it serves the built file, not the repo). To publish
-your own copy:
-
-```
-npx surge ./ your-name.surge.sh
-```
-
-To update the existing demo URL you need the surge account it was published under
-(see the credentials shared when it was first deployed).
+Placement is strictly orthogonal and rotation is limited to 90° steps. Birdseye is
+an axis-aligned top-down view (good as a floor plan, especially with See-through on).
+Soft shadows are drawn for depth. The scene autosaves to `localStorage`.
 
 ## Tech
 
-- A single `index.html` (inline CSS + ES-module JS).
-- [three.js](https://threejs.org/) `OrthographicCamera` for true isometric, with
-  `InstancedMesh` per draw layer for the voxels.
-- See-through: room voxels on the camera-facing half are split into a faint,
-  transparent instanced mesh; in birdseye, everything above the floor fades.
+- One `index.html` (inline CSS + ES-module JS); [three.js](https://threejs.org/)
+  loaded from a CDN via an import map (first load needs a connection).
+- `OrthographicCamera` for true isometric; one `InstancedMesh` per pickable unit,
+  so clicks resolve to whole objects/sub-scenes; voxel editing raycasts the single
+  edited object.
+
+## Running
+
+Open `index.html` in a modern browser, or serve it: `npx http-server` and visit the
+printed URL.
