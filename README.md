@@ -48,12 +48,20 @@ edit its voxels). **Esc** / the **↑ Up** button goes back up a level.
 | Rotate view 90° | `Q` / `E` |
 | Isometric / Birdseye | `1` / `2` |
 | Fit to view | `F` |
-| See-through walls | `X` |
+| Deemphasise selection | `X` (or the **◐ Deemph.** tool) |
 | Toggle grid | `G` |
 
 Placement is strictly orthogonal and rotation is limited to 90° steps. Birdseye is
-an axis-aligned top-down view (good as a floor plan, especially with See-through on).
-Soft shadows are drawn for depth. The scene autosaves to `localStorage`.
+an axis-aligned top-down view (a clean floor plan). Soft shadows are drawn for depth.
+The scene autosaves to `localStorage`.
+
+### Deemphasised pieces
+
+Any object or group can be **deemphasised** (the room walls are, by default). A
+deemphasised piece still lives in 3D — it casts and receives shadows — but it's
+drawn to a separate, lower layer, so it can **never appear in front of** the
+ordinary pieces (much like a game compositing the player onto its own buffer). The
+result is that walls stay solid and shadow-casting yet never hide what's inside.
 
 ## Tech
 

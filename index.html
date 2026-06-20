@@ -75,7 +75,6 @@
       <button id="rotR" title="Rotate right (E)">⟳</button>
       <button id="fit" title="Fit (F)">⤢ Fit</button>
     </div>
-    <button id="seethrough" title="See-through (X)">◐ See-through</button>
     <button id="gridtoggle" title="Grid (G)">▥ Grid</button>
   </div>
 
@@ -134,12 +133,12 @@ let clipboard=[];                  // detached node clones
 let tool='add';                    // voxel tool when editing an object
 let selColor=8;
 
-const newObject=()=>({type:'object',id:uid(),pos:{x:0,y:0,z:0},rot:0,voxels:new Map()});
-const newScene =()=>({type:'scene', id:uid(),pos:{x:0,y:0,z:0},rot:0,children:[]});
+const newObject=()=>({type:'object',id:uid(),pos:{x:0,y:0,z:0},rot:0,deemph:false,voxels:new Map()});
+const newScene =()=>({type:'scene', id:uid(),pos:{x:0,y:0,z:0},rot:0,deemph:false,children:[]});
 function clone(n){
   return n.type==='object'
-    ? {type:'object',id:uid(),pos:{...n.pos},rot:n.rot,voxels:new Map(n.voxels)}
-    : {type:'scene', id:uid(),pos:{...n.pos},rot:n.rot,children:n.children.map(clone)};
+    ? {type:'object',id:uid(),pos:{...n.pos},rot:n.rot,deemph:n.deemph,voxels:new Map(n.voxels)}
+    : {type:'scene', id:uid(),pos:{...n.pos},rot:n.rot,deemph:n.deemph,children:n.children.map(clone)};
 }
 const childById=id=>context.children.find(c=>c.id===id);
 
@@ -156,47 +155,54 @@ const goal={azim:cam.azim,elev:cam.elev,zoom:cam.zoom,target:cam.target.clone()}
 const CAM_DIST=900;
 const camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,4000);
 
-scene.add(new THREE.AmbientLight(0xffffff,0.62));
+// Render layers: 0 = shadow casters (shadow camera sees this); 1 = emphasised
+// (drawn last, on top); 2 = deemphasised (drawn first, can never cover layer 1).
+const L_EMPH=1, L_DEEMPH=2;
+
+scene.add(withLayers(new THREE.AmbientLight(0xffffff,0.62)));
 const dir=new THREE.DirectionalLight(0xffffff,0.78);
 dir.castShadow=true; dir.shadow.mapSize.set(2048,2048); dir.shadow.normalBias=0.6; dir.shadow.bias=-0.0002;
 {const s=dir.shadow.camera; s.left=-70;s.right=70;s.top=70;s.bottom=-70;s.near=1;s.far=400;}
-scene.add(dir); scene.add(dir.target);
-const dir2=new THREE.DirectionalLight(0xffffff,0.16); dir2.position.set(-6,5,-7); scene.add(dir2);
+scene.add(withLayers(dir)); scene.add(dir.target);
+const dir2=new THREE.DirectionalLight(0xffffff,0.16); dir2.position.set(-6,5,-7); scene.add(withLayers(dir2));
+function withLayers(o){ o.layers.enableAll(); return o; } // lights must be collected in both passes
 
 const boxGeo=new THREE.BoxGeometry(1,1,1);
 const matSolid=new THREE.MeshLambertMaterial();
-const matGhost=new THREE.MeshLambertMaterial({transparent:true,opacity:0.10,depthWrite:false});
 const _col=new THREE.Color(), _m=new THREE.Matrix4(), _up=new THREE.Vector3(), _upN=new THREE.Vector3();
 const bg=new THREE.Color('#0f1115');
 const dimColor=PALETTE.map(h=>new THREE.Color(h).lerp(bg,0.62));
 const palColor=PALETTE.map(h=>new THREE.Color(h));
 
-const grid=new THREE.GridHelper(400,400,0x2e3340,0x22252e); scene.add(grid);
+const grid=new THREE.GridHelper(400,400,0x2e3340,0x22252e); grid.layers.set(L_DEEMPH); scene.add(grid);
 const ground=new THREE.Mesh(new THREE.PlaneGeometry(4000,4000),new THREE.ShadowMaterial({opacity:0.26}));
-ground.rotation.x=-Math.PI/2; ground.position.y=0.002; ground.receiveShadow=true; scene.add(ground);
+ground.rotation.x=-Math.PI/2; ground.position.y=0.002; ground.receiveShadow=true; ground.layers.set(L_DEEMPH); scene.add(ground);
 
-// overlay group for selection / hover outlines
+// overlay group for selection / hover outlines (always on top)
 const overlay=new THREE.Group(); scene.add(overlay);
-const hoverVox=new THREE.LineSegments(new THREE.EdgesGeometry(boxGeo),new THREE.LineBasicMaterial({color:0xa7c4bc}));
-hoverVox.visible=false; scene.add(hoverVox);
+const hoverVox=new THREE.LineSegments(new THREE.EdgesGeometry(boxGeo),new THREE.LineBasicMaterial({color:0xa7c4bc,depthTest:false}));
+hoverVox.visible=false; hoverVox.layers.set(L_EMPH); hoverVox.renderOrder=999; scene.add(hoverVox);
 
 // dynamic meshes
 let meshes=[];                 // all instanced meshes added this rebuild
 let pickMeshes=[];             // meshes raycast for picking
-let childMeshes={};            // childId -> solid mesh (scene mode)
+let childMeshes={};            // childId -> [meshes] (scene mode; emph + deemph parts)
 let childBox={};               // childId -> {min,max}
 let editMesh=null;             // edit object's mesh
 let editXform={off:{x:0,y:0,z:0},rot:0};
 
 function disposeMeshes(){ for(const m of meshes){scene.remove(m); m.dispose?.();} meshes=[]; }
-function makeMesh(arr,material,colorOf){
+function addMesh(arr,colorOf,{emph=true,pick=false,childId=null}={}){
   if(!arr.length) return null;
-  const m=new THREE.InstancedMesh(boxGeo,material,arr.length);
+  const m=new THREE.InstancedMesh(boxGeo,matSolid,arr.length);
   for(let i=0;i<arr.length;i++){ const d=arr[i];
-    _m.makeTranslation(d.x+0.5,d.y+0.5,d.z+0.5); m.setMatrixAt(i,_m);
-    m.setColorAt(i,colorOf(d.c)); }
+    _m.makeTranslation(d.x+0.5,d.y+0.5,d.z+0.5); m.setMatrixAt(i,_m); m.setColorAt(i,colorOf(d.c)); }
   m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
-  scene.add(m); meshes.push(m); return m;
+  m.castShadow=m.receiveShadow=true;
+  m.layers.set(emph?L_EMPH:L_DEEMPH); m.layers.enable(0); // always a shadow caster
+  scene.add(m); meshes.push(m);
+  if(pick){ m.userData.childId=childId; m.userData.emph=emph; pickMeshes.push(m); (childMeshes[childId]||(childMeshes[childId]=[])).push(m); }
+  return m;
 }
 
 // transform from root down to current context
@@ -216,90 +222,76 @@ function nodeBox(node,off,rot,box){
 }
 const emptyBox=()=>({min:{x:1e9,y:1e9,z:1e9},max:{x:-1e9,y:-1e9,z:-1e9}});
 
-// gather every world voxel (skipping the object being edited)
-function walk(node,off,rot,owner,out){
+// gather every world voxel (skipping the object being edited).
+// `dm` marks voxels under a deemphasised node (inherited down the tree).
+function walk(node,off,rot,owner,deemph,out){
   if(node===editObject) return;
+  const dm=deemph||!!node.deemph;
   if(node.type==='object'){
-    for(const [k,c] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off); out.push({x:w.x,y:w.y,z:w.z,c,owner}); }
+    for(const [k,c] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off); out.push({x:w.x,y:w.y,z:w.z,c,owner,dm}); }
   }else for(const ch of node.children){
-    walk(ch, addv(off,rotY(ch.pos,rot)), (rot+ch.rot)&3, node===context?ch.id:owner, out);
+    walk(ch, addv(off,rotY(ch.pos,rot)), (rot+ch.rot)&3, node===context?ch.id:owner, dm, out);
   }
 }
 
-// see-through classification
-let sCx=0,sCz=0,sMinY=0;
-function computeSceneStats(all){
-  let n=0,minY=1e9,cx=0,cz=0;
-  for(const v of all){ minY=Math.min(minY,v.y); cx+=v.x; cz+=v.z; n++; }
-  sMinY=minY; sCx=n?cx/n:0; sCz=n?cz/n:0;
-}
-function isGhost(v){
-  if(!seeThrough) return false;
-  if(view==='bird') return v.y>sMinY;
-  if(v.y<=sMinY) return false;
-  const hx=Math.sin(goal.azim),hz=Math.cos(goal.azim);
-  return (v.x+0.5-sCx)*hx+(v.z+0.5-sCz)*hz > 0.001;
+function editVoxels(){ // edited object's voxels in world space + parallel local list
+  const evox=[],local=[];
+  for(const [k,c] of editObject.voxels){ const lv=parseKey(k); const w=addv(rotY(lv,editXform.rot),editXform.off);
+    evox.push({x:w.x,y:w.y,z:w.z,c}); local.push(lv); }
+  return {evox,local};
 }
 
 function rebuild(){
   disposeMeshes(); pickMeshes=[]; childMeshes={}; childBox={}; editMesh=null;
-  const all=[]; walk(root,{x:0,y:0,z:0},0,null,all);
+  const all=[]; walk(root,{x:0,y:0,z:0},0,null,false,all);
 
   if(editObject){
     const x=contextXform();
     editXform={off:addv(x.off,rotY(editObject.pos,x.rot)), rot:(x.rot+editObject.rot)&3};
-    computeSceneStats(all.concat([...editObject.voxels].map(([k])=>{const w=addv(rotY(parseKey(k),editXform.rot),editXform.off);return{x:w.x,y:w.y,z:w.z};})));
-    // dim everything else (with see-through)
-    const dim=[],ghost=[];
-    for(const v of all){ (isGhost(v)?ghost:dim).push(v); }
-    makeMesh(dim,matSolid,c=>dimColor[c]);
-    makeMesh(ghost,matGhost,c=>dimColor[c]);
-    // edit object (always solid, full colour, pickable)
-    const evox=[]; const local=[];
-    for(const [k,c] of editObject.voxels){ const lv=parseKey(k); const w=addv(rotY(lv,editXform.rot),editXform.off);
-      evox.push({x:w.x,y:w.y,z:w.z,c}); local.push(lv); }
-    editMesh=makeMesh(evox,matSolid,c=>palColor[c]);
-    if(editMesh){ editMesh.castShadow=editMesh.receiveShadow=true; editMesh.userData.local=local; pickMeshes=[editMesh]; }
+    const de=[],dd=[]; for(const v of all){ (v.dm?dd:de).push(v); }  // dim the rest, by layer
+    addMesh(de,c=>dimColor[c],{emph:true});
+    addMesh(dd,c=>dimColor[c],{emph:false});
+    const {evox,local}=editVoxels();                                  // edited object: always emphasised
+    editMesh=addMesh(evox,c=>palColor[c],{emph:true});
+    if(editMesh){ editMesh.userData.local=local; pickMeshes=[editMesh]; }
   }else{
-    computeSceneStats(all);
-    const groups={}, dim=[], ghost=[];
+    const gE={},gD={},ctxE=[],ctxD=[];
     for(const v of all){
-      if(isGhost(v)){ ghost.push(v); continue; }
-      if(v.owner){ (groups[v.owner]||(groups[v.owner]=[])).push(v); }
-      else dim.push(v);
+      if(v.owner){ (v.dm?(gD[v.owner]||(gD[v.owner]=[])):(gE[v.owner]||(gE[v.owner]=[]))).push(v);
+        const b=childBox[v.owner]||(childBox[v.owner]=emptyBox());
+        b.min.x=Math.min(b.min.x,v.x);b.min.y=Math.min(b.min.y,v.y);b.min.z=Math.min(b.min.z,v.z);
+        b.max.x=Math.max(b.max.x,v.x+1);b.max.y=Math.max(b.max.y,v.y+1);b.max.z=Math.max(b.max.z,v.z+1);
+      }else (v.dm?ctxD:ctxE).push(v);
     }
-    // bounding boxes include ghost voxels so the outline encloses the whole child
-    for(const v of all){ if(!v.owner) continue; const b=childBox[v.owner]||(childBox[v.owner]=emptyBox());
-      b.min.x=Math.min(b.min.x,v.x);b.min.y=Math.min(b.min.y,v.y);b.min.z=Math.min(b.min.z,v.z);
-      b.max.x=Math.max(b.max.x,v.x+1);b.max.y=Math.max(b.max.y,v.y+1);b.max.z=Math.max(b.max.z,v.z+1); }
-    makeMesh(dim,matSolid,c=>dimColor[c]);
-    for(const id in groups){ const m=makeMesh(groups[id],matSolid,c=>palColor[c]);
-      if(m){ m.castShadow=m.receiveShadow=true; m.userData.childId=id; childMeshes[id]=m; pickMeshes.push(m); } }
-    makeMesh(ghost,matGhost,c=>palColor[c]);
+    addMesh(ctxE,c=>dimColor[c],{emph:true});
+    addMesh(ctxD,c=>dimColor[c],{emph:false});
+    for(const id of new Set([...Object.keys(gE),...Object.keys(gD)])){
+      if(gE[id]) addMesh(gE[id],c=>palColor[c],{emph:true,  pick:true,childId:id});
+      if(gD[id]) addMesh(gD[id],c=>palColor[c],{emph:false, pick:true,childId:id});
+    }
   }
   refreshOverlay();
 }
-function rebuildEdit(){ // fast path while painting (dim/ghost unchanged)
+function rebuildEdit(){ // fast path while painting (the dimmed rest is unchanged)
   if(editMesh){ scene.remove(editMesh); editMesh.dispose?.(); const i=meshes.indexOf(editMesh); if(i>=0)meshes.splice(i,1); }
-  const evox=[],local=[];
-  for(const [k,c] of editObject.voxels){ const lv=parseKey(k); const w=addv(rotY(lv,editXform.rot),editXform.off);
-    evox.push({x:w.x,y:w.y,z:w.z,c}); local.push(lv); }
-  editMesh=makeMesh(evox,matSolid,c=>palColor[c]);
-  if(editMesh){ editMesh.castShadow=editMesh.receiveShadow=true; editMesh.userData.local=local; }
+  const {evox,local}=editVoxels();
+  editMesh=addMesh(evox,c=>palColor[c],{emph:true});
+  if(editMesh){ editMesh.userData.local=local; }
   pickMeshes=editMesh?[editMesh]:[];
 }
 
 // ---- overlay outlines ---------------------------------------
 function boxLines(min,max,color){
   const g=new THREE.BoxGeometry(max.x-min.x,max.y-min.y,max.z-min.z);
-  const e=new THREE.LineSegments(new THREE.EdgesGeometry(g),new THREE.LineBasicMaterial({color}));
-  e.position.set((min.x+max.x)/2,(min.y+max.y)/2,(min.z+max.z)/2); g.dispose(); return e;
+  const e=new THREE.LineSegments(new THREE.EdgesGeometry(g),new THREE.LineBasicMaterial({color,depthTest:false}));
+  e.position.set((min.x+max.x)/2,(min.y+max.y)/2,(min.z+max.z)/2); e.layers.set(L_EMPH); e.renderOrder=999; g.dispose(); return e;
 }
 function refreshOverlay(){
   for(const c of overlay.children) c.geometry.dispose?.();
-  overlay.clear();
+  overlay.clear(); overlay.position.set(0,0,0);
   if(editObject) return;
-  for(const id of selection){ const b=childBox[id]; if(b) overlay.add(boxLines(b.min,b.max,0xf0e6d2)); }
+  for(const id of selection){ const b=childBox[id]; if(b){ const ch=childById(id);
+    overlay.add(boxLines(b.min,b.max, ch&&ch.deemph?0x7d8597:0xf0e6d2)); } }
 }
 
 // ============================================================
@@ -310,11 +302,13 @@ const ndc=new THREE.Vector2();
 const _hit=new THREE.Vector3();
 function setNdc(cx,cy){ const r=canvas.getBoundingClientRect();
   ndc.x=((cx-r.left)/r.width)*2-1; ndc.y=-((cy-r.top)/r.height)*2+1; }
-function pickChild(){
+function pickChild(){ // prefer emphasised hits (they're what's drawn on top)
   raycaster.setFromCamera(ndc,camera);
-  let best=null,bd=Infinity;
-  for(const m of pickMeshes){ const h=raycaster.intersectObject(m,false); if(h.length&&h[0].distance<bd){bd=h[0].distance;best=m.userData.childId;} }
-  return best;
+  let be=null,bde=null,bd=Infinity,bdd=Infinity;
+  for(const m of pickMeshes){ const h=raycaster.intersectObject(m,false); if(!h.length) continue;
+    if(m.userData.emph){ if(h[0].distance<bd){bd=h[0].distance;be=m.userData.childId;} }
+    else if(h[0].distance<bdd){bdd=h[0].distance;bde=m.userData.childId;} }
+  return be!=null?be:bde;
 }
 function groundCell(yWorld){
   raycaster.setFromCamera(ndc,camera);
@@ -375,7 +369,7 @@ canvas.addEventListener('pointermove',e=>{
     const g=groundCell(0); if(!g) return;
     const dW={x:g.x-drag.start.x,z:g.z-drag.start.z};
     if(dW.x||dW.z) drag.moved=true;
-    for(const id of selection){ const m=childMeshes[id]; if(m) m.position.set(dW.x,0,dW.z); }
+    for(const id of selection){ for(const m of (childMeshes[id]||[])) m.position.set(dW.x,0,dW.z); }
     overlay.position.set(dW.x,0,dW.z);
   }
 });
@@ -386,7 +380,7 @@ canvas.addEventListener('pointerup',e=>{
   if(editObject){ if(painting){painting=false; save();} return; }
   if(drag&&drag.moved){
     const x=contextXform(); const inv=(4-x.rot)&3;
-    const m0=childMeshes[[...selection][0]];
+    const m0=(childMeshes[[...selection][0]]||[])[0];
     const dW=m0?{x:Math.round(m0.position.x),z:Math.round(m0.position.z)}:{x:0,z:0};
     const dL=rotY({x:dW.x,y:0,z:dW.z},inv);
     for(const id of selection){ const c=childById(id); if(c){ c.pos.x+=dL.x; c.pos.z+=dL.z; } }
@@ -483,11 +477,18 @@ function rotateSelection(){
   if(selection.size){ rebuild(); save(); }
 }
 function nudgeY(d){ for(const id of selection){ const c=childById(id); if(c) c.pos.y+=d; } if(selection.size){rebuild();save();} }
+function toggleDeemph(){
+  if(!selection.size) return;
+  const sel=[...selection].map(childById).filter(Boolean);
+  const target=!sel.every(n=>n.deemph);     // all on -> turn off, otherwise turn on
+  for(const n of sel) n.deemph=target;
+  rebuild(); updateChrome(); save();
+}
 
 // ============================================================
 //  CAMERA
 // ============================================================
-let view='iso', seeThrough=true, showGrid=true, azimIndex=0;
+let view='iso', showGrid=true, azimIndex=0;
 function panCamera(dx,dy){
   const r=canvas.getBoundingClientRect();
   const perPx=(camera.top-camera.bottom)/r.height;
@@ -499,8 +500,8 @@ function panCamera(dx,dy){
 function applyAzim(){ goal.azim=azimIndex*Math.PI/2 + (view==='bird'?0:Math.PI/4); }
 function setView(v){ view=v; goal.elev=v==='bird'?Math.PI/2:ISO_ELEV; applyAzim();
   document.getElementById('viewIso').classList.toggle('active',v==='iso');
-  document.getElementById('viewBird').classList.toggle('active',v==='bird'); rebuild(); }
-function rotateView(d){ azimIndex+=d; applyAzim(); rebuild(); }
+  document.getElementById('viewBird').classList.toggle('active',v==='bird'); }
+function rotateView(d){ azimIndex+=d; applyAzim(); }
 function computeBounds(){
   const b=emptyBox();
   if(editObject){ nodeBox(editObject, editXform.off, editXform.rot, b);
@@ -537,6 +538,7 @@ const SCENE_ACTIONS=[
   {id:'ungroup',ic:'⊟',label:'Ungroup',fn:ungroupSelection},
   {id:'dup',  ic:'⧉',label:'Dupl.',  fn:duplicateSelection},
   {id:'rot',  ic:'⟳',label:'Rotate', fn:rotateSelection},
+  {id:'deemph',ic:'◐',label:'Deemph.',fn:toggleDeemph, toggle:true},
   {id:'del',  ic:'⌫',label:'Delete', fn:deleteSelection},
 ];
 const VOX_TOOLS=[{id:'add',ic:'＋',label:'Add'},{id:'erase',ic:'－',label:'Erase'},{id:'paint',ic:'❖',label:'Paint'}];
@@ -550,7 +552,9 @@ function updateChrome(){
     const fin=document.createElement('button'); fin.className='tool'; fin.innerHTML='<span class="ic">✓</span>Finish'; fin.onclick=exitObject; tw.appendChild(fin);
   }else{
     const has=selection.size>0;
-    for(const a of SCENE_ACTIONS){ const el=document.createElement('button'); el.className='tool'+((a.always||has)?'':' disabled');
+    const allDe=has && [...selection].map(childById).every(n=>n&&n.deemph);
+    for(const a of SCENE_ACTIONS){ const el=document.createElement('button');
+      el.className='tool'+((a.always||has)?'':' disabled')+(a.toggle&&allDe?' active':'');
       el.innerHTML=`<span class="ic">${a.ic}</span>${a.label}`; el.onclick=a.fn; tw.appendChild(el); }
   }
   // breadcrumb
@@ -563,7 +567,7 @@ function updateChrome(){
   document.getElementById('statHint').textContent = editObject
     ? 'Editing object — Add / Erase / Paint voxels · Esc to finish'
     : (selection.size
-        ? `${selection.size} selected — drag to move · R rotate · [ ] raise/lower · Ctrl+G group · Del delete`
+        ? `${selection.size} selected — drag to move · R rotate · X deemphasise · Ctrl+G group · Del delete`
         : 'Click to select · double-click to enter · N new object');
   document.getElementById('hint').textContent = editObject
     ? 'Painting voxels (1 voxel = 1 cm). Esc returns to the scene.'
@@ -582,8 +586,6 @@ document.getElementById('rotL').onclick=()=>rotateView(+1);
 document.getElementById('rotR').onclick=()=>rotateView(-1);
 document.getElementById('fit').onclick=frameView;
 document.getElementById('up').onclick=escapeUp;
-const stBtn=document.getElementById('seethrough');
-stBtn.onclick=()=>{ seeThrough=!seeThrough; stBtn.classList.toggle('active',seeThrough); rebuild(); save(); };
 const gridBtn=document.getElementById('gridtoggle');
 gridBtn.onclick=()=>{ showGrid=!showGrid; grid.visible=showGrid; gridBtn.classList.toggle('active',showGrid); };
 
@@ -592,7 +594,7 @@ window.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase(), mod=e.ctrlKey||e.metaKey;
   if(mod){
     if(k==='c'){ if(!editObject){copySelection();e.preventDefault();} return; }
-    if(k==='x'){ if(!editObject){cutSelection();e.preventDefault();} return; }
+    if(k==='x'){ if(!editObject){cutSelection();e.preventDefault();} return; } // Ctrl+X = cut
     if(k==='v'){ if(!editObject){pasteClipboard();e.preventDefault();} return; }
     if(k==='d'){ if(!editObject){duplicateSelection();e.preventDefault();} return; }
     if(k==='g'){ e.preventDefault(); if(!editObject){ e.shiftKey?ungroupSelection():groupSelection(); } return; }
@@ -604,7 +606,7 @@ window.addEventListener('keydown',e=>{
     case '1': setView('iso'); break;
     case '2': setView('bird'); break;
     case 'f': frameView(); break;
-    case 'x': stBtn.click(); break;
+    case 'x': if(!editObject) toggleDeemph(); break;   // X = deemphasise selection
     case 'g': gridBtn.click(); break;
     case 'escape': escapeUp(); break;
     case 'n': if(!editObject) createObject(); break;
@@ -618,13 +620,13 @@ window.addEventListener('keydown',e=>{
 // ============================================================
 //  PERSISTENCE
 // ============================================================
-const LS='voxelier-v3';
+const LS='voxelier-v4';
 function ser(n){ return n.type==='object'
-  ? {t:'o',id:n.id,p:n.pos,r:n.rot,v:[...n.voxels]}
-  : {t:'s',id:n.id,p:n.pos,r:n.rot,c:n.children.map(ser)}; }
+  ? {t:'o',id:n.id,p:n.pos,r:n.rot,d:n.deemph,v:[...n.voxels]}
+  : {t:'s',id:n.id,p:n.pos,r:n.rot,d:n.deemph,c:n.children.map(ser)}; }
 function de(d){ return d.t==='o'
-  ? {type:'object',id:d.id,pos:d.p,rot:d.r,voxels:new Map(d.v)}
-  : {type:'scene',id:d.id,pos:d.p,rot:d.r,children:d.c.map(de)}; }
+  ? {type:'object',id:d.id,pos:d.p,rot:d.r,deemph:!!d.d,voxels:new Map(d.v)}
+  : {type:'scene',id:d.id,pos:d.p,rot:d.r,deemph:!!d.d,children:d.c.map(de)}; }
 let saveT=null;
 function save(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{
   localStorage.setItem(LS,JSON.stringify({uid:_uid,root:ser(root)})); }catch(_){}} ,250); }
@@ -676,7 +678,7 @@ function seed(){
   desk.pos={x:0,y:0,z:0}; comp.pos={x:6,y:18,z:4};
   dws.children=[desk,comp];
 
-  room.pos={x:0,y:0,z:0};
+  room.pos={x:0,y:0,z:0}; room.deemph=true;   // walls are deemphasised by default
   chair.pos={x:20,y:1,z:14}; chair.rot=2;
   plant.pos={x:46,y:1,z:6};
   root.children=[room,dws,chair,plant];
@@ -689,12 +691,28 @@ function resize(){ const r=canvas.getBoundingClientRect();
   const w=Math.max(1,Math.round(r.width)),h=Math.max(1,Math.round(r.height)),pr=Math.min(devicePixelRatio,2);
   if(canvas.width!==Math.round(w*pr)||canvas.height!==Math.round(h*pr)) renderer.setSize(w,h,false); }
 window.addEventListener('resize',resize);
-function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); grid.visible=showGrid; renderer.render(scene,camera); }
+
+// Two-pass render: deemphasised layer first, then clear the depth buffer and
+// draw the emphasised layer on top — so deemphasised pieces never cover the
+// rest, while a single shadow pass keeps everyone casting/receiving shadows.
+renderer.autoClear=false;
+renderer.shadowMap.autoUpdate=false;
+renderer.setClearColor(bg,1); scene.background=null;
+function renderFrame(){
+  renderer.shadowMap.needsUpdate=true;   // recompute shadows once (light follows camera)
+  renderer.clear();
+  grid.visible=showGrid;
+  camera.layers.set(L_DEEMPH); renderer.render(scene,camera);   // pass 1 (also updates shadows from the full scene)
+  renderer.shadowMap.needsUpdate=false;
+  renderer.clearDepth();
+  camera.layers.set(L_EMPH);   renderer.render(scene,camera);   // pass 2, on top
+}
+function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); renderFrame(); }
 
 function start(){
   if(!load()) seed();
   path=[root]; context=root; editObject=null; selection.clear();
-  stBtn.classList.toggle('active',seeThrough); gridBtn.classList.toggle('active',showGrid);
+  gridBtn.classList.toggle('active',showGrid);
   buildSwatches(); rebuild(); updateChrome(); frameView(); save(); tick();
 }
 start();
