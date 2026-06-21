@@ -12,26 +12,30 @@ Things nest like SVG groups in Inkscape:
 - **object** — a set of voxels. A *singular unit*: copying an object gives an
   independent duplicate (editing one never changes the other — there are no
   shared instances/prefabs).
-- **scene** — a group of objects and sub-scenes.
-- **layer** — a named top-level scene with its own visibility. You edit within one
-  active layer at a time; the rest render as a backdrop.
+- **scene** — a group of objects and sub-scenes. The whole document is one root scene.
 
-The example that opens has two layers: a **Room** layer (the room shell, set to
-*deemphasised*) and an active **Furniture** layer holding a *Desk-with-computer*
-sub-scene (separate **desk** and **computer** objects), a **chair**, and a **plant**.
+Any object or sub-scene can be given a **name** and can be **hidden** or
+**deemphasised** (both inherited by everything inside it).
 
-## Layers
+The example that opens is a room: a deemphasised **Room** object (the shell), a
+**Desk + Computer** sub-scene holding separate **Desk** and **Computer** objects,
+a **Chair**, and a **Plant**.
 
-Each layer is **visible**, **hidden**, or **deemphasised** — cycle a layer's state
-with the dot button in the Layers panel (● visible → ◐ deemphasised → ○ hidden).
-Click a layer's name to make it active (you edit its contents); double-click to
-rename; **＋** adds one, **×** deletes.
+## The tree
 
-A **deemphasised** layer still lives in 3D — it casts and receives shadows — but
-it's drawn to a separate, lower render layer, so it can **never appear in front
-of** the ordinary layers (much like a game compositing the player onto its own
-buffer). That's why the room walls stay solid and shadow-casting yet never hide
-what's inside.
+The right-hand panel is a collapsible tree of the whole scene — like a file
+explorer — with a preview thumbnail for every object and sub-scene. For each row:
+
+- **click** to select it, **double-click** to enter it (descend into a sub-scene,
+  or edit an object's voxels), **double-click the name** to rename;
+- the **◉ / ⦰** button shows/hides it;
+- the **◐** button deemphasises it;
+- the **▸ / ▾** triangle collapses or expands a sub-scene.
+
+A **deemphasised** object/scene still lives in 3D — it casts and receives shadows —
+but it's drawn **semi-opaque** to a separate, lower render layer, so it can never
+appear in front of the ordinary pieces. That's why the room walls recede and never
+hide what's inside, yet still cast shadows.
 
 ## Editing — the mode is implicit
 
@@ -64,7 +68,7 @@ edit its voxels). **Esc** / the **↑ Up** button goes back up a level.
 | Isometric / Birdseye | `1` / `2` |
 | Fit to view | `F` |
 | Toggle grid | `G` |
-| Layer visibility / active / rename | Layers panel (top-right) |
+| Name / hide / deemphasise / collapse | the tree panel (right) |
 
 Placement is strictly orthogonal and rotation is limited to 90° steps. Birdseye is
 an axis-aligned top-down view (a clean floor plan). Soft shadows are drawn for depth.

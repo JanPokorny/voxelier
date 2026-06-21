@@ -52,16 +52,20 @@
 
   #side{grid-area:right;background:var(--panel);border-left:1px solid var(--line);padding:12px;overflow:auto}
   h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--ink-dim);font-weight:600}
-  h3 button{font-size:12px;padding:3px 8px;border:1px solid var(--line);background:var(--panel-2);border-radius:6px;float:right;margin-top:-3px}
-  #layers{display:flex;flex-direction:column;gap:5px}
-  .layer{display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:7px;border:1px solid var(--line);background:var(--panel-2);cursor:pointer}
-  .layer.active{border-color:var(--accent)}
-  .layer.active .lname{color:var(--accent);font-weight:600}
-  .layer.hidden .lname{color:var(--ink-dim);text-decoration:line-through}
-  .layer .lname{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
-  .layer .vis,.layer .del{flex:none;width:24px;height:24px;display:flex;align-items:center;justify-content:center;
-       border:1px solid var(--line);border-radius:5px;background:transparent;padding:0;font-size:13px;color:var(--ink-dim)}
-  .layer .vis:hover,.layer .del:hover{color:var(--ink);border-color:#3a4252}
+  #tree{display:flex;flex-direction:column;gap:1px;max-height:46vh;overflow:auto}
+  .trow{display:flex;align-items:center;gap:4px;padding:2px 4px;border-radius:6px;cursor:pointer;border:1px solid transparent}
+  .trow:hover{background:#252a35}
+  .trow.sel{background:#2a3330;border-color:var(--accent)}
+  .trow.ctx{border-color:#3a4252}
+  .trow.edit{border-color:var(--accent);background:#26302e}
+  .trow .tw{flex:none;width:13px;text-align:center;color:var(--ink-dim);font-size:9px}
+  .trow .thumb{flex:none;width:26px;height:26px;border-radius:4px;background:#0f1115}
+  .trow .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+  .trow.dim .nm{color:var(--ink-dim)}
+  .trow .ph{color:var(--ink-dim);font-style:italic}
+  .trow .tb{flex:none;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:4px;background:transparent;padding:0;font-size:12px;color:var(--ink-dim)}
+  .trow .tb:hover{color:var(--ink);border-color:var(--line)}
+  .trow .tb.on{color:var(--accent)}
   .swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
   .sw{aspect-ratio:1;border-radius:6px;cursor:pointer;border:2px solid transparent;outline:1px solid rgba(0,0,0,.35);outline-offset:-1px}
   .sw.active{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
@@ -96,8 +100,8 @@
   </div>
 
   <div id="side">
-    <h3>Layers <button id="addLayer" title="New layer">＋</button></h3>
-    <div id="layers"></div>
+    <h3>Scene</h3>
+    <div id="tree"></div>
     <h3 style="margin-top:14px">Palette</h3>
     <div class="swatches" id="swatches"></div>
   </div>
@@ -136,25 +140,25 @@ function rotY(v,r){ let{x,y,z}=v; r=((r%4)+4)%4; for(let i=0;i<r;i++){const nx=-
 let _uid=1; const uid=()=>'n'+(_uid++);
 
 // ---- data model ---------------------------------------------
-// The document is a list of named "layers" (root scenes). Each layer is
-// visible / hidden / deemphasised. You edit within one active layer.
-let layers=[];                     // layer scene nodes (each has .name and .vis)
-let activeLayer;                   // the layer currently being edited
-let path;                          // array of scenes activeLayer..context
+// A single root scene. Every node (object or sub-scene) may have a name and
+// can be hidden or deemphasised (both inherited by descendants).
+let root;                          // root scene
+let path;                          // array of scenes root..context
 let context;                       // current scene (= path[last])
 let editObject=null;               // object being voxel-edited, or null
 let selection=new Set();           // selected child ids within context
 let clipboard=[];                  // detached node clones
 let tool='add';                    // voxel tool when editing an object
 let selColor=8;
+let collapsed=new Set();           // tree: ids of collapsed sub-scenes
 
-const newObject=()=>({type:'object',id:uid(),pos:{x:0,y:0,z:0},rot:0,voxels:new Map()});
-const newScene =()=>({type:'scene', id:uid(),pos:{x:0,y:0,z:0},rot:0,children:[]});
-function newLayer(name,vis='visible'){ const s=newScene(); s.name=name; s.vis=vis; return s; }
+const newObject=()=>({type:'object',id:uid(),name:'',pos:{x:0,y:0,z:0},rot:0,hidden:false,deemph:false,voxels:new Map()});
+const newScene =()=>({type:'scene', id:uid(),name:'',pos:{x:0,y:0,z:0},rot:0,hidden:false,deemph:false,children:[]});
 function clone(n){
+  const base={id:uid(),name:n.name,pos:{...n.pos},rot:n.rot,hidden:n.hidden,deemph:n.deemph};
   return n.type==='object'
-    ? {type:'object',id:uid(),pos:{...n.pos},rot:n.rot,voxels:new Map(n.voxels)}
-    : {type:'scene', id:uid(),pos:{...n.pos},rot:n.rot,children:n.children.map(clone)};
+    ? {type:'object',...base,voxels:new Map(n.voxels)}
+    : {type:'scene', ...base,children:n.children.map(clone)};
 }
 const childById=id=>context.children.find(c=>c.id===id);
 
@@ -185,6 +189,7 @@ function withLayers(o){ o.layers.enableAll(); return o; } // lights must be coll
 
 const boxGeo=new THREE.BoxGeometry(1,1,1);
 const matSolid=new THREE.MeshLambertMaterial();
+const matDeemph=new THREE.MeshLambertMaterial({transparent:true,opacity:0.4});  // deemphasised: semi-opaque
 const _col=new THREE.Color(), _m=new THREE.Matrix4(), _up=new THREE.Vector3(), _upN=new THREE.Vector3();
 const bg=new THREE.Color('#0f1115');
 const dimColor=PALETTE.map(h=>new THREE.Color(h).lerp(bg,0.62));
@@ -208,9 +213,11 @@ let editMesh=null;             // edit object's mesh
 let editXform={off:{x:0,y:0,z:0},rot:0};
 
 function disposeMeshes(){ for(const m of meshes){scene.remove(m); m.dispose?.();} meshes=[]; }
+// emph pieces are opaque on the top layer; deemph pieces are semi-opaque on the
+// lower layer (so they recede AND can never be drawn in front of the rest).
 function addMesh(arr,colorOf,{emph=true,pick=false,childId=null}={}){
   if(!arr.length) return null;
-  const m=new THREE.InstancedMesh(boxGeo,matSolid,arr.length);
+  const m=new THREE.InstancedMesh(boxGeo, emph?matSolid:matDeemph, arr.length);
   for(let i=0;i<arr.length;i++){ const d=arr[i];
     _m.makeTranslation(d.x+0.5,d.y+0.5,d.z+0.5); m.setMatrixAt(i,_m); m.setColorAt(i,colorOf(d.c)); }
   m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
@@ -238,16 +245,17 @@ function nodeBox(node,off,rot,box){
 }
 const emptyBox=()=>({min:{x:1e9,y:1e9,z:1e9},max:{x:-1e9,y:-1e9,z:-1e9}});
 
-// gather every world voxel of one layer (skipping the object being edited).
-//   dm     = this layer is deemphasised -> drawn to the lower render layer
-//   active = this is the layer being edited (its context children are pickable)
-//   owner  = id of the active context's direct child this voxel belongs to
-function walk(node,off,rot,owner,active,dm,out){
-  if(node===editObject) return;
+// gather every world voxel (skipping the object being edited).
+//   dm    = under a deemphasised node -> semi-opaque, lower render layer
+//   owner = id of the current context's direct child this voxel belongs to
+// Hidden subtrees are skipped entirely.
+function walk(node,off,rot,owner,dm,out){
+  if(node===editObject || node.hidden) return;
+  const d=dm||!!node.deemph;
   if(node.type==='object'){
-    for(const [k,c] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off); out.push({x:w.x,y:w.y,z:w.z,c,owner,active,dm}); }
+    for(const [k,c] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off); out.push({x:w.x,y:w.y,z:w.z,c,owner,dm:d}); }
   }else for(const ch of node.children){
-    walk(ch, addv(off,rotY(ch.pos,rot)), (rot+ch.rot)&3, (active&&node===context)?ch.id:owner, active, dm, out);
+    walk(ch, addv(off,rotY(ch.pos,rot)), (rot+ch.rot)&3, (node===context)?ch.id:owner, d, out);
   }
 }
 
@@ -260,34 +268,28 @@ function editVoxels(){ // edited object's voxels in world space + parallel local
 
 function rebuild(){
   disposeMeshes(); pickMeshes=[]; childMeshes={}; childBox={}; editMesh=null;
-  const all=[];
-  for(const L of layers){
-    if(L.vis==='hidden') continue;
-    walk(L,{x:0,y:0,z:0},0,null,L===activeLayer,L.vis==='deemph',all);
-  }
+  const all=[]; walk(root,{x:0,y:0,z:0},0,null,false,all);
 
   if(editObject){
     const x=contextXform();
     editXform={off:addv(x.off,rotY(editObject.pos,x.rot)), rot:(x.rot+editObject.rot)&3};
-    const de=[],dd=[]; for(const v of all){ (v.dm?dd:de).push(v); }  // dim the rest, by layer
+    const de=[],dd=[]; for(const v of all){ (v.dm?dd:de).push(v); }   // dim the rest
     addMesh(de,c=>dimColor[c],{emph:true});
     addMesh(dd,c=>dimColor[c],{emph:false});
     const {evox,local}=editVoxels();                                  // edited object: always emphasised
     editMesh=addMesh(evox,c=>palColor[c],{emph:true});
     if(editMesh){ editMesh.userData.local=local; pickMeshes=[editMesh]; }
   }else{
-    // owner -> active layer's context children (full colour, pickable);
-    // active & !owner -> dimmed (you've descended past it); other layers -> full colour backdrop.
-    const gE={},gD={},ctxE=[],ctxD=[],othE=[],othD=[];
+    // owner -> current context's children (full colour, pickable);
+    // otherwise dimmed (an ancestor/sibling you've descended past).
+    const gE={},gD={},ctxE=[],ctxD=[];
     for(const v of all){
       if(v.owner){ (v.dm?(gD[v.owner]||(gD[v.owner]=[])):(gE[v.owner]||(gE[v.owner]=[]))).push(v);
         const b=childBox[v.owner]||(childBox[v.owner]=emptyBox());
         b.min.x=Math.min(b.min.x,v.x);b.min.y=Math.min(b.min.y,v.y);b.min.z=Math.min(b.min.z,v.z);
         b.max.x=Math.max(b.max.x,v.x+1);b.max.y=Math.max(b.max.y,v.y+1);b.max.z=Math.max(b.max.z,v.z+1);
-      }else if(v.active){ (v.dm?ctxD:ctxE).push(v); }
-      else { (v.dm?othD:othE).push(v); }
+      }else (v.dm?ctxD:ctxE).push(v);
     }
-    addMesh(othE,c=>palColor[c],{emph:true});  addMesh(othD,c=>palColor[c],{emph:false});
     addMesh(ctxE,c=>dimColor[c],{emph:true});  addMesh(ctxD,c=>dimColor[c],{emph:false});
     for(const id of new Set([...Object.keys(gE),...Object.keys(gD)])){
       if(gE[id]) addMesh(gE[id],c=>palColor[c],{emph:true,  pick:true,childId:id});
@@ -451,15 +453,27 @@ function enterObject(o){ editObject=o; selection.clear(); tool='add'; rebuild();
 function exitObject(){ const o=editObject; editObject=null; selection=new Set([o.id]); rebuild(); updateChrome(); }
 function escapeUp(){ if(editObject) exitObject(); else ascend(); }
 
-// ---- layers -------------------------------------------------
-const VIS_NEXT={visible:'deemph',deemph:'hidden',hidden:'visible'};
-function setActiveLayer(L){ if(L===activeLayer&&!editObject) return;
-  editObject=null; activeLayer=L; path=[L]; context=L; selection.clear(); rebuild(); buildLayers(); updateChrome(); }
-function addLayer(){ const L=newLayer('Layer '+(layers.length+1)); layers.push(L); setActiveLayer(L); save(); }
-function deleteLayer(L){ if(layers.length<=1) return;
-  layers=layers.filter(x=>x!==L); if(activeLayer===L) setActiveLayer(layers[0]); else { rebuild(); buildLayers(); } save(); }
-function cycleVis(L){ L.vis=VIS_NEXT[L.vis]; rebuild(); buildLayers(); save(); }
-function renameLayer(L){ const n=prompt('Layer name',L.name); if(n!=null){ L.name=n.trim()||L.name; buildLayers(); updateChrome(); save(); } }
+// ---- tree navigation ----------------------------------------
+function findPath(target,node=root,acc=[]){
+  const a=[...acc,node];
+  if(node===target) return a;
+  if(node.type==='scene') for(const ch of node.children){ const r=findPath(target,ch,a); if(r) return r; }
+  return null;
+}
+function selectNode(node){                         // select a node from the tree (enters its parent context)
+  const p=findPath(node); if(!p) return;
+  path=p.slice(0,-1); context=path[path.length-1]; selection=new Set([node.id]); editObject=null;
+  rebuild(); updateChrome();
+}
+function enterNode(node){                           // double-click in tree/canvas: descend or voxel-edit
+  const p=findPath(node); if(!p) return;
+  if(node.type==='scene'){ path=p; context=node; selection.clear(); editObject=null; tool='add'; }
+  else { path=p.slice(0,-1); context=path[path.length-1]; editObject=node; selection.clear(); tool='add'; }
+  rebuild(); updateChrome(); frameView();
+}
+function toggleHidden(node){ node.hidden=!node.hidden; rebuild(); updateChrome(); save(); }
+function toggleDeemph(node){ node.deemph=!node.deemph; rebuild(); updateChrome(); save(); }
+function renameNode(node){ const n=prompt('Name',node.name||''); if(n!=null){ node.name=n.trim(); updateChrome(); save(); } }
 
 function createObject(){
   const o=newObject(); o.pos={x:Math.round(goal.target.x),y:0,z:Math.round(goal.target.z)};
@@ -581,13 +595,13 @@ function updateChrome(){
       el.className='tool'+((a.always||has)?'':' disabled');
       el.innerHTML=`<span class="ic">${a.ic}</span>${a.label}`; el.onclick=a.fn; tw.appendChild(el); }
   }
-  // breadcrumb (active layer name, then any groups you've descended into)
+  // breadcrumb (Scene, then any groups you've descended into)
   const cr=document.getElementById('crumb'); cr.innerHTML='';
   path.forEach((n,i)=>{ const s=document.createElement('span'); s.className='c'+(!editObject&&i===path.length-1?' cur':'');
-    s.textContent=i===0?(activeLayer.name||'Layer'):'group'; if(i>0)cr.appendChild(sep()); cr.appendChild(s); });
-  if(editObject){ cr.appendChild(sep()); const s=document.createElement('span'); s.className='c cur'; s.textContent='✏ object'; cr.appendChild(s); }
+    s.textContent=i===0?'Scene':(n.name||'group'); if(i>0)cr.appendChild(sep()); cr.appendChild(s); });
+  if(editObject){ cr.appendChild(sep()); const s=document.createElement('span'); s.className='c cur'; s.textContent='✏ '+(editObject.name||'object'); cr.appendChild(s); }
   document.getElementById('up').disabled = !editObject && path.length<=1;
-  buildLayers();
+  buildTree();
   // status hint
   document.getElementById('statHint').textContent = editObject
     ? 'Editing object — Add / Erase / Paint voxels · Esc to finish'
@@ -604,22 +618,58 @@ function buildSwatches(){ const w=document.getElementById('swatches'); w.innerHT
   PALETTE.forEach((hex,i)=>{ const s=document.createElement('div'); s.className='sw'+(i===selColor?' active':'');
     s.style.background=hex; s.onclick=()=>{selColor=i; buildSwatches();}; w.appendChild(s); }); }
 
-const VIS_ICON={visible:'●',deemph:'◐',hidden:'○'};
-const VIS_TITLE={visible:'Visible (click: deemphasise)',deemph:'Deemphasised (click: hide)',hidden:'Hidden (click: show)'};
-function buildLayers(){
-  const w=document.getElementById('layers'); w.innerHTML='';
-  for(const L of layers){
-    const row=document.createElement('div'); row.className='layer'+(L===activeLayer?' active':'')+(L.vis==='hidden'?' hidden':'');
-    const vis=document.createElement('button'); vis.className='vis'; vis.textContent=VIS_ICON[L.vis]; vis.title=VIS_TITLE[L.vis];
-    vis.onclick=e=>{e.stopPropagation(); cycleVis(L);};
-    const nm=document.createElement('span'); nm.className='lname'; nm.textContent=L.name; nm.title='Click to edit here · double-click to rename';
-    nm.ondblclick=e=>{e.stopPropagation(); renameLayer(L);};
-    const del=document.createElement('button'); del.className='del'; del.textContent='×'; del.title='Delete layer';
-    del.onclick=e=>{e.stopPropagation(); if(layers.length>1&&confirm('Delete layer “'+L.name+'”?')) deleteLayer(L);};
-    row.append(vis,nm,del);
-    row.onclick=()=>setActiveLayer(L);
-    w.appendChild(row);
+// ---- object/scene tree --------------------------------------
+// collect a node's own voxels in local space (for the thumbnail)
+function localVoxels(node,off,rot,out){
+  if(node.type==='object'){ for(const [k,c] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off); out.push({x:w.x,y:w.y,z:w.z,c}); } }
+  else for(const ch of node.children) localVoxels(ch, addv(off,rotY(ch.pos,rot)), (rot+ch.rot)&3, out);
+  return out;
+}
+const thumbCache=new Map();
+function thumbSig(node){ return node.type==='object'? 'o'+node.voxels.size : 's'+node.children.map(c=>c.id+thumbSig(c)).join(); }
+function thumbFor(node){
+  const sig=thumbSig(node), hit=thumbCache.get(node.id);
+  if(hit&&hit.sig===sig) return hit.cv;
+  const cv=document.createElement('canvas'); cv.width=cv.height=52; cv.style.width=cv.style.height='26px';
+  const g=cv.getContext('2d'); g.fillStyle='#0f1115'; g.fillRect(0,0,52,52);
+  let vox=localVoxels(node,{x:0,y:0,z:0},0,[]);
+  if(vox.length){
+    let mnx=1e9,mny=1e9,mnz=1e9,mxx=-1e9,mxy=-1e9,mxz=-1e9;
+    for(const v of vox){mnx=Math.min(mnx,v.x);mny=Math.min(mny,v.y);mnz=Math.min(mnz,v.z);mxx=Math.max(mxx,v.x);mxy=Math.max(mxy,v.y);mxz=Math.max(mxz,v.z);}
+    const span=Math.max(mxx-mnx,mxy-mny,mxz-mnz,1)+1, s=Math.min(7,44/span);
+    const stride=Math.ceil(vox.length/1400); if(stride>1) vox=vox.filter((_,i)=>i%stride===0);
+    vox.sort((a,b)=>(a.x+a.z-a.y)-(b.x+b.z-b.y));
+    const cxp=26-((mnx+mxx)/2-(mnz+mxz)/2)*s*0.5, cyp=30+((mny+mxy)/2)*s*0.6-((mnx+mxx)/2+(mnz+mxz)/2)*s*0.28;
+    for(const v of vox){ const px=cxp+(v.x-v.z)*s*0.5, py=cyp-v.y*s*0.6+(v.x+v.z)*s*0.28;
+      g.fillStyle=PALETTE[v.c]; g.fillRect(px-s*0.5,py-s*0.5,s+0.5,s+0.5); }
   }
+  thumbCache.set(node.id,{sig,cv}); return cv;
+}
+function buildTree(){
+  const w=document.getElementById('tree'); w.innerHTML='';
+  const row=(node,depth)=>{
+    const r=document.createElement('div');
+    const isSel=context.children.includes(node)&&selection.has(node.id);
+    r.className='trow'+(isSel?' sel':'')+(node===context?' ctx':'')+(node===editObject?' edit':'')+(node.hidden?' dim':'');
+    r.style.paddingLeft=(4+depth*13)+'px';
+    const tw=document.createElement('span'); tw.className='tw';
+    if(node.type==='scene'&&node.children.length){ tw.textContent=collapsed.has(node.id)?'▸':'▾';
+      tw.onclick=e=>{e.stopPropagation(); collapsed.has(node.id)?collapsed.delete(node.id):collapsed.add(node.id); buildTree();}; }
+    const th=thumbFor(node); th.className='thumb';
+    const nm=document.createElement('span'); nm.className='nm';
+    if(node.name) nm.textContent=node.name; else { nm.innerHTML='<span class="ph">'+(node.type==='scene'?'group':'object')+'</span>'; }
+    nm.ondblclick=e=>{e.stopPropagation(); renameNode(node);};
+    const eye=document.createElement('button'); eye.className='tb'+(node.hidden?'':' on'); eye.textContent=node.hidden?'⦰':'◉'; eye.title='Show / hide';
+    eye.onclick=e=>{e.stopPropagation(); toggleHidden(node);};
+    const dee=document.createElement('button'); dee.className='tb'+(node.deemph?' on':''); dee.textContent='◐'; dee.title='Deemphasise';
+    dee.onclick=e=>{e.stopPropagation(); toggleDeemph(node);};
+    r.append(tw,th,nm,eye,dee);
+    r.onclick=()=>selectNode(node);
+    r.ondblclick=()=>enterNode(node);
+    w.appendChild(r);
+    if(node.type==='scene'&&!collapsed.has(node.id)) for(const ch of node.children) row(ch,depth+1);
+  };
+  for(const ch of root.children) row(ch,0);
 }
 
 // ---- view / toggle wiring -----------------------------------
@@ -629,7 +679,6 @@ document.getElementById('rotL').onclick=()=>rotateView(+1);
 document.getElementById('rotR').onclick=()=>rotateView(-1);
 document.getElementById('fit').onclick=frameView;
 document.getElementById('up').onclick=escapeUp;
-document.getElementById('addLayer').onclick=addLayer;
 const gridBtn=document.getElementById('gridtoggle');
 gridBtn.onclick=()=>{ showGrid=!showGrid; grid.visible=showGrid; gridBtn.classList.toggle('active',showGrid); };
 
@@ -663,20 +712,16 @@ window.addEventListener('keydown',e=>{
 // ============================================================
 //  PERSISTENCE
 // ============================================================
-const LS='voxelier-v5';
-function ser(n){ return n.type==='object'
-  ? {t:'o',id:n.id,p:n.pos,r:n.rot,v:[...n.voxels]}
-  : {t:'s',id:n.id,p:n.pos,r:n.rot,c:n.children.map(ser)}; }
-function de(d){ return d.t==='o'
-  ? {type:'object',id:d.id,pos:d.p,rot:d.r,voxels:new Map(d.v)}
-  : {type:'scene',id:d.id,pos:d.p,rot:d.r,children:d.c.map(de)}; }
+const LS='voxelier-v6';
+function ser(n){ const b={id:n.id,nm:n.name||'',p:n.pos,r:n.rot,h:n.hidden?1:0,d:n.deemph?1:0};
+  return n.type==='object' ? {t:'o',...b,v:[...n.voxels]} : {t:'s',...b,c:n.children.map(ser)}; }
+function de(d){ const b={id:d.id,name:d.nm||'',pos:d.p,rot:d.r,hidden:!!d.h,deemph:!!d.d};
+  return d.t==='o' ? {type:'object',...b,voxels:new Map(d.v)} : {type:'scene',...b,children:d.c.map(de)}; }
 let saveT=null;
 function save(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{
-  localStorage.setItem(LS,JSON.stringify({uid:_uid, active:layers.indexOf(activeLayer),
-    layers:layers.map(L=>({name:L.name,vis:L.vis,node:ser(L)}))})); }catch(_){}} ,250); }
-function load(){ try{ const d=JSON.parse(localStorage.getItem(LS)); if(!d||!d.layers)return false;
-  _uid=d.uid||1; layers=d.layers.map(L=>{ const n=de(L.node); n.name=L.name; n.vis=L.vis||'visible'; return n; });
-  activeLayer=layers[d.active]||layers[0]; return true; }catch(_){ return false; } }
+  localStorage.setItem(LS,JSON.stringify({uid:_uid,root:ser(root)})); }catch(_){}} ,250); }
+function load(){ try{ const d=JSON.parse(localStorage.getItem(LS)); if(!d||!d.root)return false;
+  _uid=d.uid||1; root=de(d.root); return true; }catch(_){ return false; } }
 
 // ============================================================
 //  EXAMPLE SCENE
@@ -717,20 +762,16 @@ function seed(){
     if(Math.hypot(x-4,(y-22)*0.8,z-4)<6) pv(x,y,z,14);                 // foliage blob
   }
 
-  // --- assemble into layers ---
-  const dws=newScene(); dws.pos={x:6,y:1,z:30};                        // "Desk with computer" subscene
-  desk.pos={x:0,y:0,z:0}; comp.pos={x:6,y:18,z:4};
+  // --- assemble into one named tree ---
+  room.name='Room'; room.pos={x:0,y:0,z:0}; room.deemph=true;          // walls deemphasised by default
+  desk.name='Desk'; desk.pos={x:0,y:0,z:0};
+  comp.name='Computer'; comp.pos={x:6,y:18,z:4};
+  const dws=newScene(); dws.name='Desk + Computer'; dws.pos={x:6,y:1,z:30};
   dws.children=[desk,comp];
-  chair.pos={x:20,y:1,z:14}; chair.rot=2;
-  plant.pos={x:46,y:1,z:6};
+  chair.name='Chair'; chair.pos={x:20,y:1,z:14}; chair.rot=2;
+  plant.name='Plant'; plant.pos={x:46,y:1,z:6};
 
-  const roomLayer=newLayer('Room','deemph');     // walls deemphasised by default
-  room.pos={x:0,y:0,z:0}; roomLayer.children=[room];
-  const furnLayer=newLayer('Furniture','visible');
-  furnLayer.children=[dws,chair,plant];
-
-  layers=[roomLayer,furnLayer];
-  activeLayer=furnLayer;
+  root=newScene(); root.children=[room,dws,chair,plant];
 }
 
 // ============================================================
@@ -760,9 +801,9 @@ function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); renderFr
 
 function start(){
   if(!load()) seed();
-  path=[activeLayer]; context=activeLayer; editObject=null; selection.clear();
+  path=[root]; context=root; editObject=null; selection.clear();
   gridBtn.classList.toggle('active',showGrid);
-  buildSwatches(); buildLayers(); rebuild(); updateChrome(); frameView(); save(); tick();
+  buildSwatches(); rebuild(); updateChrome(); frameView(); save(); tick();
 }
 start();
 </script>
