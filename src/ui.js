@@ -14,6 +14,7 @@ import {
   deleteSelection, rotateSelection, nudgeY, reparentNode, wrapInGroup,
 } from './commands.js';
 import { save } from './persistence.js';
+import { undo, redo } from './history.js';
 
 const VOX_TOOLS = [{ id: 'add', ic: '＋', label: 'Add' }, { id: 'erase', ic: '－', label: 'Erase' }, { id: 'paint', ic: '❖', label: 'Paint' }, { id: 'measure', ic: '📏', label: 'Measure' }];
 
@@ -244,6 +245,8 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
   if (k === 'escape' && closePalette()) return;
   if (mod) {
+    if (k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+    if (k === 'y') { e.preventDefault(); redo(); return; }
     if (k === 'c') { if (!S.editObject) { copySelection(); e.preventDefault(); } return; }
     if (k === 'x') { if (!S.editObject) { cutSelection(); e.preventDefault(); } return; }
     if (k === 'v') { if (!S.editObject) { pasteClipboard(); e.preventDefault(); } return; }

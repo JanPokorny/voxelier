@@ -2,6 +2,7 @@
 // save is debounced; load restores the root and the id counter.
 import { S } from './state.js';
 import { peekUid, seedUid } from './math.js';
+import { record } from './history.js';
 
 const LS = 'voxelier-v7';
 
@@ -14,6 +15,7 @@ export function de(d) {
   return d.t === 'o' ? { type: 'object', ...b, voxels: new Map(d.v) } : { type: 'scene', ...b, children: d.c.map(de) };
 }
 export function save() {
+  record();                       // synchronous undo snapshot (no-op during restore)
   clearTimeout(S.saveT);
   S.saveT = setTimeout(() => {
     try { localStorage.setItem(LS, JSON.stringify({ uid: peekUid(), root: ser(S.root) })); } catch (_) { /* quota / private mode */ }
