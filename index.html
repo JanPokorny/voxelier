@@ -467,7 +467,7 @@ canvas.addEventListener('pointerdown',e=>{
   const hitId=pickChild();
   const onSel=hitId&&selection.has(hitId);
   if(e.button===0){
-    if(onSel){ drag={...base,mode:'move',start:groundCell(0),vert:false}; }
+    if(onSel){ drag={...base,mode:'move',start:groundCell(0),dx:0,dy:0,dz:0,shiftAnchorY:null}; }
     else drag={...base,mode:'pan',clickId:hitId};
   }else if(e.button===2){
     if(onSel) drag={...base,mode:'rotobj',steps:0};
@@ -528,25 +528,20 @@ canvas.addEventListener('dblclick',e=>{
 });
 
 function moveDragTo(e){
-  drag.vert=e.shiftKey;
-  if(e.shiftKey){
+  if(e.shiftKey){                                  // Shift: adjust height from where it was dragged to
+    if(drag.shiftAnchorY==null){ drag.shiftAnchorY=e.clientY; drag.dyBase=drag.dy; }
     const perPx=(camera.top-camera.bottom)/canvas.getBoundingClientRect().height;
-    const dy=Math.round(-(e.clientY-drag.sy)*perPx);
-    for(const id of selection) for(const m of (childMeshes[id]||[])) m.position.set(0,dy,0);
-    overlay.position.set(0,dy,0);
-  }else{
-    const g=groundCell(0); if(!g||!drag.start) return;
-    const d={x:g.x-drag.start.x,z:g.z-drag.start.z};
-    for(const id of selection) for(const m of (childMeshes[id]||[])) m.position.set(d.x,0,d.z);
-    overlay.position.set(d.x,0,d.z);
+    drag.dy=drag.dyBase+Math.round((drag.shiftAnchorY-e.clientY)*perPx);
+  }else{                                           // horizontal: move on the floor plane
+    drag.shiftAnchorY=null;
+    const g=groundCell(0); if(g&&drag.start){ drag.dx=g.x-drag.start.x; drag.dz=g.z-drag.start.z; }
   }
+  for(const id of selection) for(const m of (childMeshes[id]||[])) m.position.set(drag.dx,drag.dy,drag.dz);
+  overlay.position.set(drag.dx,drag.dy,drag.dz);
 }
 function commitMove(){
-  const m0=(childMeshes[[...selection][0]]||[])[0];
-  if(m0){ const p=m0.position;
-    if(drag.vert){ const dy=Math.round(p.y); for(const id of selection){ const c=childById(id); if(c) c.pos.y+=dy; } }
-    else { const x=contextXform(); const dL=rotY({x:Math.round(p.x),y:0,z:Math.round(p.z)},(4-x.rot)&3);
-      for(const id of selection){ const c=childById(id); if(c){ c.pos.x+=dL.x; c.pos.z+=dL.z; } } } }
+  const x=contextXform(), dL=rotY({x:Math.round(drag.dx),y:0,z:Math.round(drag.dz)},(4-x.rot)&3), dy=Math.round(drag.dy);
+  for(const id of selection){ const c=childById(id); if(c){ c.pos.x+=dL.x; c.pos.y+=dy; c.pos.z+=dL.z; } }
   overlay.position.set(0,0,0); rebuild(); save();
 }
 function rotDragTo(e){
