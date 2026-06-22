@@ -1,13 +1,13 @@
 // DOM chrome: the tool buttons + status hint, the colour palette/swatches, the
 // object/scene tree (thumbnails, row clicks, context menu, drag & drop) and the
 // global keyboard shortcuts. Attaches its window/tree listeners on import.
-import { S } from "./state.js";
-import { addv, hex, parseKey, rotY } from "./math.js";
-import { hoverVox } from "./scene-env.js";
-import { clearMeasure, measureActive } from "./measure.js";
-import { fitNode, frameView } from "./camera.js";
-import { enterNode, escapeUp, isEntered, selectNode } from "./navigation.js";
-import { findById, isDescendant, parentOf } from "./model.js";
+import { S } from "./state.ts";
+import { addv, hex, parseKey, rotY } from "./math.ts";
+import { hoverVox } from "./scene-env.ts";
+import { clearMeasure, measureActive } from "./measure.ts";
+import { fitNode, frameView } from "./camera.ts";
+import { enterNode, escapeUp, isEntered, selectNode } from "./navigation.ts";
+import { findById, isDescendant, parentOf } from "./model.ts";
 import {
   addGroupIn,
   addObjectIn,
@@ -26,20 +26,21 @@ import {
   rotateSelection,
   wrapInGroup,
   wrapNode,
-} from "./commands.js";
-import { save } from "./persistence.js";
-import { redo, undo } from "./history.js";
-import { exportScene, importScene } from "./io.js";
+} from "./commands.ts";
+import { save } from "./persistence.ts";
+import { redo, undo } from "./history.ts";
+import { exportScene, importScene } from "./io.ts";
+import type { Node, Rot, SceneNode, Tool, Vec } from "./types.ts";
 
-const VOX_TOOLS = [
+const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
   { id: "add", ic: "＋", label: "Add" },
   { id: "erase", ic: "－", label: "Erase" },
   { id: "paint", ic: "❖", label: "Paint" },
   { id: "measure", ic: "📏", label: "Measure" },
 ];
 
-export function updateChrome() {
-  const tw = document.getElementById("tools");
+export function updateChrome(): void {
+  const tw = document.getElementById("tools")!;
   tw.innerHTML = "";
   if (S.editObject) {
     for (const t of VOX_TOOLS) {
@@ -75,7 +76,7 @@ export function updateChrome() {
       "💾",
       "Export",
       exportScene,
-    ]]
+    ]] as [string, string, () => void][]
   ) {
     const el = document.createElement("button");
     el.className = "tool";
@@ -85,7 +86,7 @@ export function updateChrome() {
   }
   buildTree();
   buildSwatches();
-  document.getElementById("statHint").textContent = measureActive()
+  document.getElementById("statHint")!.textContent = measureActive()
     ? "Measure — hover to read voxel/gap runs on all 3 axes · left-click freezes · right-click clears"
     : S.editObject
     ? (S.tool === "paint"
@@ -100,11 +101,11 @@ export function updateChrome() {
 
 // distinct colours used in the scene, most-used first. Cached by S.voxVer so it
 // isn't recomputed over every voxel on each chrome refresh (e.g. after a box fill).
-let _scCache = { ver: -1, cols: [] };
-function sceneColors() {
+let _scCache: { ver: number; cols: number[] } = { ver: -1, cols: [] };
+function sceneColors(): number[] {
   if (_scCache.ver === S.voxVer) return _scCache.cols;
-  const m = new Map();
-  (function rec(n) {
+  const m = new Map<number, number>();
+  (function rec(n: Node) {
     if (n.type === "object") {
       for (const [, c] of n.voxels) m.set(c, (m.get(c) || 0) + 1);
     } else n.children.forEach(rec);
@@ -115,12 +116,12 @@ function sceneColors() {
   };
   return _scCache.cols;
 }
-export function buildSwatches() {
-  const w = document.getElementById("swatches");
+export function buildSwatches(): void {
+  const w = document.getElementById("swatches")!;
   w.innerHTML = "";
   const cols = sceneColors().slice(); // copy: we may unshift the selected colour
   if (!cols.includes(S.selColor)) cols.unshift(S.selColor); // selected colour is always shown, at #1 if unused
-  const swatch = (c) => {
+  const swatch = (c: number) => {
     const s = document.createElement("div");
     s.className = "sw" + (c === S.selColor ? " active" : "");
     s.style.background = hex(c);
@@ -158,7 +159,7 @@ export function buildSwatches() {
   w.appendChild(pick);
 }
 // the colour picker: pick any RGB; the chosen colour becomes selected
-function openColorPicker() {
+function openColorPicker(): void {
   const inp = document.createElement("input");
   inp.type = "color";
   inp.value = hex(S.selColor);
@@ -176,7 +177,7 @@ function openColorPicker() {
   inp.click();
 }
 // the "…" menu: every colour currently used in the scene
-function openPalette() {
+function openPalette(): void {
   closePalette();
   const back = document.createElement("div");
   back.id = "palback";
@@ -214,7 +215,7 @@ function openPalette() {
   back.appendChild(pop);
   document.body.appendChild(back);
 }
-function closePalette() {
+function closePalette(): boolean {
   const b = document.getElementById("palback");
   if (b) {
     b.remove();
@@ -225,7 +226,13 @@ function closePalette() {
 
 // ---- object/scene tree ----
 // collect a node's own voxels in local space (for the thumbnail)
-function localVoxels(node, off, rot, out) {
+type ThumbVox = { x: number; y: number; z: number; c: number };
+function localVoxels(
+  node: Node,
+  off: Vec,
+  rot: Rot,
+  out: ThumbVox[],
+): ThumbVox[] {
   if (node.type === "object") {
     for (const [k, c] of node.voxels) {
       const w = addv(rotY(parseKey(k), rot), off);
@@ -236,13 +243,13 @@ function localVoxels(node, off, rot, out) {
     }}
   return out;
 }
-const thumbCache = new Map();
-function thumbSig(node) {
+const thumbCache = new Map<string, { sig: string; cv: HTMLCanvasElement }>();
+function thumbSig(node: Node): string {
   return node.type === "object"
     ? "o" + node.voxels.size
     : "s" + node.children.map((c) => c.id + thumbSig(c)).join();
 }
-function thumbFor(node) {
+function thumbFor(node: Node): HTMLCanvasElement {
   const hit = thumbCache.get(node.id);
   if (node === S.editObject && hit) return hit.cv; // don't re-rasterise the object being actively edited
   const sig = thumbSig(node);
@@ -250,7 +257,7 @@ function thumbFor(node) {
   const cv = document.createElement("canvas");
   cv.width = cv.height = 52;
   cv.style.width = cv.style.height = "26px";
-  const g = cv.getContext("2d");
+  const g = cv.getContext("2d")!;
   g.fillStyle = "#0f1115";
   g.fillRect(0, 0, 52, 52);
   let vox = localVoxels(node, { x: 0, y: 0, z: 0 }, 0, []);
@@ -284,7 +291,7 @@ function thumbFor(node) {
 }
 // tree-row clicks: first click enters; a quick second click on the same row fits
 // it; clicking a row that's already entered renames it after the dbl-click window.
-function rowClick(node) {
+function rowClick(node: Node): void {
   if (S.pending && S.pending.node === node) { // quick second click on the same row -> zoom to fit
     clearTimeout(S.pending.timer);
     S.pending = null;
@@ -292,7 +299,7 @@ function rowClick(node) {
     return;
   }
   if (S.pending) clearTimeout(S.pending.timer);
-  const arm = (after) => {
+  const arm = (after?: () => void) => {
     S.pending = {
       node,
       timer: setTimeout(() => {
@@ -307,10 +314,10 @@ function rowClick(node) {
     arm();
   } // not entered: enter now; a quick second click still fits
 }
-function buildTree() {
-  const w = document.getElementById("tree");
+function buildTree(): void {
+  const w = document.getElementById("tree")!;
   w.innerHTML = "";
-  const row = (node, depth) => {
+  const row = (node: Node, depth: number) => {
     const isRoot = node === S.root;
     const r = document.createElement("div");
     const isSel = !isRoot && S.context.children.includes(node) &&
@@ -345,7 +352,11 @@ function buildTree() {
         (node.type === "scene" ? "group" : "object") + "</span>";}
     r.append(th, nm);
     if (!isRoot) {
-      const VI = { visible: "◉", transparent: "◐", invisible: "⦰" };
+      const VI: Record<string, string> = {
+        visible: "◉",
+        transparent: "◐",
+        invisible: "⦰",
+      };
       const vb = document.createElement("button");
       vb.className = "tb" + (v === "visible" ? " on" : "");
       vb.textContent = VI[v];
@@ -399,21 +410,25 @@ function buildTree() {
 }
 
 // ---- tree right-click context menu ----
-function closeItemMenu() {
+function closeItemMenu(): void {
   if (S.ctxMenuEl) {
     S.ctxMenuEl.remove();
     S.ctxMenuEl = null;
     window.removeEventListener("pointerdown", ctxMenuOutside, true);
   }
 }
-function ctxMenuOutside(e) {
-  if (S.ctxMenuEl && !S.ctxMenuEl.contains(e.target)) closeItemMenu();
+function ctxMenuOutside(e: PointerEvent): void {
+  if (
+    S.ctxMenuEl && !S.ctxMenuEl.contains(e.target as globalThis.Node | null)
+  ) {
+    closeItemMenu();
+  }
 }
-function showItemMenu(node, x, y) {
+function showItemMenu(node: Node, x: number, y: number): void {
   closeItemMenu();
   const m = document.createElement("div");
   m.className = "ctxmenu";
-  const add = (label, fn, cls) => {
+  const add = (label: string, fn: () => void, cls?: string) => {
     const it = document.createElement("div");
     it.className = "ctxitem" + (cls ? " " + cls : "");
     it.textContent = label;
@@ -459,14 +474,14 @@ function showItemMenu(node, x, y) {
 }
 
 // ---- tree drag & drop state/handlers ----
-function clearDropInd() {
+function clearDropInd(): void {
   if (S.dropRow) {
     S.dropRow.classList.remove("drop-into", "drop-before", "drop-after");
   }
   S.dropRow = null;
   S.dropInfo = null;
 }
-function dropOver(ev, node, row) {
+function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
   const dn = S.dragId && findById(S.dragId);
   if (!dn || dn === node || isDescendant(dn, node)) {
     clearDropInd();
@@ -482,7 +497,8 @@ function dropOver(ev, node, row) {
   const rect = row.getBoundingClientRect(),
     y = ev.clientY - rect.top,
     h = rect.height;
-  const par = parentOf(node), idx = par ? par.children.indexOf(node) : 0;
+  const par = parentOf(node) as SceneNode | null,
+    idx = par ? par.children.indexOf(node) : 0;
   if (y > h * 0.28 && y < h * 0.72) {
     if (node.type === "scene") {
       S.dropInfo = { parent: node, index: node.children.length }; // nest inside the group
@@ -496,12 +512,13 @@ function dropOver(ev, node, row) {
     row.classList.add("drop-after");
   }
 }
-function doDrop() {
+function doDrop(): void {
   const dn = S.dragId && findById(S.dragId);
   if (dn && S.dropInfo) {
     if (S.dropInfo.wrap) wrapInGroup(S.dropInfo.wrap, dn);
     else if (
-      S.dropInfo.parent && reparentNode(dn, S.dropInfo.parent, S.dropInfo.index)
+      S.dropInfo.parent &&
+      reparentNode(dn, S.dropInfo.parent, S.dropInfo.index!)
     ) {
       S.collapsed.delete(S.dropInfo.parent.id); // reveal the target
       selectNode(dn);
@@ -513,7 +530,7 @@ function doDrop() {
 }
 
 {
-  const treeEl = document.getElementById("tree"); // drop on empty area -> move to scene root
+  const treeEl = document.getElementById("tree")!; // drop on empty area -> move to scene root
   treeEl.addEventListener("dragover", (ev) => {
     if (ev.target === treeEl && S.dragId) {
       ev.preventDefault();
@@ -530,7 +547,7 @@ function doDrop() {
 }
 
 window.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT") return;
+  if ((e.target as HTMLElement).tagName === "INPUT") return;
   const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
   if (k === "escape" && closePalette()) return;
   if (mod) {

@@ -1,31 +1,32 @@
 // SketchUp-style floating dimensions: hover reads filled/empty runs along all
 // three axes through a voxel; left-click freezes a reading, right-click clears.
 import * as THREE from "three";
-import { S } from "./state.js";
-import { key, parseKey } from "./math.js";
-import { _mv, camera, canvas, measLines, ndc, raycaster } from "./scene-env.js";
-import { walk } from "./render.js";
-import { groundCell, localGroundCell, locToW, pickVoxel } from "./picking.js";
+import { S } from "./state.ts";
+import { key, parseKey } from "./math.ts";
+import { _mv, camera, canvas, measLines, ndc, raycaster } from "./scene-env.ts";
+import { walk } from "./render.ts";
+import { groundCell, localGroundCell, locToW, pickVoxel } from "./picking.ts";
+import type { MeasField, Seg, Vec, Voxel } from "./types.ts";
 
 const M_FILL = new THREE.Color(0xa7c4bc), M_EMPTY = new THREE.Color(0x5c677d);
-export const measureActive = () =>
+export const measureActive = (): boolean =>
   S.editObject ? S.tool === "measure" : S.measMode;
-export const invalidateField = () => {
+export const invalidateField = (): void => {
   S.measFieldCache = null;
 };
-export function clearMeasure() {
+export function clearMeasure(): void {
   S.liveMeas = null;
   S.frozenMeas = [];
   renderMeasure();
 }
 
 // the voxel field being measured: edited object (local) or current scene context (world)
-export function measureField() {
+export function measureField(): MeasField {
   if (S.measFieldCache) return S.measFieldCache;
-  const set = new Set(),
+  const set = new Set<number>(),
     mn = { x: 1e9, y: 1e9, z: 1e9 },
     mx = { x: -1e9, y: -1e9, z: -1e9 };
-  const acc = (x, y, z) => {
+  const acc = (x: number, y: number, z: number) => {
     set.add(key(x, y, z));
     mn.x = Math.min(mn.x, x);
     mn.y = Math.min(mn.y, y);
@@ -34,7 +35,7 @@ export function measureField() {
     mx.y = Math.max(mx.y, y);
     mx.z = Math.max(mx.z, z);
   };
-  let toW;
+  let toW: (x: number, y: number, z: number) => THREE.Vector3;
   if (S.editObject) {
     for (const [k] of S.editObject.voxels) {
       const v = parseKey(k);
@@ -42,18 +43,18 @@ export function measureField() {
     }
     toW = locToW; // edit-mode local -> world (same as the box brush)
   } else {
-    const all = [];
+    const all: Voxel[] = [];
     walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, all);
     for (const v of all) if (v.owner) acc(v.x, v.y, v.z);
-    toW = (x, y, z) => new THREE.Vector3(x, y, z);
+    toW = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   }
   S.measFieldCache = { set, mn, mx, toW, empty: set.size === 0 };
   return S.measFieldCache;
 }
-export function measureRef() { // voxel cell under the pointer, clamped into the field
+export function measureRef(): Vec | null { // voxel cell under the pointer, clamped into the field
   const f = measureField();
   if (f.empty) return null;
-  let cell = null;
+  let cell: Vec | null = null;
   if (S.editObject) {
     const t = pickVoxel();
     cell = t ? { ...t.cell } : localGroundCell(0);
@@ -78,8 +79,10 @@ export function measureRef() { // voxel cell under the pointer, clamped into the
     z: Math.max(f.mn.z, Math.min(f.mx.z, cell.z)),
   };
 }
-export function measureAt(cell) { // segments along all 3 axes through `cell`, split on filled/empty
-  const f = measureField(), ax = ["x", "y", "z"], out = [];
+export function measureAt(cell: Vec): Seg[] { // segments along all 3 axes through `cell`, split on filled/empty
+  const f = measureField(),
+    ax: (keyof Vec)[] = ["x", "y", "z"],
+    out: Seg[] = [];
   for (let d = 0; d < 3; d++) {
     const A = ax[d],
       o1 = ax[(d + 1) % 3],
@@ -87,7 +90,7 @@ export function measureAt(cell) { // segments along all 3 axes through `cell`, s
       lo = f.mn[A],
       hi = f.mx[A];
     const c = [cell.x, cell.y, cell.z],
-      at = (v) => {
+      at = (v: number) => {
         c[d] = v;
         return f.set.has(key(c[0], c[1], c[2]));
       };
@@ -96,8 +99,8 @@ export function measureAt(cell) { // segments along all 3 axes through `cell`, s
       const filled = at(i);
       let j = i;
       while (j + 1 <= hi && at(j + 1) === filled) j++;
-      const P = (av) => {
-        const p = {};
+      const P = (av: number) => {
+        const p = {} as Vec;
         p[A] = av;
         p[o1] = cell[o1] + 0.5;
         p[o2] = cell[o2] + 0.5;
@@ -115,26 +118,26 @@ export function measureAt(cell) { // segments along all 3 axes through `cell`, s
   }
   return out;
 }
-export function pointerMeasure() {
+export function pointerMeasure(): void {
   const c = measureRef();
   S.liveMeas = c ? measureAt(c) : null;
   renderMeasure();
 }
-export function freezeMeasure() {
+export function freezeMeasure(): void {
   if (S.liveMeas && S.liveMeas.length) {
     S.frozenMeas.push(S.liveMeas);
     renderMeasure();
   }
 }
 
-export function renderMeasure() {
-  const cont = document.getElementById("measure");
+export function renderMeasure(): void {
+  const cont = document.getElementById("measure")!;
   cont.innerHTML = "";
   S.measLabels = [];
-  const sets = [];
+  const sets: { s: Seg[]; fz: boolean }[] = [];
   if (S.liveMeas) sets.push({ s: S.liveMeas, fz: false });
   for (const f of S.frozenMeas) sets.push({ s: f, fz: true });
-  const pos = [], colr = [];
+  const pos: number[] = [], colr: number[] = [];
   for (const set of sets) {
     for (const seg of set.s) {
       const c = seg.filled ? M_FILL : M_EMPTY;
@@ -144,7 +147,7 @@ export function renderMeasure() {
       const el = document.createElement("div");
       el.className = "mlab" + (seg.filled ? "" : " empty") +
         (set.fz ? " frozen" : "");
-      el.textContent = seg.len;
+      el.textContent = String(seg.len);
       cont.appendChild(el);
       S.measLabels.push({ el, w: seg.mid });
     }
@@ -156,7 +159,7 @@ export function renderMeasure() {
   measLines.geometry = g;
   measLines.visible = pos.length > 0;
 }
-export function updateMeasureLabels() {
+export function updateMeasureLabels(): void {
   if (!S.measLabels.length) return;
   const r = canvas.getBoundingClientRect();
   for (const L of S.measLabels) {

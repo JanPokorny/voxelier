@@ -5,19 +5,26 @@
 // Voxel cells pack into one integer key instead of a "x,y,z" string: 17 bits per
 // axis (signed, biased by 2^16) keeps |coord| < 65536 and the packed value below
 // 2^51, so a Map<int,int> stays exact and avoids per-cell string alloc/parsing.
+import type { Node, Rot, Vec, Xform } from "./types.ts";
+
 const VBIAS = 1 << 16, VSTRIDE = 1 << 17;
-export const key = (x, y, z) =>
+export const key = (x: number, y: number, z: number): number =>
   (x + VBIAS) + (y + VBIAS) * VSTRIDE + (z + VBIAS) * VSTRIDE * VSTRIDE;
-export const parseKey = (k) => {
+export const parseKey = (k: number): Vec => {
   const xb = k % VSTRIDE;
   k = (k - xb) / VSTRIDE;
   const yb = k % VSTRIDE;
   k = (k - yb) / VSTRIDE;
   return { x: xb - VBIAS, y: yb - VBIAS, z: k - VBIAS };
 };
-export const addv = (a, b) => ({ x: a.x + b.x, y: a.y + b.y, z: a.z + b.z });
-export function rotY(v, r) {
-  let { x, y, z } = v;
+export const addv = (a: Vec, b: Vec): Vec => ({
+  x: a.x + b.x,
+  y: a.y + b.y,
+  z: a.z + b.z,
+});
+export function rotY(v: Vec, r: Rot): Vec {
+  let { x, z } = v;
+  const { y } = v;
   r = ((r % 4) + 4) % 4;
   for (let i = 0; i < r; i++) {
     const nx = -z, nz = x;
@@ -26,26 +33,26 @@ export function rotY(v, r) {
   }
   return { x, y, z };
 }
-export const xcompose = (X, Y) => ({
+export const xcompose = (X: Xform, Y: Xform): Xform => ({
   rot: (X.rot + Y.rot) & 3,
   off: addv(rotY(Y.off, X.rot), X.off),
 });
-export const xinvert = (T) => {
+export const xinvert = (T: Xform): Xform => {
   const r = (4 - (T.rot & 3)) & 3, o = rotY(T.off, r);
   return { rot: r, off: { x: -o.x, y: -o.y, z: -o.z } };
 };
-export const pathXform = (p) =>
-  p.slice(1).reduce((X, n) => xcompose(X, { off: n.pos, rot: n.rot }), {
+export const pathXform = (p: Node[]): Xform =>
+  p.slice(1).reduce<Xform>((X, n) => xcompose(X, { off: n.pos, rot: n.rot }), {
     off: { x: 0, y: 0, z: 0 },
     rot: 0,
   });
-export const hex = (v) =>
+export const hex = (v: number): string =>
   "#" + (v >>> 0).toString(16).padStart(6, "0").slice(-6);
 
 // node ids — a single monotonic counter, seeded from storage on load
 let _uid = 1;
-export const uid = () => "n" + (_uid++);
-export const peekUid = () => _uid;
-export const seedUid = (v) => {
+export const uid = (): string => "n" + (_uid++);
+export const peekUid = (): number => _uid;
+export const seedUid = (v: number): void => {
   _uid = v;
 };

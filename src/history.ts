@@ -3,19 +3,30 @@
 // whole document plus the editor's place in it (path, selection, edit target,
 // collapsed groups). Ctrl-Z walks back through the snapshots, Ctrl-Shift-Z /
 // Ctrl-Y walk forward; making a fresh edit after undoing drops the redo tail.
-import { S } from "./state.js";
-import { de, flush, save, ser } from "./persistence.js";
-import { peekUid, seedUid } from "./math.js";
-import { findById } from "./model.js";
-import { rebuild } from "./render.js";
-import { updateChrome } from "./ui.js";
+import { S } from "./state.ts";
+import { de, flush, save, ser } from "./persistence.ts";
+import type { SerNode } from "./persistence.ts";
+import { peekUid, seedUid } from "./math.ts";
+import { findById } from "./model.ts";
+import { rebuild } from "./render.ts";
+import { updateChrome } from "./ui.ts";
+import type { Node, ObjectNode, SceneNode } from "./types.ts";
+
+type Snap = {
+  rootJSON: string;
+  uid: number;
+  pathIds: string[];
+  selection: string[];
+  editId: string | null;
+  collapsed: string[];
+};
 
 const MAX = 200; // cap on retained snapshots
-const stack = [];
+const stack: Snap[] = [];
 let index = -1; // position of the current state within stack
 let restoring = false; // true while applying a snapshot, so save() won't re-record
 
-const snapshot = () => ({
+const snapshot = (): Snap => ({
   rootJSON: JSON.stringify(ser(S.root)),
   uid: peekUid(),
   pathIds: S.path.map((n) => n.id),
@@ -27,7 +38,7 @@ const snapshot = () => ({
 // Capture the current document state as a new history entry. No-op while a
 // restore is in flight, and skipped when the document is unchanged (so saves
 // that only touch navigation/selection don't pile up dead undo steps).
-export function record() {
+export function record(): void {
   if (restoring) return;
   const snap = snapshot();
   const prev = stack[index];
@@ -40,14 +51,14 @@ export function record() {
   index = stack.length - 1;
 }
 
-function restore(snap) {
+function restore(snap: Snap): void {
   restoring = true;
   seedUid(snap.uid);
-  S.root = de(JSON.parse(snap.rootJSON));
+  S.root = de(JSON.parse(snap.rootJSON) as SerNode) as SceneNode;
   S.path = []; // rebuild root..context from saved ids
-  let node = S.root;
+  let node: Node = S.root;
   for (const id of snap.pathIds) {
-    const next = node.id === id
+    const next: Node | null | undefined = node.id === id
       ? node
       : (node.type === "scene" ? node.children.find((c) => c.id === id) : null);
     if (!next) break;
@@ -55,8 +66,8 @@ function restore(snap) {
     S.path.push(node);
   }
   if (!S.path.length) S.path = [S.root];
-  S.context = S.path[S.path.length - 1];
-  S.editObject = snap.editId ? findById(snap.editId) : null;
+  S.context = S.path[S.path.length - 1] as SceneNode;
+  S.editObject = snap.editId ? findById(snap.editId) as ObjectNode : null;
   S.selection = new Set(
     snap.selection.filter((id) => S.context.children.some((c) => c.id === id)),
   );
@@ -72,11 +83,11 @@ function restore(snap) {
 
 // flush() first so any edits still inside the save-debounce window are recorded
 // as the current top of the stack before we step off it.
-export function undo() {
+export function undo(): void {
   flush();
   if (index > 0) restore(stack[--index]);
 }
-export function redo() {
+export function redo(): void {
   flush();
   if (index < stack.length - 1) restore(stack[++index]);
 }

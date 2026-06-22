@@ -1,7 +1,7 @@
 // Editing commands invoked from the tree menu, keyboard and pointer: visibility,
 // rename, create/delete/duplicate, clipboard, reparent/group, rotate and nudge.
-import { S } from "./state.js";
-import { addv, rotY, xcompose, xinvert } from "./math.js";
+import { S } from "./state.ts";
+import { addv, rotY, xcompose, xinvert } from "./math.ts";
 import {
   childById,
   clone,
@@ -14,20 +14,21 @@ import {
   parentOf,
   VIS_CYCLE,
   worldXform,
-} from "./model.js";
-import { goal } from "./scene-env.js";
-import { rebuild } from "./render.js";
-import { updateChrome } from "./ui.js";
-import { enterNode, selectNode } from "./navigation.js";
-import { save } from "./persistence.js";
+} from "./model.ts";
+import { goal } from "./scene-env.ts";
+import { rebuild } from "./render.ts";
+import { updateChrome } from "./ui.ts";
+import { enterNode, selectNode } from "./navigation.ts";
+import { save } from "./persistence.ts";
+import type { Node, SceneNode } from "./types.ts";
 
-export function cycleVis(node) {
+export function cycleVis(node: Node): void {
   node.vis = VIS_CYCLE[node.vis || "visible"];
   rebuild();
   updateChrome();
   save();
 }
-export function renameNode(node) {
+export function renameNode(node: Node): void {
   const n = prompt("Name", node.name || "");
   if (n != null) {
     node.name = n.trim();
@@ -36,14 +37,14 @@ export function renameNode(node) {
   }
 }
 
-export function createObject() {
+export function createObject(): void {
   const o = newObject();
   o.pos = { x: Math.round(goal.target.x), y: 0, z: Math.round(goal.target.z) };
   S.context.children.push(o);
   enterNode(o, true);
   save();
 }
-export function deleteSelection() {
+export function deleteSelection(): void {
   if (!S.selection.size) return;
   S.context.children = S.context.children.filter((c) => !S.selection.has(c.id));
   S.selection.clear();
@@ -51,8 +52,10 @@ export function deleteSelection() {
   updateChrome();
   save();
 }
-export function duplicateSelection() {
-  const dups = [...S.selection].map((id) => childById(id)).filter(Boolean).map(
+export function duplicateSelection(): void {
+  const dups = [...S.selection].map((id) => childById(id)).filter((
+    n,
+  ): n is Node => Boolean(n)).map(
     (n) => {
       const d = clone(n);
       d.pos = { x: n.pos.x + 5, y: n.pos.y, z: n.pos.z + 5 };
@@ -66,16 +69,18 @@ export function duplicateSelection() {
   updateChrome();
   save();
 }
-export function copySelection() {
-  S.clipboard = [...S.selection].map((id) => childById(id)).filter(Boolean).map(
+export function copySelection(): void {
+  S.clipboard = [...S.selection].map((id) => childById(id)).filter((
+    n,
+  ): n is Node => Boolean(n)).map(
     clone,
   );
 }
-export function cutSelection() {
+export function cutSelection(): void {
   copySelection();
   deleteSelection();
 }
-export function pasteClipboard() {
+export function pasteClipboard(): void {
   if (!S.clipboard.length) return;
   const ns = S.clipboard.map((n) => {
     const d = clone(n);
@@ -90,9 +95,13 @@ export function pasteClipboard() {
 }
 
 // ---- tree reparenting (drag & drop) ----
-export function reparentNode(node, newParent, index) { // move node under newParent at index, preserving world pose
+export function reparentNode(
+  node: Node,
+  newParent: SceneNode,
+  index: number,
+): boolean { // move node under newParent at index, preserving world pose
   if (node === newParent || isDescendant(node, newParent)) return false;
-  const A = parentOf(node);
+  const A = parentOf(node) as SceneNode | null;
   if (!A) return false;
   const Wn = xcompose(worldXform(A), { off: { ...node.pos }, rot: node.rot });
   const local = xcompose(xinvert(worldXform(newParent)), Wn);
@@ -113,8 +122,8 @@ export function reparentNode(node, newParent, index) { // move node under newPar
   return true;
 }
 // wrap a node in a fresh group that takes its place (world pose preserved)
-export function wrapNode(node) {
-  const par = parentOf(node);
+export function wrapNode(node: Node): SceneNode | null {
+  const par = parentOf(node) as SceneNode | null;
   if (!par) return null;
   const idx = par.children.indexOf(node);
   const g = newScene();
@@ -129,7 +138,7 @@ export function wrapNode(node) {
 }
 // wrap a target node in a new group, then drop another node in — used when one
 // object is dragged onto another in the tree.
-export function wrapInGroup(target, dragged) {
+export function wrapInGroup(target: Node, dragged: Node): boolean {
   if (dragged === target || isDescendant(dragged, target)) return false;
   const g = wrapNode(target);
   if (!g) return false;
@@ -143,8 +152,8 @@ export function wrapInGroup(target, dragged) {
 }
 
 // ---- right-click (context-menu) actions on a tree node ----
-export function duplicateNode(node) {
-  const par = parentOf(node);
+export function duplicateNode(node: Node): void {
+  const par = parentOf(node) as SceneNode | null;
   if (!par) return;
   const d = clone(node);
   d.pos = { x: node.pos.x + 5, y: node.pos.y, z: node.pos.z + 5 };
@@ -152,8 +161,8 @@ export function duplicateNode(node) {
   selectNode(d);
   save();
 }
-export function deleteNode(node) {
-  const par = parentOf(node);
+export function deleteNode(node: Node): void {
+  const par = parentOf(node) as SceneNode | null;
   if (!par) return;
   par.children = par.children.filter((c) => c !== node);
   S.selection.delete(node.id);
@@ -162,14 +171,14 @@ export function deleteNode(node) {
   updateChrome();
   save();
 }
-export function addObjectIn(group) { // new empty object inside a group (enter it)
+export function addObjectIn(group: SceneNode): void { // new empty object inside a group (enter it)
   const o = newObject();
   group.children.push(o);
   S.collapsed.delete(group.id);
   enterNode(o, true);
   save();
 }
-export function addGroupIn(group) { // new empty group inside a group
+export function addGroupIn(group: SceneNode): void { // new empty group inside a group
   const g = newScene();
   g.name = "Group";
   group.children.push(g);
@@ -177,7 +186,7 @@ export function addGroupIn(group) { // new empty group inside a group
   selectNode(g);
   save();
 }
-export function rotateSelectionBy(steps) { // rotate selection in 90° steps about each piece's own centre
+export function rotateSelectionBy(steps: number): void { // rotate selection in 90° steps about each piece's own centre
   const dir = steps < 0 ? -1 : 1;
   for (let n = 0; n < Math.abs(steps); n++) {
     const x = contextXform();
@@ -211,13 +220,13 @@ export function rotateSelectionBy(steps) { // rotate selection in 90° steps abo
   }
   if (S.selection.size) rebuild();
 }
-export function rotateSelection() {
+export function rotateSelection(): void {
   if (S.selection.size) {
     rotateSelectionBy(1);
     save();
   }
 }
-export function nudgeY(d) {
+export function nudgeY(d: number): void {
   for (const id of S.selection) {
     const c = childById(id);
     if (c) c.pos.y += d;

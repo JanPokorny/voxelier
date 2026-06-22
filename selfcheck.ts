@@ -4,9 +4,8 @@
 // localGroundCell depend on. If rotY's rotation or the inverse convention
 // breaks, placement silently lands on the wrong cell — this fails loudly.
 import { assert } from "@std/assert";
-import { addv, rotY } from "./src/math.js";
-
-type Vec = { x: number; y: number; z: number };
+import type { Vec } from "./src/types.ts";
+import { addv, rotY } from "./src/math.ts";
 
 const toW = (cell: Vec, off: Vec, rot: number): Vec =>
   addv(rotY(cell, rot), off); // local -> world (locToW)

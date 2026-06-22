@@ -5,8 +5,19 @@
 const inject = (template: string, marker: string, value: string) =>
   template.replace(marker, () => value);
 
+// `Deno.bundle` is an unstable API (enabled at runtime via --unstable-bundle);
+// its types aren't surfaced to `deno check`, so reach it through a typed boundary.
+type BundleResult = {
+  success: boolean;
+  errors: unknown[];
+  outputFiles?: { text(): string }[];
+};
+const denoBundle = (Deno as unknown as {
+  bundle: (opts: Record<string, unknown>) => Promise<BundleResult>;
+}).bundle;
+
 async function bundle(entrypoint: string) {
-  const result = await Deno.bundle({
+  const result = await denoBundle({
     entrypoints: [entrypoint],
     platform: "browser",
     format: "iife",
@@ -20,7 +31,7 @@ async function bundle(entrypoint: string) {
 }
 
 async function build() {
-  const js = await bundle("src/main.js");
+  const js = await bundle("src/main.ts");
   const css = await bundle("src/style.css");
 
   const template = await Deno.readTextFile("src/template.html");

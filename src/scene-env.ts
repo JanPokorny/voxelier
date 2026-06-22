@@ -3,7 +3,7 @@
 // is created once and exported; nothing here holds editor state.
 import * as THREE from "three";
 
-export const canvas = document.getElementById("c");
+export const canvas = document.getElementById("c") as HTMLCanvasElement;
 export const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
@@ -55,8 +55,9 @@ export const _m = new THREE.Matrix4(),
   _upN = new THREE.Vector3();
 const bg = new THREE.Color("#0f1115");
 // Voxels store a 0xRRGGBB int; resolve to a (cached) THREE.Color, full or dimmed.
-const _palCache = new Map(), _dimCache = new Map();
-export function col(v) {
+const _palCache = new Map<number, THREE.Color>(),
+  _dimCache = new Map<number, THREE.Color>();
+export function col(v: number): THREE.Color {
   let c = _palCache.get(v);
   if (!c) {
     c = new THREE.Color().setHex(v);
@@ -64,7 +65,7 @@ export function col(v) {
   }
   return c;
 }
-export function dimCol(v) {
+export function dimCol(v: number): THREE.Color {
   let c = _dimCache.get(v);
   if (!c) {
     c = new THREE.Color().setHex(v).lerp(bg, 0.62);

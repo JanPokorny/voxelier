@@ -1,8 +1,18 @@
 // The data model: node factories, visibility tables, tree queries, accumulated
 // transforms and node AABBs. A node is an `object` (a Map of voxels) or a
 // `scene` (a group of children); the document root is a scene.
-import { S } from "./state.js";
-import { addv, parseKey, pathXform, rotY, uid } from "./math.js";
+import { S } from "./state.ts";
+import { addv, parseKey, pathXform, rotY, uid } from "./math.ts";
+import type {
+  Box,
+  Node,
+  ObjectNode,
+  Rot,
+  SceneNode,
+  Vec,
+  Vis,
+  Xform,
+} from "./types.ts";
 
 // muted colours used to build the example (voxels store an arbitrary 0xRRGGBB)
 export const DEFAULT_COLORS = [
@@ -25,14 +35,18 @@ export const DEFAULT_COLORS = [
 ];
 
 // vis: 'visible' | 'transparent' | 'invisible' (inherited by descendants)
-export const VIS = { visible: 0, transparent: 1, invisible: 2 };
-export const VIS_CYCLE = {
+export const VIS: Record<Vis, number> = {
+  visible: 0,
+  transparent: 1,
+  invisible: 2,
+};
+export const VIS_CYCLE: Record<Vis, Vis> = {
   visible: "transparent",
   transparent: "invisible",
   invisible: "visible",
 };
 
-export const newObject = () => ({
+export const newObject = (): ObjectNode => ({
   type: "object",
   id: uid(),
   name: "",
@@ -41,7 +55,7 @@ export const newObject = () => ({
   vis: "visible",
   voxels: new Map(),
 });
-export const newScene = () => ({
+export const newScene = (): SceneNode => ({
   type: "scene",
   id: uid(),
   name: "",
@@ -50,7 +64,7 @@ export const newScene = () => ({
   vis: "visible",
   children: [],
 });
-export function clone(n) {
+export function clone(n: Node): Node {
   const base = {
     id: uid(),
     name: n.name,
@@ -63,8 +77,13 @@ export function clone(n) {
     : { type: "scene", ...base, children: n.children.map(clone) };
 }
 
-export const childById = (id) => S.context.children.find((c) => c.id === id);
-export function findPath(target, node = S.root, acc = []) {
+export const childById = (id: string): Node | undefined =>
+  S.context.children.find((c) => c.id === id);
+export function findPath(
+  target: Node,
+  node: Node = S.root,
+  acc: Node[] = [],
+): Node[] | null {
   const a = [...acc, node];
   if (node === target) return a;
   if (node.type === "scene") {
@@ -75,7 +94,7 @@ export function findPath(target, node = S.root, acc = []) {
   }
   return null;
 }
-export function findById(id, n = S.root) {
+export function findById(id: string, n: Node = S.root): Node | null {
   if (n.id === id) return n;
   if (n.type === "scene") {
     for (const c of n.children) {
@@ -85,26 +104,27 @@ export function findById(id, n = S.root) {
   }
   return null;
 }
-export function parentOf(node) {
+export function parentOf(node: Node): Node | null {
   const p = findPath(node);
   return p && p.length > 1 ? p[p.length - 2] : null;
 }
-export function isDescendant(node, t) {
+export function isDescendant(node: Node, t: Node): boolean {
   if (node === t) return true;
   if (node.type !== "scene") return false;
   return node.children.some((c) => isDescendant(c, t));
 }
 
-export const contextXform = () => pathXform(S.path); // root -> current context
-export const worldXform = (node) => pathXform(findPath(node) || [S.root]);
+export const contextXform = (): Xform => pathXform(S.path); // root -> context
+export const worldXform = (node: Node): Xform =>
+  pathXform(findPath(node) || [S.root]);
 
 // AABB helpers
-export const emptyBox = () => ({
+export const emptyBox = (): Box => ({
   min: { x: 1e9, y: 1e9, z: 1e9 },
   max: { x: -1e9, y: -1e9, z: -1e9 },
 });
 // grow an AABB to contain the unit voxel at (x,y,z)
-export const growBox = (b, x, y, z) => {
+export const growBox = (b: Box, x: number, y: number, z: number): void => {
   b.min.x = Math.min(b.min.x, x);
   b.min.y = Math.min(b.min.y, y);
   b.min.z = Math.min(b.min.z, z);
@@ -113,14 +133,16 @@ export const growBox = (b, x, y, z) => {
   b.max.z = Math.max(b.max.z, z + 1);
 };
 // world AABB of a node given an accumulated transform
-export function nodeBox(node, off, rot, box) {
+export function nodeBox(node: Node, off: Vec, rot: Rot, box: Box): Box {
   if (node.type === "object") {
     for (const [k] of node.voxels) {
       const w = addv(rotY(parseKey(k), rot), off);
       growBox(box, w.x, w.y, w.z);
     }
-  } else {for (const ch of node.children) {
+  } else {
+    for (const ch of node.children) {
       nodeBox(ch, addv(off, rotY(ch.pos, rot)), (rot + ch.rot) & 3, box);
-    }}
+    }
+  }
   return box;
 }

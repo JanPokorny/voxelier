@@ -1,18 +1,19 @@
 // Raycasting: NDC from a pointer, the picked scene child, a point on a horizontal
 // plane, the hovered edited-object voxel, and local<->world cell conversions.
 import * as THREE from "three";
-import { S } from "./state.js";
-import { rotY } from "./math.js";
-import { _hit, camera, canvas, ndc, raycaster } from "./scene-env.js";
+import { S } from "./state.ts";
+import { rotY } from "./math.ts";
+import { _hit, camera, canvas, ndc, raycaster } from "./scene-env.ts";
+import type { Vec } from "./types.ts";
 
-export function setNdc(cx, cy) {
+export function setNdc(cx: number, cy: number): void {
   const r = canvas.getBoundingClientRect();
   ndc.x = ((cx - r.left) / r.width) * 2 - 1;
   ndc.y = -((cy - r.top) / r.height) * 2 + 1;
 }
-export function pickChild() { // only opaque surfaces are pickable (transparent ones are not interactable)
+export function pickChild(): string | null { // only opaque surfaces are pickable (transparent ones are not interactable)
   raycaster.setFromCamera(ndc, camera);
-  let best = null, bd = Infinity;
+  let best: string | null = null, bd = Infinity;
   for (const m of S.pickMeshes) {
     const h = raycaster.intersectObject(m, false);
     if (h.length && h[0].distance < bd) {
@@ -22,7 +23,7 @@ export function pickChild() { // only opaque surfaces are pickable (transparent 
   }
   return best;
 }
-export function groundCell(yWorld) {
+export function groundCell(yWorld: number): Vec | null {
   raycaster.setFromCamera(ndc, camera);
   if (
     raycaster.ray.intersectPlane(
@@ -34,7 +35,7 @@ export function groundCell(yWorld) {
   }
   return null;
 }
-export function pickVoxel() { // -> {cell, addCell} in object-local space, or null
+export function pickVoxel(): { cell: Vec; addCell: Vec } | null { // -> {cell, addCell} in object-local space, or null
   if (!S.pickMeshes.length) return null;
   raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObjects(S.pickMeshes, false);
@@ -62,7 +63,7 @@ export function pickVoxel() { // -> {cell, addCell} in object-local space, or nu
   };
 }
 // pointer -> object-local cell on the horizontal plane at the given local Y
-export function localGroundCell(localY) {
+export function localGroundCell(localY: number): Vec | null {
   const g = groundCell(localY + S.editXform.off.y);
   if (!g) return null;
   const l = rotY({
@@ -73,7 +74,7 @@ export function localGroundCell(localY) {
   return { x: Math.round(l.x), y: localY, z: Math.round(l.z) };
 }
 // object-local -> world point (edit mode); shared by the box brush and measure
-export const locToW = (x, y, z) => {
+export const locToW = (x: number, y: number, z: number): THREE.Vector3 => {
   const r = rotY({ x, y, z }, S.editXform.rot);
   return new THREE.Vector3(
     r.x + S.editXform.off.x,
@@ -81,7 +82,7 @@ export const locToW = (x, y, z) => {
     r.z + S.editXform.off.z,
   );
 };
-export function voxelTarget() { // local cell for the active voxel tool
+export function voxelTarget(): Vec | null { // local cell for the active voxel tool
   const t = pickVoxel();
   if (S.tool === "add") return t ? t.addCell : localGroundCell(0);
   return t ? t.cell : null;

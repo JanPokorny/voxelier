@@ -2,15 +2,17 @@
 // localStorage persistence, so a round-trip preserves groups, transforms,
 // colours and visibility. Export downloads a .json file; import reads one,
 // replaces the document and resets the editor to the scene root.
-import { S } from "./state.js";
-import { de, save, ser } from "./persistence.js";
-import { peekUid, seedUid } from "./math.js";
-import { rebuild } from "./render.js";
-import { updateChrome } from "./ui.js";
-import { frameView } from "./camera.js";
-import { clearMeasure } from "./measure.js";
+import { S } from "./state.ts";
+import { de, save, ser } from "./persistence.ts";
+import { peekUid, seedUid } from "./math.ts";
+import { rebuild } from "./render.ts";
+import { updateChrome } from "./ui.ts";
+import { frameView } from "./camera.ts";
+import { clearMeasure } from "./measure.ts";
+import type { SceneNode } from "./types.ts";
+import type { SerNode } from "./persistence.ts";
 
-export function exportScene() {
+export function exportScene(): void {
   const data = JSON.stringify({ uid: peekUid(), root: ser(S.root) });
   const url = URL.createObjectURL(
     new Blob([data], { type: "application/json" }),
@@ -27,7 +29,7 @@ export function exportScene() {
   URL.revokeObjectURL(url);
 }
 
-export function importScene() {
+export function importScene(): void {
   const inp = document.createElement("input");
   inp.type = "file";
   inp.accept = "application/json,.json";
@@ -37,10 +39,13 @@ export function importScene() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const d = JSON.parse(reader.result);
+        const d = JSON.parse(reader.result as string) as {
+          uid?: number;
+          root?: SerNode;
+        };
         if (!d || !d.root) throw new Error("not a Voxelier scene file");
         seedUid(d.uid || 1);
-        S.root = de(d.root);
+        S.root = de(d.root) as SceneNode;
         S.path = [S.root];
         S.context = S.root;
         S.editObject = null;
@@ -51,7 +56,7 @@ export function importScene() {
         frameView();
         save(); // save() records an undo step
       } catch (e) {
-        alert("Import failed: " + e.message);
+        alert("Import failed: " + (e as Error).message);
       }
     };
     reader.readAsText(file);

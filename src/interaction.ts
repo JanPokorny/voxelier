@@ -3,9 +3,10 @@
 //   Right drag: rotate the selected object (90° snap, started on it) else orbit.
 //   Shift while moving: vertical axis only.  Middle drag: pan.  Wheel: zoom.
 // Attaches its canvas listeners on import (side effect).
-import { S } from "./state.js";
-import { addv, key, rotY } from "./math.js";
-import { camera, canvas, goal, hoverVox, overlay } from "./scene-env.js";
+import type * as THREE from "three";
+import { S } from "./state.ts";
+import { addv, key, rotY } from "./math.ts";
+import { camera, canvas, goal, hoverVox, overlay } from "./scene-env.ts";
 import {
   groundCell,
   localGroundCell,
@@ -14,7 +15,7 @@ import {
   pickVoxel,
   setNdc,
   voxelTarget,
-} from "./picking.js";
+} from "./picking.ts";
 import {
   editDelete,
   editSet,
@@ -22,9 +23,9 @@ import {
   rebuild,
   refreshOverlay,
   walk,
-} from "./render.js";
-import { childById, contextXform } from "./model.js";
-import { orbitView, panCamera } from "./camera.js";
+} from "./render.ts";
+import { childById, contextXform } from "./model.ts";
+import { orbitView, panCamera } from "./camera.ts";
 import {
   clearMeasure,
   freezeMeasure,
@@ -32,71 +33,78 @@ import {
   measureActive,
   pointerMeasure,
   renderMeasure,
-} from "./measure.js";
-import { enterNode } from "./navigation.js";
-import { rotateSelectionBy } from "./commands.js";
-import { updateChrome } from "./ui.js";
-import { save } from "./persistence.js";
+} from "./measure.ts";
+import { enterNode } from "./navigation.ts";
+import { rotateSelectionBy } from "./commands.ts";
+import { updateChrome } from "./ui.ts";
+import { save } from "./persistence.ts";
+import type { Drag, Seg, Vec, Voxel } from "./types.ts";
 
-const moved = (e) =>
-  (Math.abs(e.clientX - S.drag.sx) + Math.abs(e.clientY - S.drag.sy)) > 3;
+const moved = (e: PointerEvent) =>
+  (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
 
 // Collision avoidance for moves. Snapshot (once per drag) every solid cell in
 // the scene — every visible/transparent voxel except the moving selection's own
 // — plus the selection's voxels, all in world space. Invisible objects are
 // absent from walk(), so they never block. A candidate offset is blocked if any
 // moved voxel would land on an occupied cell.
-function moveCollision() {
-  const all = [];
+function moveCollision(): { occ: Set<number>; sel: Voxel[] } {
+  const all: Voxel[] = [];
   walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, all);
-  const occ = new Set(), sel = [];
+  const occ = new Set<number>(), sel: Voxel[] = [];
   for (const v of all) {
     if (v.owner && S.selection.has(v.owner)) sel.push(v);
     else occ.add(key(v.x, v.y, v.z));
   }
   return { occ, sel };
 }
-const moveBlocked = (d, dx, dy, dz) =>
-  d.sel.some((v) => d.occ.has(key(v.x + dx, v.y + dy, v.z + dz)));
+const moveBlocked = (
+  d: Drag,
+  dx: number,
+  dy: number,
+  dz: number,
+) => (d.sel ?? []).some((v) => d.occ!.has(key(v.x + dx, v.y + dy, v.z + dz)));
 
-function moveDragTo(e) {
-  let dx = S.drag.dx, dy = S.drag.dy, dz = S.drag.dz;
+function moveDragTo(e: PointerEvent): void {
+  let dx = S.drag!.dx!, dy = S.drag!.dy!, dz = S.drag!.dz!;
   if (e.shiftKey) { // Shift: adjust height from where it was dragged to
-    if (S.drag.shiftAnchorY == null) {
-      S.drag.shiftAnchorY = e.clientY;
-      S.drag.dyBase = S.drag.dy;
+    if (S.drag!.shiftAnchorY == null) {
+      S.drag!.shiftAnchorY = e.clientY;
+      S.drag!.dyBase = S.drag!.dy;
     }
     const perPx = (camera.top - camera.bottom) /
       canvas.getBoundingClientRect().height;
-    dy = S.drag.dyBase + Math.round((S.drag.shiftAnchorY - e.clientY) * perPx);
+    dy = S.drag!.dyBase! +
+      Math.round((S.drag!.shiftAnchorY - e.clientY) * perPx);
   } else { // horizontal: move on the floor plane
-    S.drag.shiftAnchorY = null;
+    S.drag!.shiftAnchorY = null;
     const g = groundCell(0);
-    if (g && S.drag.start) {
-      dx = g.x - S.drag.start.x;
-      dz = g.z - S.drag.start.z;
+    if (g && S.drag!.start) {
+      dx = g.x - S.drag!.start.x;
+      dz = g.z - S.drag!.start.z;
     }
   }
   // advance each axis toward the cursor only where it wouldn't intersect another
   // object (so the piece slides along obstacles); Alt ignores collisions.
-  const free = (x, y, z) => e.altKey || !moveBlocked(S.drag, x, y, z);
-  if (free(dx, S.drag.dy, S.drag.dz)) S.drag.dx = dx;
-  if (free(S.drag.dx, dy, S.drag.dz)) S.drag.dy = dy;
-  if (free(S.drag.dx, S.drag.dy, dz)) S.drag.dz = dz;
+  const free = (x: number, y: number, z: number) =>
+    e.altKey || !moveBlocked(S.drag!, x, y, z);
+  if (free(dx, S.drag!.dy!, S.drag!.dz!)) S.drag!.dx = dx;
+  if (free(S.drag!.dx!, dy, S.drag!.dz!)) S.drag!.dy = dy;
+  if (free(S.drag!.dx!, S.drag!.dy!, dz)) S.drag!.dz = dz;
   for (const id of S.selection) {
     for (const m of (S.childMeshes[id] || [])) {
-      m.position.set(S.drag.dx, S.drag.dy, S.drag.dz);
+      m.position.set(S.drag!.dx!, S.drag!.dy!, S.drag!.dz!);
     }
   }
-  overlay.position.set(S.drag.dx, S.drag.dy, S.drag.dz);
+  overlay.position.set(S.drag!.dx!, S.drag!.dy!, S.drag!.dz!);
 }
-function commitMove() {
+function commitMove(): void {
   const x = contextXform(),
     dL = rotY(
-      { x: Math.round(S.drag.dx), y: 0, z: Math.round(S.drag.dz) },
+      { x: Math.round(S.drag!.dx!), y: 0, z: Math.round(S.drag!.dz!) },
       (4 - x.rot) & 3,
     ),
-    dy = Math.round(S.drag.dy);
+    dy = Math.round(S.drag!.dy!);
   for (const id of S.selection) {
     const c = childById(id);
     if (c) {
@@ -109,15 +117,15 @@ function commitMove() {
   rebuild();
   save();
 }
-function rotDragTo(e) {
-  const steps = Math.round((S.drag.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
-  if (steps !== S.drag.steps) {
-    rotateSelectionBy(steps - S.drag.steps);
-    S.drag.steps = steps;
+function rotDragTo(e: PointerEvent): void {
+  const steps = Math.round((S.drag!.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
+  if (steps !== S.drag!.steps) {
+    rotateSelectionBy(steps - S.drag!.steps!);
+    S.drag!.steps = steps;
   }
 }
 
-function applyVoxel() {
+function applyVoxel(): void {
   const c = voxelTarget();
   if (!c) return;
   const k = key(c.x, c.y, c.z);
@@ -126,14 +134,14 @@ function applyVoxel() {
     editSet(c.x, c.y, c.z, S.selColor);
   } else if (S.tool === "erase") editDelete(c.x, c.y, c.z);
   else if (S.tool === "paint") {
-    if (S.editObject.voxels.has(k)) editSet(c.x, c.y, c.z, S.selColor);
+    if (S.editObject!.voxels.has(k)) editSet(c.x, c.y, c.z, S.selColor);
   }
   S.lastVox = k;
   updateVoxHover();
 }
-function updateVoxHover() {
+function updateVoxHover(): void {
   const t = pickVoxel();
-  let cell = null;
+  let cell: Vec | null = null;
   if (S.tool === "add") cell = t ? t.addCell : voxelTarget();
   else cell = t ? t.cell : null;
   if (!cell) {
@@ -142,12 +150,17 @@ function updateVoxHover() {
   }
   const w = addv(rotY(cell, S.editXform.rot), S.editXform.off);
   hoverVox.visible = true;
-  hoverVox.material.color.set(S.tool === "erase" ? 0xb5838d : 0xa7c4bc);
+  (hoverVox.material as THREE.LineBasicMaterial).color.set(
+    S.tool === "erase" ? 0xb5838d : 0xa7c4bc,
+  );
   hoverVox.position.set(w.x + 0.5, w.y + 0.5, w.z + 0.5);
 }
 
 // ---- box brush (add/erase): drag an NxM footprint, Shift extrudes vertically ----
-function startBox(_e, base) {
+function startBox(
+  _e: PointerEvent,
+  base: { x: number; y: number; sx: number; sy: number },
+): void {
   const s = voxelTarget();
   if (!s) return; // nothing under the pointer to start from
   S.drag = {
@@ -160,19 +173,19 @@ function startBox(_e, base) {
   hoverVox.visible = false;
   renderBox();
 }
-function boxDragTo(e) {
-  const b = S.drag.box;
+function boxDragTo(e: PointerEvent): void {
+  const b = S.drag!.box!;
   if (e.shiftKey) { // vertical extrude (like moving objects with Shift)
     const perPx = (camera.top - camera.bottom) /
       canvas.getBoundingClientRect().height;
-    if (S.drag.shiftAnchorY === null) {
-      S.drag.shiftAnchorY = e.clientY;
-      S.drag.hyBase = b.hy;
+    if (S.drag!.shiftAnchorY === null) {
+      S.drag!.shiftAnchorY = e.clientY;
+      S.drag!.hyBase = b.hy;
     }
-    b.hy = S.drag.hyBase +
-      Math.round((S.drag.shiftAnchorY - e.clientY) * perPx);
+    b.hy = S.drag!.hyBase! +
+      Math.round((S.drag!.shiftAnchorY! - e.clientY) * perPx);
   } else { // horizontal footprint
-    S.drag.shiftAnchorY = null;
+    S.drag!.shiftAnchorY = null;
     const c = localGroundCell(b.y0);
     if (c) {
       b.x1 = c.x;
@@ -182,7 +195,7 @@ function boxDragTo(e) {
   renderBox();
 }
 function boxExtent() {
-  const b = S.drag.box;
+  const b = S.drag!.box!;
   return {
     x0: Math.min(b.x0, b.x1),
     x1: Math.max(b.x0, b.x1),
@@ -192,7 +205,7 @@ function boxExtent() {
     y1: Math.max(b.y0, b.y0 + b.hy),
   };
 }
-function commitBox() {
+function commitBox(): void {
   const x = boxExtent();
   for (let i = x.x0; i <= x.x1; i++) {
     for (let j = x.y0; j <= x.y1; j++) {
@@ -210,7 +223,7 @@ function commitBox() {
   save();
 }
 // build the box wireframe as measure-style segments (3 labelled dimension edges + the rest unlabelled)
-function renderBox() {
+function renderBox(): void {
   const x = boxExtent(),
     X0 = x.x0,
     X1 = x.x1 + 1,
@@ -219,7 +232,16 @@ function renderBox() {
     Z0 = x.z0,
     Z1 = x.z1 + 1;
   const nx = X1 - X0, ny = Y1 - Y0, nz = Z1 - Z0;
-  const seg = (ax, ay, az, bx, by, bz, len, label) => ({
+  const seg = (
+    ax: number,
+    ay: number,
+    az: number,
+    bx: number,
+    by: number,
+    bz: number,
+    len: number,
+    label: boolean,
+  ): Seg => ({
     a: locToW(ax, ay, az),
     b: locToW(bx, by, bz),
     mid: locToW((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2),
@@ -227,7 +249,7 @@ function renderBox() {
     filled: true,
     nolabel: !label,
   });
-  const o = [];
+  const o: Seg[] = [];
   o.push(seg(X0, Y0, Z0, X1, Y0, Z0, nx, true)); // X dimension
   o.push(seg(X0, Y0, Z0, X0, Y0, Z1, nz, true)); // Z dimension
   o.push(seg(X0, Y0, Z0, X0, Y1, Z0, ny, true)); // Y dimension
@@ -390,5 +412,5 @@ canvas.addEventListener("dblclick", (e) => {
   setNdc(e.clientX, e.clientY);
   const id = pickChild();
   if (!id) return;
-  enterNode(childById(id), true); // descend into a group, or open an object for painting
+  enterNode(childById(id)!, true); // descend into a group, or open an object for painting
 });

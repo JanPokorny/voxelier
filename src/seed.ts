@@ -1,11 +1,13 @@
 // The example scene shown on first run (no saved document). Returns a fresh root.
-import { DEFAULT_COLORS, newObject, newScene } from "./model.js";
-import { key } from "./math.js";
+import { DEFAULT_COLORS, newObject, newScene } from "./model.ts";
+import { key } from "./math.ts";
+import type { SceneNode } from "./types.ts";
 
-export function seed() {
+export function seed(): SceneNode {
   // --- Room object (60 x 46 floor, 34 tall, with a doorway) ---
   const room = newObject();
-  const rv = (x, y, z, c) => room.voxels.set(key(x, y, z), DEFAULT_COLORS[c]);
+  const rv = (x: number, y: number, z: number, c: number) =>
+    room.voxels.set(key(x, y, z), DEFAULT_COLORS[c]);
   const W = 60, D = 46, H = 34;
   for (let x = 0; x < W; x++) for (let z = 0; z < D; z++) rv(x, 0, z, 3); // floor
   for (let y = 1; y <= H; y++) {
@@ -25,7 +27,8 @@ export function seed() {
 
   // --- Desk object (30 x 16 x 18) ---
   const desk = newObject();
-  const dv = (x, y, z, c) => desk.voxels.set(key(x, y, z), DEFAULT_COLORS[c]);
+  const dv = (x: number, y: number, z: number, c: number) =>
+    desk.voxels.set(key(x, y, z), DEFAULT_COLORS[c]);
   for (let x = 0; x < 30; x++) for (let z = 0; z < 16; z++) dv(x, 17, z, 9); // top
   for (const [lx, lz] of [[0, 0], [28, 0], [0, 14], [28, 14]]) {
     for (let y = 0; y < 17; y++) {
@@ -38,7 +41,8 @@ export function seed() {
 
   // --- Computer object (monitor on a stand) ---
   const comp = newObject();
-  const cv = (x, y, z, c) => comp.voxels.set(key(x, y, z), DEFAULT_COLORS[c]);
+  const cv = (x: number, y: number, z: number, c: number) =>
+    comp.voxels.set(key(x, y, z), DEFAULT_COLORS[c]);
   for (let x = 0; x < 6; x++) for (let z = 0; z < 5; z++) cv(x + 6, 0, z, 11); // foot
   for (let y = 1; y < 5; y++) {
     cv(8, y, 2, 11);
@@ -53,7 +57,8 @@ export function seed() {
 
   // --- Chair object (10 x 10 seat, modest back; backrest at local z=0) ---
   const chair = newObject();
-  const hv = (x, y, z, c) => chair.voxels.set(key(x, y, z), DEFAULT_COLORS[c]);
+  const hv = (x: number, y: number, z: number, c: number) =>
+    chair.voxels.set(key(x, y, z), DEFAULT_COLORS[c]);
   const CS = 10;
   for (let x = 0; x < CS; x++) for (let z = 0; z < CS; z++) hv(x, 9, z, 13); // seat (top at y=10)
   for (const [lx, lz] of [[1, 1], [CS - 2, 1], [1, CS - 2], [CS - 2, CS - 2]]) {
@@ -63,7 +68,8 @@ export function seed() {
 
   // --- Plant object (pot + foliage) ---
   const plant = newObject();
-  const pv = (x, y, z, c) => plant.voxels.set(key(x, y, z), DEFAULT_COLORS[c]);
+  const pv = (x: number, y: number, z: number, c: number) =>
+    plant.voxels.set(key(x, y, z), DEFAULT_COLORS[c]);
   for (let y = 0; y < 9; y++) {
     for (let x = 0; x < 10; x++) {
       for (let z = 0; z < 10; z++) {
