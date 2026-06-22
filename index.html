@@ -467,7 +467,7 @@ canvas.addEventListener('pointerdown',e=>{
   const hitId=pickChild();
   const onSel=hitId&&selection.has(hitId);
   if(e.button===0){
-    if(onSel){ drag={...base,mode:'move',start:groundCell(0),dx:0,dy:0,dz:0,shiftAnchorY:null}; }
+    if(onSel){ drag={...base,mode:'move',start:groundCell(0),dx:0,dy:0,dz:0,shiftAnchorY:null,...moveCollision()}; }
     else drag={...base,mode:'pan',clickId:hitId};
   }else if(e.button===2){
     if(onSel) drag={...base,mode:'rotobj',steps:0};
@@ -526,15 +526,36 @@ canvas.addEventListener('dblclick',e=>{
   enterNode(childById(id),true);                  // descend into a group, or open an object for painting
 });
 
+// Collision avoidance for moves. Snapshot (once per drag) every solid cell in
+// the scene — every visible/transparent voxel except the moving selection's own
+// — plus the selection's voxels, all in world space. Invisible objects are
+// absent from walk(), so they never block. A candidate offset is blocked if any
+// moved voxel would land on an occupied cell.
+function moveCollision(){
+  const all=[]; walk(root,{x:0,y:0,z:0},0,null,0,all);
+  const occ=new Set(), sel=[];
+  for(const v of all){ if(v.owner && selection.has(v.owner)) sel.push(v);
+    else occ.add(v.x+','+v.y+','+v.z); }
+  return {occ,sel};
+}
+const moveBlocked=(d,dx,dy,dz)=>d.sel.some(v=>d.occ.has((v.x+dx)+','+(v.y+dy)+','+(v.z+dz)));
+
 function moveDragTo(e){
+  let dx=drag.dx,dy=drag.dy,dz=drag.dz;
   if(e.shiftKey){                                  // Shift: adjust height from where it was dragged to
     if(drag.shiftAnchorY==null){ drag.shiftAnchorY=e.clientY; drag.dyBase=drag.dy; }
     const perPx=(camera.top-camera.bottom)/canvas.getBoundingClientRect().height;
-    drag.dy=drag.dyBase+Math.round((drag.shiftAnchorY-e.clientY)*perPx);
+    dy=drag.dyBase+Math.round((drag.shiftAnchorY-e.clientY)*perPx);
   }else{                                           // horizontal: move on the floor plane
     drag.shiftAnchorY=null;
-    const g=groundCell(0); if(g&&drag.start){ drag.dx=g.x-drag.start.x; drag.dz=g.z-drag.start.z; }
+    const g=groundCell(0); if(g&&drag.start){ dx=g.x-drag.start.x; dz=g.z-drag.start.z; }
   }
+  // advance each axis toward the cursor only where it wouldn't intersect another
+  // object (so the piece slides along obstacles); Alt ignores collisions.
+  const free=(x,y,z)=>e.altKey || !moveBlocked(drag, x,y,z);
+  if(free(dx,drag.dy,drag.dz)) drag.dx=dx;
+  if(free(drag.dx,dy,drag.dz)) drag.dy=dy;
+  if(free(drag.dx,drag.dy,dz)) drag.dz=dz;
   for(const id of selection) for(const m of (childMeshes[id]||[])) m.position.set(drag.dx,drag.dy,drag.dz);
   overlay.position.set(drag.dx,drag.dy,drag.dz);
 }
@@ -822,7 +843,7 @@ function updateChrome(){
     ? (tool==='paint' ? 'Paint — click/drag to recolour voxels · right-drag orbits · middle-drag pans · Esc to finish'
        : `${tool==='add'?'Add':'Erase'} — drag a box in the floor plane (Shift = height) · right-drag orbits · middle-drag pans · Esc to finish`)
     : (selection.size
-        ? `${selection.size} selected — drag to move (Shift: up/down) · right-drag rotate · R rotate · Del`
+        ? `${selection.size} selected — drag to move (Shift: up/down · Alt: allow overlap) · right-drag rotate · R rotate · Del`
         : 'Tree: click a row to enter it · double-click to fit · right-click for actions · N new object');
 }
 
