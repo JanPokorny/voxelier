@@ -28,14 +28,6 @@
 
   #tools{grid-area:left;background:var(--panel);border-right:1px solid var(--line);
          display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;z-index:4}
-  /* camera-view tool: a button showing the current projection, with a hover flyout */
-  .viewtool{position:relative}
-  .viewtool .flyout{position:absolute;left:100%;top:-1px;display:none;flex-direction:column;gap:2px;
-        background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px;
-        box-shadow:0 12px 36px rgba(0,0,0,.55);z-index:70}
-  .viewtool:hover .flyout{display:flex}
-  .viewtool .flyout button{text-align:left;padding:6px 12px;border-radius:5px}
-  .viewtool .flyout button.active{background:var(--accent);color:var(--accent-ink);font-weight:600}
   .tool{width:50px;min-height:48px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line);
         display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
         font-size:9.5px;color:var(--ink-dim);cursor:pointer;padding:5px 2px;text-align:center}
@@ -61,8 +53,12 @@
   .trow.sel{background:#2a3330;border-color:var(--accent)}
   .trow.ctx{border-color:#3a4252}
   .trow.edit{border-color:var(--accent);background:#26302e}
-  .trow .tw{flex:none;width:13px;text-align:center;color:var(--ink-dim);font-size:9px}
   .trow .thumb{flex:none;width:26px;height:26px;border-radius:4px;background:#0f1115}
+  /* a collapsible group's thumbnail doubles as its collapse toggle; collapsed = a stack */
+  .trow .thumb.group{cursor:pointer}
+  .trow .thumb.collapsed{margin-right:6px;
+    box-shadow:2px 2px 0 0 var(--bg),2px 2px 0 1px var(--line),
+               4px 4px 0 0 var(--bg),4px 4px 0 1px var(--line)}
   .trow .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
   .trow.dim .nm{color:var(--ink-dim)}
   .trow.root .nm{font-weight:600;color:var(--ink)}
@@ -446,7 +442,7 @@ function voxelTarget(){ // local cell for the active voxel tool
 //  Right drag: rotate the selected object (90° snap, started on it) else orbit.
 //  Shift while moving: vertical axis only.  Middle drag: pan.  Wheel: zoom.
 // ============================================================
-let painting=false,lastVox=null,drag=null,orbitAccum=0;
+let painting=false,lastVox=null,drag=null;
 const moved=e=>(Math.abs(e.clientX-drag.sx)+Math.abs(e.clientY-drag.sy))>3;
 
 canvas.addEventListener('pointerdown',e=>{
@@ -455,7 +451,7 @@ canvas.addEventListener('pointerdown',e=>{
 
   if(measureActive()){            // left-click freezes, right-click clears; drags still navigate
     if(e.button===0) drag={...base,mode:'pan',meas:'freeze'};
-    else if(e.button===2){ orbitAccum=0; drag={...base,mode:'orbit',meas:'clear'}; }
+    else if(e.button===2){ drag={...base,mode:'orbit',meas:'clear'}; }
     else if(e.button===1) drag={...base,mode:'pan',sx:-1e9};
     return;
   }
@@ -465,7 +461,7 @@ canvas.addEventListener('pointerdown',e=>{
       else if(tool==='add'||tool==='erase'){ startBox(e,base); }      // box select in the horizontal plane
       else { painting=true; lastVox=null; applyVoxel(); }             // paint
     }
-    else if(e.button===2){ orbitAccum=0; drag={...base,mode:'orbit'}; }
+    else if(e.button===2){ drag={...base,mode:'orbit'}; }
     else if(e.button===1){ drag={...base,mode:'pan'}; }
     return;
   }
@@ -477,7 +473,7 @@ canvas.addEventListener('pointerdown',e=>{
     else drag={...base,mode:'pan',clickId:hitId};
   }else if(e.button===2){
     if(onSel) drag={...base,mode:'rotobj',steps:0};
-    else { orbitAccum=0; drag={...base,mode:'orbit'}; }
+    else { drag={...base,mode:'orbit'}; }
   }else if(e.button===1){ drag={...base,mode:'pan',clickId:null,sx:-1e9}; }  // middle = pan only
 });
 
@@ -779,7 +775,6 @@ function nudgeY(d){ for(const id of selection){ const c=childById(id); if(c) c.p
 // ============================================================
 //  CAMERA
 // ============================================================
-let view='iso', azimIndex=0;
 function panCamera(dx,dy){
   const r=canvas.getBoundingClientRect();
   const perPx=(camera.top-camera.bottom)/r.height;
@@ -788,25 +783,10 @@ function panCamera(dx,dy){
   const up=new THREE.Vector3().crossVectors(right,fwd).normalize();
   goal.target.addScaledVector(right,-dx*perPx); goal.target.addScaledVector(up,dy*perPx);
 }
-function orbitView(dx,dy){
-  if(view==='free'){
-    goal.azim-=dx*0.012;     // inverted: drag follows the scene
-    goal.elev=Math.max(-0.35,Math.min(Math.PI/2,goal.elev+dy*0.012));   // inverted vertical axis
-  }else{ // iso/bird: drag rotates azimuth in 90° detents (elevation locked)
-    orbitAccum+=dx;
-    while(orbitAccum> 60){ azimIndex--; orbitAccum-=60; applyAzim(); }
-    while(orbitAccum<-60){ azimIndex++; orbitAccum+=60; applyAzim(); }
-  }
+function orbitView(dx,dy){          // free orbit (the only camera mode)
+  goal.azim-=dx*0.012;             // inverted: drag follows the scene
+  goal.elev=Math.max(-0.35,Math.min(Math.PI/2,goal.elev+dy*0.012));   // inverted vertical axis
 }
-function applyAzim(){ goal.azim=azimIndex*Math.PI/2 + (view==='bird'?0:Math.PI/4); }
-function setView(v){
-  if(v==='free'){ goal.azim=cam.azim; goal.elev=cam.elev; }   // freeform: keep current angle
-  else { goal.elev=v==='bird'?Math.PI/2:ISO_ELEV; const base=v==='bird'?0:Math.PI/4;
-    azimIndex=Math.round((cam.azim-base)/(Math.PI/2)); }
-  view=v; if(v!=='free') applyAzim();
-  refreshViewBtn();
-}
-function rotateView(d){ if(view==='free'){ goal.azim+=d*Math.PI/2; } else { azimIndex+=d; applyAzim(); } }
 function computeBounds(){
   const b=emptyBox();
   if(editObject){ nodeBox(editObject, editXform.off, editXform.rot, b);
@@ -825,22 +805,6 @@ function fitNode(node){                          // frame the camera on one tree
   if(b.max.x<b.min.x) return;                    // empty
   goal.target.set((b.min.x+b.max.x)/2,(b.min.y+b.max.y)/2,(b.min.z+b.max.z)/2);
   goal.zoom=Math.max(8,Math.min(400,Math.max(b.max.x-b.min.x,b.max.y-b.min.y,b.max.z-b.min.z)*1.5+8));
-}
-// camera-view tool: a toolbar button showing the current projection, with a hover flyout of all three
-const VIEW_META={iso:{ic:'◈',label:'Iso'},bird:{ic:'▦',label:'Bird'},free:{ic:'✦',label:'Free'}};
-let viewBtnEl=null;
-function makeViewBtn(){
-  const el=document.createElement('div'); el.className='tool viewtool'; el.title='Camera view';
-  el.innerHTML='<span class="ic"></span><span class="vlabel"></span><div class="flyout">'
-    +'<button data-v="iso">◈ Iso</button><button data-v="bird">▦ Bird</button><button data-v="free">✦ Free</button></div>';
-  el.querySelectorAll('.flyout button').forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); setView(b.dataset.v); });
-  return el;
-}
-function refreshViewBtn(){
-  if(!viewBtnEl) return; const m=VIEW_META[view];
-  viewBtnEl.querySelector('.ic').textContent=m.ic;
-  viewBtnEl.querySelector('.vlabel').textContent=m.label;
-  viewBtnEl.querySelectorAll('.flyout button').forEach(b=>b.classList.toggle('active',b.dataset.v===view));
 }
 function updateCamera(){
   cam.azim+=(goal.azim-cam.azim)*0.22; cam.elev+=(goal.elev-cam.elev)*0.22;
@@ -874,10 +838,6 @@ function updateChrome(){
     mb.innerHTML='<span class="ic">📏</span>Measure';
     mb.onclick=()=>{ measMode=!measMode; if(!measMode) clearMeasure(); updateChrome(); }; tw.appendChild(mb);
   }
-  // camera-view button at the bottom of the toolbar
-  const vdiv=document.createElement('div'); vdiv.className='tdiv'; tw.appendChild(vdiv);
-  if(!viewBtnEl) viewBtnEl=makeViewBtn();
-  tw.appendChild(viewBtnEl); refreshViewBtn();
   buildTree(); buildSwatches();
   // status hint
   document.getElementById('statHint').textContent = measureActive()
@@ -1002,15 +962,19 @@ function buildTree(){
     const v=node.vis||'visible';
     r.className='trow'+(isRoot?' root':'')+(isSel?' sel':'')+(node===context&&!editObject?' ctx':'')+(node===editObject?' edit':'')+(!isRoot&&v!=='visible'?' dim':'');
     r.style.paddingLeft=(4+depth*13)+'px';
-    const tw=document.createElement('span'); tw.className='tw';
-    if(!isRoot && node.type==='scene'&&node.children.length){ tw.textContent=collapsed.has(node.id)?'▸':'▾';
-      tw.onclick=e=>{e.stopPropagation(); collapsed.has(node.id)?collapsed.delete(node.id):collapsed.add(node.id); buildTree();}; }
-    const th=thumbFor(node); th.className='thumb';
+    const th=thumbFor(node); th.className='thumb'; th.onclick=null; th.title='';   // (canvas is cached/reused)
+    // a non-root group's icon doubles as its collapse toggle (stacked look = collapsed)
+    if(!isRoot && node.type==='scene' && node.children.length){
+      const col=collapsed.has(node.id);
+      th.classList.add('group'); if(col) th.classList.add('collapsed');
+      th.title=col?'Expand group':'Collapse group';
+      th.onclick=e=>{ e.stopPropagation(); col?collapsed.delete(node.id):collapsed.add(node.id); buildTree(); };
+    }
     const nm=document.createElement('span'); nm.className='nm';
     if(isRoot) nm.textContent=node.name||'Project';
     else if(node.name) nm.textContent=node.name;
     else nm.innerHTML='<span class="ph">'+(node.type==='scene'?'group':'object')+'</span>';
-    r.append(tw,th,nm);
+    r.append(th,nm);
     if(!isRoot){
       const VI={visible:'◉',transparent:'◐',invisible:'⦰'};
       const vb=document.createElement('button'); vb.className='tb'+(v==='visible'?' on':''); vb.textContent=VI[v];
@@ -1101,11 +1065,6 @@ window.addEventListener('keydown',e=>{
     return;
   }
   switch(k){
-    case 'q': rotateView(+1); break;
-    case 'e': rotateView(-1); break;
-    case '1': setView('iso'); break;
-    case '2': setView('bird'); break;
-    case '3': setView('free'); break;
     case 'f': frameView(); break;
     case 'escape': escapeUp(); break;
     case 'n': if(!editObject) createObject(); break;
