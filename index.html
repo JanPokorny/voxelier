@@ -522,8 +522,7 @@ canvas.addEventListener('wheel',e=>{ e.preventDefault();
 canvas.addEventListener('dblclick',e=>{
   if(editObject) return;
   setNdc(e.clientX,e.clientY); const id=pickChild(); if(!id) return;
-  const ch=childById(id);
-  if(ch.type==='scene') descend(ch); else enterObject(ch);
+  enterNode(childById(id),true);                  // descend into a group, or open an object for painting
 });
 
 function moveDragTo(e){
@@ -624,9 +623,7 @@ function renderBox(){
 // ============================================================
 //  NAVIGATION / EDITS
 // ============================================================
-function descend(s){ path.push(s); context=s; selection.clear(); editObject=null; clearMeasure(); rebuild(); updateChrome(); frameView(); }
 function ascend(){ if(path.length>1){ const c=path.pop(); context=path[path.length-1]; selection=new Set([c.id]); editObject=null; clearMeasure(); rebuild(); updateChrome(); } }
-function enterObject(o){ editObject=o; selection.clear(); tool='add'; clearMeasure(); rebuild(); updateChrome(); frameView(); }
 function exitObject(){ const o=editObject; editObject=null; selection=new Set([o.id]); clearMeasure(); rebuild(); updateChrome(); }
 function escapeUp(){ if(editObject) exitObject(); else ascend(); }
 
@@ -657,7 +654,7 @@ function renameNode(node){ const n=prompt('Name',node.name||''); if(n!=null){ no
 
 function createObject(){
   const o=newObject(); o.pos={x:Math.round(goal.target.x),y:0,z:Math.round(goal.target.z)};
-  context.children.push(o); enterObject(o); save();
+  context.children.push(o); enterNode(o,true); save();
 }
 function deleteSelection(){
   if(!selection.size) return;
