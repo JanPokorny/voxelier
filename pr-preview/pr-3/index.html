@@ -47,8 +47,6 @@
 
   #stage{grid-area:stage;position:relative;overflow:hidden}
   #c{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
-  #hint{position:absolute;left:12px;top:10px;color:var(--ink-dim);font-size:11px;background:rgba(20,22,27,.55);
-        padding:6px 9px;border-radius:7px;border:1px solid var(--line);pointer-events:none;max-width:60%}
   #measure{position:absolute;inset:0;overflow:hidden;pointer-events:none}
   .mlab{position:absolute;transform:translate(-50%,-50%);font-size:11px;line-height:1;padding:1px 5px;border-radius:5px;
         background:rgba(20,22,27,.85);border:1px solid var(--line);color:var(--ink);white-space:nowrap}
@@ -80,6 +78,13 @@
   .sw.empty{cursor:default;outline-color:var(--line);outline-style:dashed}
   .sw.more{display:flex;align-items:center;justify-content:center;background:var(--panel-2);outline-color:var(--line);color:var(--ink-dim);font-size:15px}
   .sw.more:hover{color:var(--ink);border-color:#3a4252}
+  .ctxmenu{position:fixed;z-index:60;min-width:150px;background:var(--panel);border:1px solid var(--line);
+           border-radius:8px;padding:4px;box-shadow:0 12px 36px rgba(0,0,0,.55)}
+  .ctxitem{padding:6px 10px;border-radius:5px;font-size:12px;color:var(--ink);cursor:pointer;white-space:nowrap}
+  .ctxitem:hover{background:#252a35}
+  .ctxitem.danger{color:#e3a0a0}
+  .ctxitem.danger:hover{background:#3a2a2a}
+  .ctxdiv{height:1px;background:var(--line);margin:4px 6px}
   #palback{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:50}
   #palpop{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;width:300px;box-shadow:0 16px 44px rgba(0,0,0,.55)}
   .pophead{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--ink-dim);margin-bottom:10px}
@@ -111,7 +116,6 @@
 
   <div id="stage">
     <canvas id="c"></canvas>
-    <div id="hint"></div>
     <div id="measure"></div>
   </div>
 
@@ -138,9 +142,10 @@ import * as THREE from 'three';
    VOXELIER — a lo-fi voxel scene editor (1 voxel = 1 cm)
    Model (à la Inkscape SVG):
      - object : a set of voxels; a singular unit (copy = independent dup)
-     - scene  : a group of objects and sub-scenes
+     - group  : a collection of objects and nested groups (the document root
+                is the top-level scene; every nested scene is a "group")
    The edit "mode" is implicit in what you've entered:
-     - inside a scene  -> arrange children (select / move / group / ...)
+     - inside a group  -> arrange children (select / move / group / ...)
      - inside an object -> paint voxels
    ============================================================ */
 
@@ -156,17 +161,17 @@ function rotY(v,r){ let{x,y,z}=v; r=((r%4)+4)%4; for(let i=0;i<r;i++){const nx=-
 let _uid=1; const uid=()=>'n'+(_uid++);
 
 // ---- data model ---------------------------------------------
-// A single root scene. Every node (object or sub-scene) may have a name and
+// A single root scene. Every node (object or group) may have a name and
 // can be hidden or deemphasised (both inherited by descendants).
 let root;                          // root scene
-let path;                          // array of scenes root..context
-let context;                       // current scene (= path[last])
+let path;                          // array of groups root..context
+let context;                       // current group (= path[last])
 let editObject=null;               // object being voxel-edited, or null
 let selection=new Set();           // selected child ids within context
 let clipboard=[];                  // detached node clones
 let tool='add';                    // voxel tool when editing an object
 let selColor=0xd4a373;             // current draw colour (any 0xRRGGBB)
-let collapsed=new Set();           // tree: ids of collapsed sub-scenes
+let collapsed=new Set();           // tree: ids of collapsed groups
 
 // vis: 'visible' | 'transparent' | 'invisible' (inherited by descendants)
 const newObject=()=>({type:'object',id:uid(),name:'',pos:{x:0,y:0,z:0},rot:0,vis:'visible',voxels:new Map()});
@@ -622,10 +627,6 @@ function duplicateSelection(){
   if(!dups.length) return;
   context.children.push(...dups); selection=new Set(dups.map(d=>d.id)); rebuild(); updateChrome(); save();
 }
-function createGroup(){           // new empty sub-scene; drag items into it via the tree
-  const g=newScene(); g.name='Group'; context.children.push(g);
-  selection=new Set([g.id]); rebuild(); updateChrome(); save();
-}
 function copySelection(){ clipboard=[...selection].map(id=>childById(id)).filter(Boolean).map(clone); }
 function cutSelection(){ copySelection(); deleteSelection(); }
 function pasteClipboard(){
@@ -654,19 +655,49 @@ function reparentNode(node,newParent,index){    // move node under newParent at 
   newParent.children.splice(Math.max(0,Math.min(index,newParent.children.length)),0,node);
   return true;
 }
-// wrap a target node in a fresh scene at its place (preserving world pose), then
-// drop another node into that new scene — used when one object is dragged onto another.
+// wrap a node in a fresh group that takes its place (world pose preserved).
+function wrapNode(node){
+  const par=parentOf(node); if(!par) return null;
+  const idx=par.children.indexOf(node);
+  const g=newScene(); g.name='Group'; g.pos={...node.pos}; g.rot=node.rot;
+  par.children.splice(idx,1,g);          // g takes the node's slot (and its world pose)
+  node.pos={x:0,y:0,z:0}; node.rot=0; g.children=[node];
+  return g;
+}
+// wrap a target node in a new group, then drop another node into that group —
+// used when one object is dragged onto another in the tree.
 function wrapInGroup(target,dragged){
   if(dragged===target || isDescendant(dragged,target)) return false;
-  const par=parentOf(target); if(!par) return false;
-  const idx=par.children.indexOf(target);
-  const g=newScene(); g.name='Group'; g.pos={...target.pos}; g.rot=target.rot;
-  par.children.splice(idx,1,g);          // g takes target's slot (and its world pose)
-  target.pos={x:0,y:0,z:0}; target.rot=0; g.children=[target];
+  const g=wrapNode(target); if(!g) return false;
   reparentNode(dragged,g,g.children.length);   // bring the dragged piece in, world pose preserved
   collapsed.delete(g.id);
   selection=new Set([g.id]); rebuild(); updateChrome(); save();
   return true;
+}
+// ---- right-click (context-menu) actions on a tree node ------
+function duplicateNode(node){
+  const par=parentOf(node); if(!par) return;
+  const d=clone(node); d.pos={x:node.pos.x+5,y:node.pos.y,z:node.pos.z+5};
+  par.children.splice(par.children.indexOf(node)+1,0,d);
+  selectNode(d); save();
+}
+function deleteNode(node){
+  const par=parentOf(node); if(!par) return;
+  par.children=par.children.filter(c=>c!==node);
+  selection.delete(node.id); if(editObject===node) editObject=null;
+  rebuild(); updateChrome(); save();
+}
+function addObjectIn(group){               // new empty object inside a group (enter it)
+  const o=newObject(); group.children.push(o);
+  collapsed.delete(group.id); enterNode(o); save();
+}
+function addGroupIn(group){                // new empty group inside a group
+  const g=newScene(); g.name='Group'; group.children.push(g);
+  collapsed.delete(group.id); selectNode(g); save();
+}
+function wrapNodeAction(node){             // new parent group containing just this node
+  const g=wrapNode(node); if(!g) return;
+  collapsed.delete(g.id); selectNode(g); save();
 }
 function rotateSelectionBy(steps){       // rotate selection in 90° steps about each piece's own centre
   const dir=steps<0?-1:1;
@@ -701,7 +732,7 @@ function panCamera(dx,dy){
 function orbitView(dx,dy){
   if(view==='free'){
     goal.azim-=dx*0.012;     // inverted: drag follows the scene
-    goal.elev=Math.max(-0.35,Math.min(Math.PI/2,goal.elev-dy*0.012));
+    goal.elev=Math.max(-0.35,Math.min(Math.PI/2,goal.elev+dy*0.012));   // inverted vertical axis
   }else{ // iso/bird: drag rotates azimuth in 90° detents (elevation locked)
     orbitAccum+=dx;
     while(orbitAccum> 60){ azimIndex--; orbitAccum-=60; applyAzim(); }
@@ -749,13 +780,6 @@ function updateCamera(){
 // ============================================================
 //  UI
 // ============================================================
-const SCENE_ACTIONS=[
-  {id:'new',  ic:'＋',label:'Object', fn:createObject, always:true},
-  {id:'group',ic:'⊞',label:'Group',  fn:createGroup,  always:true},
-  {id:'dup',  ic:'⧉',label:'Dupl.',  fn:duplicateSelection},
-  {id:'rot',  ic:'⟳',label:'Rotate', fn:rotateSelection},
-  {id:'del',  ic:'⌫',label:'Delete', fn:deleteSelection},
-];
 const VOX_TOOLS=[{id:'add',ic:'＋',label:'Add'},{id:'erase',ic:'－',label:'Erase'},{id:'paint',ic:'❖',label:'Paint'},{id:'measure',ic:'📏',label:'Measure'}];
 
 function updateChrome(){
@@ -767,11 +791,7 @@ function updateChrome(){
     const d=document.createElement('div'); d.className='tdiv'; tw.appendChild(d);
     const fin=document.createElement('button'); fin.className='tool'; fin.innerHTML='<span class="ic">✓</span>Finish'; fin.onclick=exitObject; tw.appendChild(fin);
   }else{
-    const has=selection.size>0;
-    for(const a of SCENE_ACTIONS){ const el=document.createElement('button');
-      el.className='tool'+((a.always||has)?'':' disabled');
-      el.innerHTML=`<span class="ic">${a.ic}</span>${a.label}`; el.onclick=a.fn; tw.appendChild(el); }
-    const d=document.createElement('div'); d.className='tdiv'; tw.appendChild(d);
+    // scene actions live in the tree's right-click menu; only Measure is a sidebar tool
     const mb=document.createElement('button'); mb.className='tool'+(measMode?' active':'');
     mb.innerHTML='<span class="ic">📏</span>Measure';
     mb.onclick=()=>{ measMode=!measMode; if(!measMode) clearMeasure(); updateChrome(); }; tw.appendChild(mb);
@@ -791,9 +811,6 @@ function updateChrome(){
     : (selection.size
         ? `${selection.size} selected — drag to move (Shift: up/down) · right-drag rotate · R rotate · Del · drag in the tree to group`
         : 'Click to select · drag to pan · right-drag to orbit · double-click to enter · N new');
-  document.getElementById('hint').textContent = editObject
-    ? 'Painting voxels (1 voxel = 1 cm). Esc returns to the scene.'
-    : (selection.size? 'Drag the selected piece to move it (Shift = up/down); right-drag to rotate. Double-click to edit.' : 'Double-click a piece to enter it.');
 }
 function sep(){ const s=document.createElement('span'); s.textContent='›'; return s; }
 
@@ -882,6 +899,7 @@ function buildTree(){
     r.append(tw,th,nm,vb);
     r.onclick=()=>selectNode(node);
     r.ondblclick=()=>enterNode(node);
+    r.oncontextmenu=e=>{ e.preventDefault(); e.stopPropagation(); selectNode(node); showItemMenu(node,e.clientX,e.clientY); };
     // drag & drop reparenting (VSCode-style)
     r.draggable=true;
     r.addEventListener('dragstart',ev=>{ ev.stopPropagation(); dragId=node.id; if(ev.dataTransfer){ ev.dataTransfer.effectAllowed='move'; try{ev.dataTransfer.setData('text/plain',node.id);}catch(_){ } } });
@@ -892,6 +910,28 @@ function buildTree(){
     if(node.type==='scene'&&!collapsed.has(node.id)) for(const ch of node.children) row(ch,depth+1);
   };
   for(const ch of root.children) row(ch,0);
+}
+
+// ---- tree right-click context menu --------------------------
+let ctxMenuEl=null;
+function closeItemMenu(){ if(ctxMenuEl){ ctxMenuEl.remove(); ctxMenuEl=null; window.removeEventListener('pointerdown',ctxMenuOutside,true); } }
+function ctxMenuOutside(e){ if(ctxMenuEl && !ctxMenuEl.contains(e.target)) closeItemMenu(); }
+function showItemMenu(node,x,y){
+  closeItemMenu();
+  const m=document.createElement('div'); m.className='ctxmenu';
+  const add=(label,fn,cls)=>{ const it=document.createElement('div'); it.className='ctxitem'+(cls?' '+cls:'');
+    it.textContent=label; it.onclick=()=>{ closeItemMenu(); fn(); }; m.appendChild(it); };
+  const div=()=>{ const d=document.createElement('div'); d.className='ctxdiv'; m.appendChild(d); };
+  add('Duplicate',()=>duplicateNode(node));
+  add('Delete',()=>deleteNode(node),'danger');
+  div();
+  if(node.type==='scene'){ add('New object',()=>addObjectIn(node)); add('New group',()=>addGroupIn(node)); }
+  else add('New group',()=>wrapNodeAction(node));
+  document.body.appendChild(m); ctxMenuEl=m;
+  const r=m.getBoundingClientRect();
+  m.style.left=Math.min(x,innerWidth-r.width-4)+'px';
+  m.style.top=Math.min(y,innerHeight-r.height-4)+'px';
+  setTimeout(()=>window.addEventListener('pointerdown',ctxMenuOutside,true),0);
 }
 
 // ---- tree drag & drop state/handlers ------------------------
