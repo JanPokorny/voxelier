@@ -15,6 +15,7 @@ import {
 } from './commands.js';
 import { save } from './persistence.js';
 import { undo, redo } from './history.js';
+import { importScene, exportScene } from './io.js';
 
 const VOX_TOOLS = [{ id: 'add', ic: '＋', label: 'Add' }, { id: 'erase', ic: '－', label: 'Erase' }, { id: 'paint', ic: '❖', label: 'Paint' }, { id: 'measure', ic: '📏', label: 'Measure' }];
 
@@ -31,6 +32,13 @@ export function updateChrome() {
     const mb = document.createElement('button'); mb.className = 'tool' + (S.measMode ? ' active' : '');
     mb.innerHTML = '<span class="ic">📏</span>Measure';
     mb.onclick = () => { S.measMode = !S.measMode; if (!S.measMode) clearMeasure(); updateChrome(); }; tw.appendChild(mb);
+  }
+  // import / export pinned to the bottom of the tool rail
+  const spacer = document.createElement('div'); spacer.style.flex = '1'; tw.appendChild(spacer);
+  for (const [ic, label, fn] of [['📂', 'Import', importScene], ['💾', 'Export', exportScene]]) {
+    const el = document.createElement('button'); el.className = 'tool';
+    el.innerHTML = `<span class="ic">${ic}</span>${label}`;
+    el.onclick = fn; tw.appendChild(el);
   }
   buildTree(); buildSwatches();
   document.getElementById('statHint').textContent = measureActive()
