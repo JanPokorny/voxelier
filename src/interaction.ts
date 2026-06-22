@@ -43,6 +43,17 @@ import type { Drag, Seg, Vec, Voxel } from "./types.ts";
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
 
+// Pan/orbit the camera for a drag delta; returns true if it handled the mode.
+function dragPanOrbit(e: PointerEvent): boolean {
+  const d = S.drag;
+  if (!d || (d.mode !== "pan" && d.mode !== "orbit")) return false;
+  const dx = e.clientX - d.x, dy = e.clientY - d.y;
+  d.x = e.clientX;
+  d.y = e.clientY;
+  (d.mode === "pan" ? panCamera : orbitView)(dx, dy);
+  return true;
+}
+
 // Collision avoidance for moves. Snapshot (once per drag) every solid cell in
 // the scene — every visible/transparent voxel except the moving selection's own
 // — plus the selection's voxels, all in world space. Invisible objects are
@@ -323,18 +334,7 @@ canvas.addEventListener("pointerdown", (e) => {
 canvas.addEventListener("pointermove", (e) => {
   setNdc(e.clientX, e.clientY);
   if (measureActive()) {
-    if (S.drag) {
-      const dx = e.clientX - S.drag.x, dy = e.clientY - S.drag.y;
-      if (S.drag.mode === "pan") {
-        S.drag.x = e.clientX;
-        S.drag.y = e.clientY;
-        panCamera(dx, dy);
-      } else if (S.drag.mode === "orbit") {
-        S.drag.x = e.clientX;
-        S.drag.y = e.clientY;
-        orbitView(dx, dy);
-      }
-    }
+    dragPanOrbit(e);
     pointerMeasure();
     return;
   }
@@ -347,16 +347,8 @@ canvas.addEventListener("pointermove", (e) => {
     else hoverVox.visible = false;
     return;
   }
-  const dx = e.clientX - S.drag.x, dy = e.clientY - S.drag.y;
-  if (S.drag.mode === "pan") {
-    S.drag.x = e.clientX;
-    S.drag.y = e.clientY;
-    panCamera(dx, dy);
-  } else if (S.drag.mode === "orbit") {
-    S.drag.x = e.clientX;
-    S.drag.y = e.clientY;
-    orbitView(dx, dy);
-  } else if (S.drag.mode === "move") moveDragTo(e);
+  if (dragPanOrbit(e)) return;
+  if (S.drag.mode === "move") moveDragTo(e);
   else if (S.drag.mode === "rotobj") rotDragTo(e);
   else if (S.drag.mode === "box") boxDragTo(e);
 });
