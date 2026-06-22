@@ -1,17 +1,13 @@
 // Runnable self-check (node selfcheck.mjs) for the coordinate math the editor's
-// voxel placement relies on. It extracts the real rotY/addv from index.html
+// voxel placement relies on. It imports the real rotY/addv from src/math.js
 // (both pure, no three.js) and asserts the world<->object-local round-trip that
-// locToW and the now-shared localGroundCell depend on. If rotY's rotation or the
-// inverse convention breaks, placement silently lands on the wrong cell — this
-// fails loudly instead.
+// locToW and localGroundCell depend on. If rotY's rotation or the inverse
+// convention breaks, placement silently lands on the wrong cell — this fails
+// loudly instead.
 import assert from 'node:assert';
-import { readFileSync } from 'node:fs';
+import { addv, rotY } from './src/math.js';
 
-const src = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
-const addv = eval('(' + /const addv=(.+);/.exec(src)[1] + ')');
-const rotY = eval('(' + /function rotY\(v,r\)\{.*\}/.exec(src)[0] + ')');
-
-const toW    = (cell, off, rot) => addv(rotY(cell, rot), off);              // local -> world (locToW)
+const toW = (cell, off, rot) => addv(rotY(cell, rot), off);                  // local -> world (locToW)
 const toLocal = (w, off, rot) => rotY({ x: w.x - off.x, y: 0, z: w.z - off.z }, (4 - rot) & 3); // world -> local
 
 for (const rot of [0, 1, 2, 3])
