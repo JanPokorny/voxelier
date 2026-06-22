@@ -1066,7 +1066,7 @@ function measureField(){
   let toW;
   if(editObject){
     for(const [k] of editObject.voxels){ const v=parseKey(k); acc(v.x,v.y,v.z); }
-    const xf=editXform; toW=(x,y,z)=>{ const r=rotY({x,y,z},xf.rot); return new THREE.Vector3(r.x+xf.off.x,r.y+xf.off.y,r.z+xf.off.z); };
+    toW=locToW;                                   // edit-mode local -> world (same as the box brush)
   }else{
     const all=[]; walk(root,{x:0,y:0,z:0},0,null,0,all);
     for(const v of all) if(v.owner) acc(v.x,v.y,v.z);
