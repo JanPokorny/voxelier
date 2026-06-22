@@ -41,6 +41,16 @@ export type Voxel = {
   owner?: string | null;
   tr?: boolean;
 };
+// walk() reports each world voxel to this sink instead of allocating an array,
+// so callers bucket/test cells without a throwaway intermediate list.
+export type VoxelSink = (
+  x: number,
+  y: number,
+  z: number,
+  c: number,
+  owner: string | null,
+  tr: boolean,
+) => void;
 
 // ---- measurement ----
 // One labelled dimension segment between two world points.

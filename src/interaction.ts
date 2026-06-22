@@ -61,13 +61,11 @@ function dragPanOrbit(e: PointerEvent): boolean {
 // absent from walk(), so they never block. A candidate offset is blocked if any
 // moved voxel would land on an occupied cell.
 function moveCollision(): { occ: Set<number>; sel: Voxel[] } {
-  const all: Voxel[] = [];
-  walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, all);
   const occ = new Set<number>(), sel: Voxel[] = [];
-  for (const v of all) {
-    if (v.owner && S.selection.has(v.owner)) sel.push(v);
-    else occ.add(key(v.x, v.y, v.z));
-  }
+  walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (x, y, z, c, owner, tr) => {
+    if (owner && S.selection.has(owner)) sel.push({ x, y, z, c, owner, tr });
+    else occ.add(key(x, y, z));
+  });
   return { occ, sel };
 }
 const moveBlocked = (

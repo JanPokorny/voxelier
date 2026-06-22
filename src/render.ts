@@ -19,7 +19,7 @@ import {
 } from "./scene-env.ts";
 import { contextXform, emptyBox, growBox, VIS } from "./model.ts";
 import { invalidateField } from "./measure.ts";
-import type { Node, Rot, Vec, Voxel } from "./types.ts";
+import type { Node, Rot, Vec, VoxelSink } from "./types.ts";
 
 export function disposeMeshes(): void {
   for (const m of S.meshes) {
@@ -137,7 +137,7 @@ export function addSurface(
   return m;
 }
 
-// gather every world voxel (skipping the object being edited).
+// report every world voxel (skipping the object being edited) to `emit`.
 //   tr    = effectively transparent (this node or an ancestor is transparent)
 //   owner = id of the current context's direct child this voxel belongs to
 export function walk(
@@ -146,7 +146,7 @@ export function walk(
   rot: Rot,
   owner: string | null,
   vis: number,
-  out: Voxel[],
+  emit: VoxelSink,
 ): void {
   const ev = Math.max(vis, VIS[node.vis || "visible"]);
   if (node === S.editObject || ev >= 2) return; // invisible -> skip
@@ -154,7 +154,7 @@ export function walk(
   if (node.type === "object") {
     for (const [k, c] of node.voxels) {
       const w = keyToWorld(k, rot, off);
-      out.push({ x: w.x, y: w.y, z: w.z, c, owner, tr });
+      emit(w.x, w.y, w.z, c, owner, tr);
     }
   } else {for (const ch of node.children) {
       walk(
@@ -163,7 +163,7 @@ export function walk(
         (rot + ch.rot) & 3,
         (node === S.context) ? ch.id : owner,
         ev,
-        out,
+        emit,
       );
     }}
 }
@@ -305,35 +305,30 @@ export function rebuild(): void {
   S.childBox = {};
   S.voxVer++;
   invalidateField();
-  const all: Voxel[] = [];
-  walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, all);
+  const O = { x: 0, y: 0, z: 0 };
 
   if (S.editObject) {
     S.editXform = xcompose(contextXform(), {
       off: S.editObject.pos,
       rot: S.editObject.rot,
     });
+    const all: Cell[] = [];
+    walk(S.root, O, 0, null, 0, (x, y, z, c) => all.push({ x, y, z, c }));
     addSurface(all, (c) => col(c), { transparent: true }); // everything else: transparent
     buildEditMesh(); // edited object: opaque, in 3D
   } else {
     // owner -> current context's children; otherwise dimmed (descended past).
-    const gE: Record<string, Voxel[]> = {},
-      gT: Record<string, Voxel[]> = {},
-      ctxE: Voxel[] = [],
-      ctxT: Voxel[] = [];
-    for (const v of all) {
-      if (v.owner) {
-        (v.tr
-          ? (gT[v.owner] || (gT[v.owner] = []))
-          : (gE[v.owner] || (gE[v.owner] = []))).push(v);
-        growBox(
-          S.childBox[v.owner] || (S.childBox[v.owner] = emptyBox()),
-          v.x,
-          v.y,
-          v.z,
-        );
-      } else (v.tr ? ctxT : ctxE).push(v);
-    }
+    const gE: Record<string, Cell[]> = {},
+      gT: Record<string, Cell[]> = {},
+      ctxE: Cell[] = [],
+      ctxT: Cell[] = [];
+    walk(S.root, O, 0, null, 0, (x, y, z, c, owner, tr) => {
+      if (owner) {
+        (tr ? (gT[owner] || (gT[owner] = [])) : (gE[owner] || (gE[owner] = [])))
+          .push({ x, y, z, c });
+        growBox(S.childBox[owner] || (S.childBox[owner] = emptyBox()), x, y, z);
+      } else (tr ? ctxT : ctxE).push({ x, y, z, c });
+    });
     addSurface(ctxE, (c) => dimCol(c), { ao: true });
     addSurface(ctxT, (c) => dimCol(c), { transparent: true });
     for (const id of new Set([...Object.keys(gE), ...Object.keys(gT)])) {
