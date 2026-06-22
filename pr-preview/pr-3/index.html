@@ -457,8 +457,7 @@ canvas.addEventListener('pointerdown',e=>{
   }
   if(editObject){
     if(e.button===0){
-      if(tool==='view'){ drag={...base,mode:'pan'}; }                 // View tool: left-drag pans
-      else if(tool==='add'||tool==='erase'){ startBox(e,base); }      // box select in the horizontal plane
+      if(tool==='add'||tool==='erase'){ startBox(e,base); }            // box select in the horizontal plane
       else { painting=true; lastVox=null; applyVoxel(); }             // paint
     }
     else if(e.button===2){ drag={...base,mode:'orbit'}; }
@@ -486,7 +485,7 @@ canvas.addEventListener('pointermove',e=>{
     pointerMeasure(); return;
   }
   if(editObject && painting){ applyVoxel(); return; }
-  if(!drag){ if(editObject && tool!=='view') updateVoxHover(); else hoverVox.visible=false; return; }
+  if(!drag){ if(editObject) updateVoxHover(); else hoverVox.visible=false; return; }
   const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
   if(drag.mode==='pan'){ drag.x=e.clientX; drag.y=e.clientY; panCamera(dx,dy); }
   else if(drag.mode==='orbit'){ drag.x=e.clientX; drag.y=e.clientY; orbitView(dx,dy); }
@@ -824,7 +823,7 @@ function updateCamera(){
 // ============================================================
 //  UI
 // ============================================================
-const VOX_TOOLS=[{id:'view',ic:'↖',label:'View'},{id:'add',ic:'＋',label:'Add'},{id:'erase',ic:'－',label:'Erase'},{id:'paint',ic:'❖',label:'Paint'},{id:'measure',ic:'📏',label:'Measure'}];
+const VOX_TOOLS=[{id:'add',ic:'＋',label:'Add'},{id:'erase',ic:'－',label:'Erase'},{id:'paint',ic:'❖',label:'Paint'},{id:'measure',ic:'📏',label:'Measure'}];
 
 function updateChrome(){
   const tw=document.getElementById('tools'); tw.innerHTML='';
@@ -843,9 +842,8 @@ function updateChrome(){
   document.getElementById('statHint').textContent = measureActive()
     ? 'Measure — hover to read voxel/gap runs on all 3 axes · left-click freezes · right-click clears'
     : editObject
-    ? (tool==='view' ? 'View — left-drag pans · right-drag orbits · Esc to finish'
-       : tool==='paint' ? 'Paint — click/drag to recolour voxels · right-drag orbits · Esc to finish'
-       : `${tool==='add'?'Add':'Erase'} — drag a box in the floor plane (Shift = height) · right-drag orbits · Esc to finish`)
+    ? (tool==='paint' ? 'Paint — click/drag to recolour voxels · right-drag orbits · middle-drag pans · Esc to finish'
+       : `${tool==='add'?'Add':'Erase'} — drag a box in the floor plane (Shift = height) · right-drag orbits · middle-drag pans · Esc to finish`)
     : (selection.size
         ? `${selection.size} selected — drag to move (Shift: up/down) · right-drag rotate · R rotate · Del`
         : 'Tree: click a row to enter it · double-click to fit · right-click for actions · N new object');
