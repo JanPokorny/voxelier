@@ -975,13 +975,23 @@ function thumbFor(node){
   }
   thumbCache.set(node.id,{sig,cv}); return cv;
 }
-// tree-row click disambiguation: single (delayed) = enter / rename-if-entered, double = fit
-let _clk={node:null,timer:null};
+// tree-row clicks: the first click acts immediately (enter / descend). A quick
+// second click on the same row additionally fits it. Clicking a row that's
+// already entered renames it — but that one waits out the double-click window,
+// so a double-click fits instead of renaming.
+let _clk={node:null,time:0,timer:null};
 function rowClick(node){
-  if(_clk.timer && _clk.node===node){ clearTimeout(_clk.timer); _clk={node:null,timer:null}; fitNode(node); return; }
+  const now=Date.now();
+  if(_clk.node===node && now-_clk.time<300){          // quick second click -> also zoom to fit
+    if(_clk.timer) clearTimeout(_clk.timer);
+    _clk={node:null,time:0,timer:null}; fitNode(node); return;
+  }
   if(_clk.timer) clearTimeout(_clk.timer);
-  _clk={node, timer:setTimeout(()=>{ const n=_clk.node; _clk={node:null,timer:null};
-    if(isEntered(n)) renameNode(n); else enterNode(n); },260)};
+  if(isEntered(node)){                                 // already entered: lone click renames (after the dbl-click window)
+    _clk={node, time:now, timer:setTimeout(()=>{ _clk={node:null,time:0,timer:null}; renameNode(node); },300)};
+  }else{                                               // not entered: enter right away
+    _clk={node, time:now, timer:null}; enterNode(node);
+  }
 }
 function buildTree(){
   const w=document.getElementById('tree'); w.innerHTML='';
