@@ -49,6 +49,13 @@ const dir2 = new THREE.DirectionalLight(0xffffff, 0.16);
 dir2.position.set(-6, 5, -7);
 scene.add(dir2);
 
+// On-demand rendering (driven in main.ts): wake() requests a short burst of
+// frames. Called on input and whenever the GL scene mutates (rebuild / remesh).
+export const frame = { tail: 60 };
+export const wake = (): void => {
+  frame.tail = 30;
+};
+
 export const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 export const _up = new THREE.Vector3(), _upN = new THREE.Vector3();
 const bg = new THREE.Color("#0f1115");

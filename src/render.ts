@@ -16,6 +16,7 @@ import {
   matSurf,
   overlay,
   scene,
+  wake,
 } from "./scene-env.ts";
 import { contextXform, emptyBox, growBox, VIS } from "./model.ts";
 import { invalidateField } from "./measure.ts";
@@ -212,6 +213,7 @@ function scheduleRemesh(): void {
     S.editRemesh = 0;
     for (const ck of S.editDirty) remeshChunk(ck);
     S.editDirty.clear();
+    wake(); // newly meshed chunks need a frame
   });
 }
 function markDirty(x: number, y: number, z: number): void {
@@ -343,6 +345,7 @@ export function rebuild(): void {
     }
   }
   refreshOverlay();
+  wake(); // the scene changed — make sure it gets drawn
 }
 
 // ---- overlay outlines ----
