@@ -51,6 +51,12 @@ const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
   { id: "paint", ic: "❖", label: "Paint" },
   { id: "measure", ic: "📏", label: "Measure" },
 ];
+// tree visibility-toggle glyphs, by current vis state
+const VIS_GLYPH: Record<string, string> = {
+  visible: "◉",
+  transparent: "◐",
+  invisible: "⦰",
+};
 
 export function updateChrome(): void {
   const tw = document.getElementById("tools")!;
@@ -359,14 +365,9 @@ function buildTree(): void {
         (node.type === "scene" ? "group" : "object") + "</span>";}
     r.append(th, nm);
     if (!isRoot) {
-      const VI: Record<string, string> = {
-        visible: "◉",
-        transparent: "◐",
-        invisible: "⦰",
-      };
       r.append(el("button", {
         className: "tb" + (v === "visible" ? " on" : ""),
-        textContent: VI[v],
+        textContent: VIS_GLYPH[v],
         title: "visible → transparent → invisible",
         onclick: (e) => {
           e.stopPropagation();
