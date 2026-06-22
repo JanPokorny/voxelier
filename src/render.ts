@@ -25,7 +25,6 @@ export function disposeMeshes(): void {
   for (const m of S.meshes) {
     scene.remove(m);
     if (m.geometry && m.geometry !== boxGeo) m.geometry.dispose();
-    (m as THREE.Mesh & { dispose?: () => void }).dispose?.();
   }
   S.meshes = [];
   editGroup.clear();

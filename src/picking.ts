@@ -6,6 +6,10 @@ import { rotY } from "./math.ts";
 import { _hit, camera, canvas, ndc, raycaster } from "./scene-env.ts";
 import type { Vec } from "./types.ts";
 
+// a hovered voxel resolved to its own cell plus the empty cell adjacent to the
+// hit face (where an "add" would place), or null when nothing is under the cursor
+export type Pick = { cell: Vec; addCell: Vec } | null;
+
 export function setNdc(cx: number, cy: number): void {
   const r = canvas.getBoundingClientRect();
   ndc.x = ((cx - r.left) / r.width) * 2 - 1;
@@ -25,7 +29,7 @@ export function groundCell(yWorld: number): Vec | null {
   }
   return null;
 }
-export function pickVoxel(): { cell: Vec; addCell: Vec } | null { // -> {cell, addCell} in object-local space, or null
+export function pickVoxel(): Pick { // -> {cell, addCell} in object-local space, or null
   if (!S.pickMeshes.length) return null;
   raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObjects(S.pickMeshes, false);
@@ -72,7 +76,6 @@ export const locToW = (x: number, y: number, z: number): THREE.Vector3 => {
     r.z + S.editXform.off.z,
   );
 };
-export type Pick = { cell: Vec; addCell: Vec } | null;
 export function voxelTarget(t: Pick = pickVoxel()): Vec | null { // local cell for the active voxel tool
   if (S.tool === "add") return t ? t.addCell : localGroundCell(0);
   return t ? t.cell : null;
