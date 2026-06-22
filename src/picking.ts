@@ -16,14 +16,11 @@ export function pickChild(): string | null { // only opaque surfaces are pickabl
   const h = raycaster.intersectObjects(S.pickMeshes, false); // sorted nearest-first
   return h.length ? (h[0].object.userData.childId ?? null) : null;
 }
+const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // y-up, constant set per call
 export function groundCell(yWorld: number): Vec | null {
   raycaster.setFromCamera(ndc, camera);
-  if (
-    raycaster.ray.intersectPlane(
-      new THREE.Plane(new THREE.Vector3(0, 1, 0), -yWorld),
-      _hit,
-    )
-  ) {
+  _plane.constant = -yWorld;
+  if (raycaster.ray.intersectPlane(_plane, _hit)) {
     return { x: Math.floor(_hit.x), y: yWorld, z: Math.floor(_hit.z) };
   }
   return null;
