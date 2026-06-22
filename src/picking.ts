@@ -13,15 +13,8 @@ export function setNdc(cx: number, cy: number): void {
 }
 export function pickChild(): string | null { // only opaque surfaces are pickable (transparent ones are not interactable)
   raycaster.setFromCamera(ndc, camera);
-  let best: string | null = null, bd = Infinity;
-  for (const m of S.pickMeshes) {
-    const h = raycaster.intersectObject(m, false);
-    if (h.length && h[0].distance < bd) {
-      bd = h[0].distance;
-      best = m.userData.childId;
-    }
-  }
-  return best;
+  const h = raycaster.intersectObjects(S.pickMeshes, false); // sorted nearest-first
+  return h.length ? (h[0].object.userData.childId ?? null) : null;
 }
 export function groundCell(yWorld: number): Vec | null {
   raycaster.setFromCamera(ndc, camera);

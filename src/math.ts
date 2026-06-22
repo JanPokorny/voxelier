@@ -23,15 +23,17 @@ export const addv = (a: Vec, b: Vec): Vec => ({
   z: a.z + b.z,
 });
 export function rotY(v: Vec, r: Rot): Vec {
-  let { x, z } = v;
-  const { y } = v;
-  r = ((r % 4) + 4) % 4;
-  for (let i = 0; i < r; i++) {
-    const nx = -z, nz = x;
-    x = nx;
-    z = nz;
+  const { x, y, z } = v;
+  switch (r & 3) { // r & 3 normalises negatives too (-1 & 3 === 3)
+    case 1:
+      return { x: -z, y, z: x };
+    case 2:
+      return { x: -x, y, z: -z };
+    case 3:
+      return { x: z, y, z: -x };
+    default:
+      return { x, y, z };
   }
-  return { x, y, z };
 }
 export const xcompose = (X: Xform, Y: Xform): Xform => ({
   rot: (X.rot + Y.rot) & 3,
