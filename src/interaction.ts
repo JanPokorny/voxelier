@@ -78,45 +78,46 @@ const moveBlocked = (
 ) => (d.sel ?? []).some((v) => d.occ!.has(key(v.x + dx, v.y + dy, v.z + dz)));
 
 function moveDragTo(e: PointerEvent): void {
-  let dx = S.drag!.dx!, dy = S.drag!.dy!, dz = S.drag!.dz!;
+  const d = S.drag!;
+  let dx = d.dx!, dy = d.dy!, dz = d.dz!;
   if (e.shiftKey) { // Shift: adjust height from where it was dragged to
-    if (S.drag!.shiftAnchorY == null) {
-      S.drag!.shiftAnchorY = e.clientY;
-      S.drag!.dyBase = S.drag!.dy;
+    if (d.shiftAnchorY == null) {
+      d.shiftAnchorY = e.clientY;
+      d.dyBase = d.dy;
     }
     const perPx = (camera.top - camera.bottom) /
       canvas.getBoundingClientRect().height;
-    dy = S.drag!.dyBase! +
-      Math.round((S.drag!.shiftAnchorY - e.clientY) * perPx);
+    dy = d.dyBase! + Math.round((d.shiftAnchorY - e.clientY) * perPx);
   } else { // horizontal: move on the floor plane
-    S.drag!.shiftAnchorY = null;
+    d.shiftAnchorY = null;
     const g = groundCell(0);
-    if (g && S.drag!.start) {
-      dx = g.x - S.drag!.start.x;
-      dz = g.z - S.drag!.start.z;
+    if (g && d.start) {
+      dx = g.x - d.start.x;
+      dz = g.z - d.start.z;
     }
   }
   // advance each axis toward the cursor only where it wouldn't intersect another
   // object (so the piece slides along obstacles); Alt ignores collisions.
   const free = (x: number, y: number, z: number) =>
-    e.altKey || !moveBlocked(S.drag!, x, y, z);
-  if (free(dx, S.drag!.dy!, S.drag!.dz!)) S.drag!.dx = dx;
-  if (free(S.drag!.dx!, dy, S.drag!.dz!)) S.drag!.dy = dy;
-  if (free(S.drag!.dx!, S.drag!.dy!, dz)) S.drag!.dz = dz;
+    e.altKey || !moveBlocked(d, x, y, z);
+  if (free(dx, d.dy!, d.dz!)) d.dx = dx;
+  if (free(d.dx!, dy, d.dz!)) d.dy = dy;
+  if (free(d.dx!, d.dy!, dz)) d.dz = dz;
   for (const id of S.selection) {
     for (const m of (S.childMeshes[id] || [])) {
-      m.position.set(S.drag!.dx!, S.drag!.dy!, S.drag!.dz!);
+      m.position.set(d.dx!, d.dy!, d.dz!);
     }
   }
-  overlay.position.set(S.drag!.dx!, S.drag!.dy!, S.drag!.dz!);
+  overlay.position.set(d.dx!, d.dy!, d.dz!);
 }
 function commitMove(): void {
-  const x = contextXform(),
+  const d = S.drag!,
+    x = contextXform(),
     dL = rotY(
-      { x: Math.round(S.drag!.dx!), y: 0, z: Math.round(S.drag!.dz!) },
+      { x: Math.round(d.dx!), y: 0, z: Math.round(d.dz!) },
       (4 - x.rot) & 3,
     ),
-    dy = Math.round(S.drag!.dy!);
+    dy = Math.round(d.dy!);
   for (const id of S.selection) {
     const c = childById(id);
     if (c) {
@@ -186,18 +187,17 @@ function startBox(
   renderBox();
 }
 function boxDragTo(e: PointerEvent): void {
-  const b = S.drag!.box!;
+  const d = S.drag!, b = d.box!;
   if (e.shiftKey) { // vertical extrude (like moving objects with Shift)
     const perPx = (camera.top - camera.bottom) /
       canvas.getBoundingClientRect().height;
-    if (S.drag!.shiftAnchorY === null) {
-      S.drag!.shiftAnchorY = e.clientY;
-      S.drag!.hyBase = b.hy;
+    if (d.shiftAnchorY === null) {
+      d.shiftAnchorY = e.clientY;
+      d.hyBase = b.hy;
     }
-    b.hy = S.drag!.hyBase! +
-      Math.round((S.drag!.shiftAnchorY! - e.clientY) * perPx);
+    b.hy = d.hyBase! + Math.round((d.shiftAnchorY! - e.clientY) * perPx);
   } else { // horizontal footprint
-    S.drag!.shiftAnchorY = null;
+    d.shiftAnchorY = null;
     const c = localGroundCell(b.y0);
     if (c) {
       b.x1 = c.x;
