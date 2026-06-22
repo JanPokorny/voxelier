@@ -3,7 +3,7 @@
 A lo-fi, browser-based **voxel scene editor** (1 voxel = 1 cm), in a true isometric
 projection. Everything is a single self-contained `index.html` — no build step.
 
-**Live demo:** https://voxelier-xmyv5z.surge.sh
+**Live demo:** https://janpokorny.github.io/voxelier/
 
 ## Model
 
@@ -86,3 +86,17 @@ The document autosaves to `localStorage`.
 
 Open `index.html` in a modern browser, or serve it: `npx http-server` and visit the
 printed URL.
+
+## Deploying
+
+GitHub Pages, via `.github/workflows/deploy.yml` (no build step — it just publishes
+`index.html`):
+
+- pushes to **main** publish to the site root → https://janpokorny.github.io/voxelier/
+- every **pull request** publishes a live preview to
+  `…/pr-preview/pr-<N>/` and the workflow comments the URL on the PR (removed when
+  the PR closes).
+
+Both share the `gh-pages` branch, which Pages serves via *Settings → Pages → Deploy
+from a branch → `gh-pages` / `root`*. (PR previews only work for branches in this
+repo, not forks, since the workflow needs write access.)

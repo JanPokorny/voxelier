@@ -1,0 +1,51 @@
+name: Deploy to GitHub Pages
+
+# Production (main) publishes to the site root; pull requests publish to
+# /pr-preview/pr-<N>/ so each PR gets its own live preview URL. Both live on
+# the gh-pages branch, which GitHub Pages serves ("Deploy from a branch").
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: write        # push the built site to the gh-pages branch
+  pull-requests: write   # post the preview URL as a PR comment
+
+# Don't let concurrent runs race on the gh-pages branch.
+concurrency:
+  group: pages-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The app is a single static file; assemble just what should be served.
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp index.html _site/
+
+      # main -> gh-pages root (keep any existing PR previews intact)
+      - name: Deploy production
+        if: github.event_name == 'push'
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: _site
+          clean: true
+          clean-exclude: pr-preview/
+
+      # pull_request -> gh-pages/pr-preview/pr-<N>/ ; auto-removed when PR closes
+      - name: Deploy PR preview
+        if: github.event_name == 'pull_request'
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: _site
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
