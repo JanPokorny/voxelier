@@ -343,6 +343,12 @@ function editVoxels(){ // edited object's voxels in world space + parallel local
     evox.push({x:w.x,y:w.y,z:w.z,c}); local.push(lv); }
   return {evox,local};
 }
+// (re)build the edited object's opaque instanced mesh and make it the pick target
+function buildEditMesh(){
+  const {evox,local}=editVoxels();
+  editMesh=addMesh(evox,c=>col(c),{}); if(editMesh) editMesh.userData.local=local;
+  pickMeshes=editMesh?[editMesh]:[];
+}
 
 function rebuild(){
   disposeMeshes(); pickMeshes=[]; childMeshes={}; childBox={}; editMesh=null; invalidateField();
@@ -351,9 +357,7 @@ function rebuild(){
   if(editObject){
     editXform=xcompose(contextXform(),{off:editObject.pos,rot:editObject.rot});
     addSurface(all,c=>col(c),{transparent:true});                     // everything else: transparent
-    const {evox,local}=editVoxels();                                  // edited object: opaque, in 3D
-    editMesh=addMesh(evox,c=>col(c),{});
-    if(editMesh){ editMesh.userData.local=local; pickMeshes=[editMesh]; }
+    buildEditMesh();                                                  // edited object: opaque, in 3D
   }else{
     // owner -> current context's children; otherwise dimmed (descended past).
     // opaque surfaces get baked edge AO and are pickable; transparent ones are
@@ -374,10 +378,7 @@ function rebuild(){
 }
 function rebuildEdit(){ // fast path while painting (the transparent rest is unchanged)
   if(editMesh){ scene.remove(editMesh); editMesh.dispose?.(); const i=meshes.indexOf(editMesh); if(i>=0)meshes.splice(i,1); }
-  const {evox,local}=editVoxels();
-  editMesh=addMesh(evox,c=>col(c),{});
-  if(editMesh){ editMesh.userData.local=local; }
-  pickMeshes=editMesh?[editMesh]:[];
+  buildEditMesh();
 }
 
 // ---- overlay outlines ---------------------------------------
