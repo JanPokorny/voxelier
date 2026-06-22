@@ -43,6 +43,19 @@ export function disposeMeshes(): void {
 // field via `has(x,y,z)` — which may see voxels outside `arr` (e.g. the cells of
 // a neighbouring chunk), so seams between chunks shade identically to one mesh.
 type Cell = { x: number; y: number; z: number; c: number };
+// Per face, per corner: the three AO probe offsets (relative to the empty
+// neighbour cell). Precomputed once so the inner mesher does pure has() lookups
+// and zero per-vertex allocation.
+const FACE_AO = FACE.map((f) =>
+  f.v.map((w) => {
+    const sa = w[f.a] ? 1 : -1, sb = w[f.b] ? 1 : -1;
+    const ax = [0, 0, 0], bx = [0, 0, 0];
+    ax[f.a] = sa;
+    bx[f.b] = sb;
+    return [ax, bx, [ax[0] + bx[0], ax[1] + bx[1], ax[2] + bx[2]]];
+  })
+);
+const TRI = [0, 1, 2, 0, 2, 3];
 function surfaceGeo(
   arr: Cell[],
   has: (x: number, y: number, z: number) => boolean,
@@ -50,43 +63,29 @@ function surfaceGeo(
   ao: boolean,
 ): THREE.BufferGeometry | null {
   const pos: number[] = [], nor: number[] = [], colr: number[] = [];
+  const bri = [1, 1, 1, 1];
   for (const d of arr) {
-    const c = colorOf(d.c);
-    for (const f of FACE) {
-      const nx = d.x + f.d[0], ny = d.y + f.d[1], nz = d.z + f.d[2];
+    const c = colorOf(d.c), cr = c.r, cg = c.g, cb = c.b;
+    for (let fi = 0; fi < 6; fi++) {
+      const f = FACE[fi], dx = f.d[0], dy = f.d[1], dz = f.d[2];
+      const nx = d.x + dx, ny = d.y + dy, nz = d.z + dz;
       if (has(nx, ny, nz)) continue; // hidden internal face
-      const na = f.a, nb = f.b; // the two in-plane axes
-      const vert: number[][] = [];
-      for (const w of f.v) {
-        let b = 1;
-        if (ao) {
-          const sa = w[na] ? 1 : -1, sb = w[nb] ? 1 : -1;
-          const pa = [nx, ny, nz];
-          pa[na] += sa;
-          const pb = [nx, ny, nz];
-          pb[nb] += sb;
-          const pc = [nx, ny, nz];
-          pc[na] += sa;
-          pc[nb] += sb;
-          const A = has(pa[0], pa[1], pa[2]),
-            B = has(pb[0], pb[1], pb[2]),
-            C = has(pc[0], pc[1], pc[2]);
-          b = AO[(A && B) ? 0 : 3 - ((A ? 1 : 0) + (B ? 1 : 0) + (C ? 1 : 0))];
+      if (ao) {
+        const fa = FACE_AO[fi];
+        for (let i = 0; i < 4; i++) {
+          const [oa, ob, oc] = fa[i];
+          const A = has(nx + oa[0], ny + oa[1], nz + oa[2]),
+            B = has(nx + ob[0], ny + ob[1], nz + ob[2]),
+            C = has(nx + oc[0], ny + oc[1], nz + oc[2]);
+          bri[i] =
+            AO[(A && B) ? 0 : 3 - ((A ? 1 : 0) + (B ? 1 : 0) + (C ? 1 : 0))];
         }
-        vert.push([
-          d.x + w[0],
-          d.y + w[1],
-          d.z + w[2],
-          c.r * b,
-          c.g * b,
-          c.b * b,
-        ]);
       }
-      for (const i of [0, 1, 2, 0, 2, 3]) {
-        const v = vert[i];
-        pos.push(v[0], v[1], v[2]);
-        nor.push(f.d[0], f.d[1], f.d[2]);
-        colr.push(v[3], v[4], v[5]);
+      for (const i of TRI) {
+        const w = f.v[i], b = bri[i];
+        pos.push(d.x + w[0], d.y + w[1], d.z + w[2]);
+        nor.push(dx, dy, dz);
+        colr.push(cr * b, cg * b, cb * b);
       }
     }
   }
