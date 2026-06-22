@@ -8,8 +8,7 @@
 <style>
   :root{
     --bg:#14161b; --panel:#1c1f27; --panel-2:#232733; --line:#2e3340;
-    --ink:#e7e3d8; --ink-dim:#9aa0ad; --accent:#a7c4bc; --accent-ink:#14161b; --danger:#b5838d;
-    --radius:9px;
+    --ink:#e7e3d8; --ink-dim:#9aa0ad; --accent:#a7c4bc; --accent-ink:#14161b;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -35,7 +34,6 @@
   .tool:hover{color:var(--ink);border-color:#3a4252}
   .tool.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
   .tool:disabled,.tool.disabled{opacity:.3;pointer-events:none}
-  .tdiv{height:1px;align-self:stretch;background:var(--line);margin:3px 4px}
 
   #stage{grid-area:stage;position:relative;overflow:hidden}
   #c{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
@@ -86,8 +84,6 @@
   #palpop{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;width:300px;box-shadow:0 16px 44px rgba(0,0,0,.55)}
   .pophead{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--ink-dim);margin-bottom:10px}
   .popgrid{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;max-height:210px;overflow:auto}
-  .poppick{display:flex;align-items:center;gap:10px;margin-top:14px;border-top:1px solid var(--line);padding-top:12px;font-size:12px;color:var(--ink-dim)}
-  .poppick input{width:46px;height:30px;padding:0;background:none;border:1px solid var(--line);border-radius:6px;cursor:pointer}
 
   #status{grid-area:status;background:var(--panel);border-top:1px solid var(--line);
           padding:5px 12px;color:var(--ink-dim);font-size:11px;display:flex;gap:16px;align-items:center}
@@ -189,7 +185,7 @@ scene.add(dir); scene.add(dir.target);
 const dir2=new THREE.DirectionalLight(0xffffff,0.16); dir2.position.set(-6,5,-7); scene.add(dir2);
 
 const boxGeo=new THREE.BoxGeometry(1,1,1);
-const _col=new THREE.Color(), _m=new THREE.Matrix4(), _up=new THREE.Vector3(), _upN=new THREE.Vector3();
+const _m=new THREE.Matrix4(), _up=new THREE.Vector3(), _upN=new THREE.Vector3();
 const bg=new THREE.Color('#0f1115');
 // Voxels store a 0xRRGGBB int; resolve to (cached) THREE.Color, full or dimmed.
 const _palCache=new Map(), _dimCache=new Map();
@@ -427,12 +423,15 @@ function pickVoxel(){ // -> {cell, addCell} in object-local space, or null
   const ln=rotY({x:Math.round(n.x),y:Math.round(n.y),z:Math.round(n.z)},(4-editXform.rot)&3);
   return {cell:lv, addCell:{x:lv.x+ln.x,y:lv.y+ln.y,z:lv.z+ln.z}};
 }
+// pointer -> object-local cell on the horizontal plane at the given local Y
+function localGroundCell(localY){
+  const g=groundCell(localY+editXform.off.y); if(!g) return null;
+  const l=rotY({x:g.x-editXform.off.x,y:0,z:g.z-editXform.off.z},(4-editXform.rot)&3);
+  return {x:Math.round(l.x),y:localY,z:Math.round(l.z)};
+}
 function voxelTarget(){ // local cell for the active voxel tool
   const t=pickVoxel();
-  if(tool==='add'){ if(t) return t.addCell;
-    const g=groundCell(editXform.off.y); if(!g) return null;
-    const l=rotY({x:g.x-editXform.off.x,y:0,z:g.z-editXform.off.z},(4-editXform.rot)&3);
-    return {x:Math.round(l.x),y:0,z:Math.round(l.z)}; }
+  if(tool==='add') return t ? t.addCell : localGroundCell(0);
   return t?t.cell:null;
 }
 
@@ -577,11 +576,6 @@ function updateVoxHover(){
 // ---- box brush (add/erase): drag an NxM footprint, Shift extrudes vertically ----
 const locToW=(x,y,z)=>{ const r=rotY({x,y,z},editXform.rot);
   return new THREE.Vector3(r.x+editXform.off.x, r.y+editXform.off.y, r.z+editXform.off.z); };
-function localGroundCell(localY){       // pointer -> object-local cell on the horizontal plane at localY
-  const g=groundCell(localY+editXform.off.y); if(!g) return null;
-  const l=rotY({x:g.x-editXform.off.x,y:0,z:g.z-editXform.off.z},(4-editXform.rot)&3);
-  return {x:Math.round(l.x),y:localY,z:Math.round(l.z)};
-}
 function startBox(e,base){
   const s=voxelTarget(); if(!s) return;                  // nothing under the pointer to start from
   drag={...base,mode:'box',shiftAnchorY:null,hyBase:0,
@@ -749,10 +743,6 @@ function addGroupIn(group){                // new empty group inside a group
   const g=newScene(); g.name='Group'; group.children.push(g);
   collapsed.delete(group.id); selectNode(g); save();
 }
-function wrapNodeAction(node){             // new parent group containing just this node
-  const g=wrapNode(node); if(!g) return;
-  collapsed.delete(g.id); selectNode(g); save();
-}
 function rotateSelectionBy(steps){       // rotate selection in 90° steps about each piece's own centre
   const dir=steps<0?-1:1;
   for(let n=0;n<Math.abs(steps);n++){
@@ -786,24 +776,23 @@ function orbitView(dx,dy){          // free orbit (the only camera mode)
   goal.azim-=dx*0.012;             // inverted: drag follows the scene
   goal.elev=Math.max(-0.35,Math.min(Math.PI/2,goal.elev+dy*0.012));   // inverted vertical axis
 }
-function computeBounds(){
+function frameBox(b){ if(b.max.x<b.min.x) return;   // empty -> leave camera as is
+  goal.target.set((b.min.x+b.max.x)/2,(b.min.y+b.max.y)/2,(b.min.z+b.max.z)/2);
+  goal.zoom=Math.max(8,Math.min(400,Math.max(b.max.x-b.min.x,b.max.y-b.min.y,b.max.z-b.min.z)*1.5+8));
+}
+function frameView(){
   const b=emptyBox();
-  if(editObject){ nodeBox(editObject, editXform.off, editXform.rot, b);
-    if(b.max.x<b.min.x){ const o=editXform.off; return {center:new THREE.Vector3(o.x,o.y+6,o.z),size:22}; } }
+  if(editObject){ nodeBox(editObject,editXform.off,editXform.rot,b);
+    if(b.max.x<b.min.x){ const o=editXform.off; goal.target.set(o.x,o.y+6,o.z); goal.zoom=41; return; } }  // empty object
   else for(const id in childBox){ const c=childBox[id];
     b.min.x=Math.min(b.min.x,c.min.x);b.min.y=Math.min(b.min.y,c.min.y);b.min.z=Math.min(b.min.z,c.min.z);
     b.max.x=Math.max(b.max.x,c.max.x);b.max.y=Math.max(b.max.y,c.max.y);b.max.z=Math.max(b.max.z,c.max.z); }
-  if(b.max.x<b.min.x) return {center:new THREE.Vector3(0,1,0),size:10};
-  return {center:new THREE.Vector3((b.min.x+b.max.x)/2,(b.min.y+b.max.y)/2,(b.min.z+b.max.z)/2),
-          size:Math.max(b.max.x-b.min.x,b.max.y-b.min.y,b.max.z-b.min.z)};
+  if(b.max.x<b.min.x){ goal.target.set(0,1,0); goal.zoom=23; return; }   // empty scene
+  frameBox(b);
 }
-function frameView(){ const b=computeBounds(); goal.target.copy(b.center); goal.zoom=Math.max(8,Math.min(400,b.size*1.5+8)); }
 function fitNode(node){                          // frame the camera on one tree node's world bounds
   if(node===root){ frameView(); return; }
-  const w=worldXform(node), b=nodeBox(node,w.off,w.rot,emptyBox());
-  if(b.max.x<b.min.x) return;                    // empty
-  goal.target.set((b.min.x+b.max.x)/2,(b.min.y+b.max.y)/2,(b.min.z+b.max.z)/2);
-  goal.zoom=Math.max(8,Math.min(400,Math.max(b.max.x-b.min.x,b.max.y-b.min.y,b.max.z-b.min.z)*1.5+8));
+  const w=worldXform(node); frameBox(nodeBox(node,w.off,w.rot,emptyBox()));
 }
 function updateCamera(){
   cam.azim+=(goal.azim-cam.azim)*0.22; cam.elev+=(goal.elev-cam.elev)*0.22;
@@ -855,16 +844,10 @@ function sceneColors(){
   (function rec(n){ if(n.type==='object'){ for(const [,c] of n.voxels) m.set(c,(m.get(c)||0)+1); } else n.children.forEach(rec); })(root);
   return [...m.entries()].sort((a,b)=>b[1]-a[1]).map(e=>e[0]);
 }
-// the palette's colours: scene colours (most-used first), with the selected
-// colour guaranteed present — inserted at #1 if it isn't already in use.
-function paletteColors(){
-  const cols=sceneColors();
-  if(!cols.includes(selColor)) cols.unshift(selColor);
-  return cols;
-}
 function buildSwatches(){
   const w=document.getElementById('swatches'); w.innerHTML='';
-  const cols=paletteColors();
+  const cols=sceneColors();
+  if(!cols.includes(selColor)) cols.unshift(selColor);   // selected colour is always shown, at #1 if unused
   const swatch=c=>{ const s=document.createElement('div');
     s.className='sw'+(c===selColor?' active':''); s.style.background=hex(c); s.title=hex(c);
     s.onclick=()=>{ selColor=c; buildSwatches(); }; return s; };
@@ -1008,7 +991,7 @@ function showItemMenu(node,x,y){
   div();
   if(node!==root){ add('Duplicate',()=>duplicateNode(node)); add('Delete',()=>deleteNode(node),'danger'); div(); }
   if(node.type==='scene'){ add('New object',()=>addObjectIn(node)); add('New group',()=>addGroupIn(node)); }
-  else add('New group',()=>wrapNodeAction(node));
+  else add('New group',()=>{ const g=wrapNode(node); if(g){ collapsed.delete(g.id); selectNode(g); save(); } });
   document.body.appendChild(m); ctxMenuEl=m;
   const r=m.getBoundingClientRect();
   m.style.left=Math.min(x,innerWidth-r.width-4)+'px';
@@ -1106,8 +1089,7 @@ function measureRef(){ // voxel cell under the pointer, clamped into the field
   let cell=null;
   if(editObject){
     const t=pickVoxel();
-    if(t) cell={...t.cell};
-    else { const g=groundCell(editXform.off.y); if(g){ const l=rotY({x:g.x-editXform.off.x,y:0,z:g.z-editXform.off.z},(4-editXform.rot)&3); cell={x:Math.round(l.x),y:0,z:Math.round(l.z)}; } }
+    cell = t ? {...t.cell} : localGroundCell(0);
   }else{
     raycaster.setFromCamera(ndc,camera);
     const hits=pickMeshes.length?raycaster.intersectObjects(pickMeshes,false):[];
@@ -1239,10 +1221,6 @@ function resize(){ const r=canvas.getBoundingClientRect();
   if(canvas.width!==Math.round(w*pr)||canvas.height!==Math.round(h*pr)) renderer.setSize(w,h,false); }
 window.addEventListener('resize',resize);
 
-// Single pass: opaque (emphasised) voxels write depth, then the translucent
-// deemphasised surfaces draw depth-tested on top — so the two interleave
-// correctly in 3D, and shadows come from the normal shadow pass.
-scene.background=bg;
 function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); renderer.render(scene,camera); updateMeasureLabels(); }
 
 function start(){
