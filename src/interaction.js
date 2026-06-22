@@ -7,7 +7,7 @@ import { S } from './state.js';
 import { key, rotY, addv } from './math.js';
 import { canvas, camera, goal, hoverVox, overlay } from './scene-env.js';
 import { setNdc, pickChild, groundCell, pickVoxel, localGroundCell, voxelTarget, locToW } from './picking.js';
-import { walk, rebuild, rebuildEdit, refreshOverlay } from './render.js';
+import { walk, rebuild, editSet, editDelete, markDirtyRange, refreshOverlay } from './render.js';
 import { contextXform, childById } from './model.js';
 import { panCamera, orbitView } from './camera.js';
 import { measureActive, pointerMeasure, freezeMeasure, clearMeasure, renderMeasure, invalidateField } from './measure.js';
@@ -28,11 +28,11 @@ function moveCollision() {
   const occ = new Set(), sel = [];
   for (const v of all) {
     if (v.owner && S.selection.has(v.owner)) sel.push(v);
-    else occ.add(v.x + ',' + v.y + ',' + v.z);
+    else occ.add(key(v.x, v.y, v.z));
   }
   return { occ, sel };
 }
-const moveBlocked = (d, dx, dy, dz) => d.sel.some(v => d.occ.has((v.x + dx) + ',' + (v.y + dy) + ',' + (v.z + dz)));
+const moveBlocked = (d, dx, dy, dz) => d.sel.some(v => d.occ.has(key(v.x + dx, v.y + dy, v.z + dz)));
 
 function moveDragTo(e) {
   let dx = S.drag.dx, dy = S.drag.dy, dz = S.drag.dz;
@@ -66,10 +66,10 @@ function rotDragTo(e) {
 function applyVoxel() {
   const c = voxelTarget(); if (!c) return;
   const k = key(c.x, c.y, c.z);
-  if (S.tool === 'add') { if (k === S.lastVox) return; S.editObject.voxels.set(k, S.selColor); }
-  else if (S.tool === 'erase') { S.editObject.voxels.delete(k); }
-  else if (S.tool === 'paint') { if (S.editObject.voxels.has(k)) S.editObject.voxels.set(k, S.selColor); }
-  S.lastVox = k; rebuildEdit(); updateVoxHover();
+  if (S.tool === 'add') { if (k === S.lastVox) return; editSet(c.x, c.y, c.z, S.selColor); }
+  else if (S.tool === 'erase') { editDelete(c.x, c.y, c.z); }
+  else if (S.tool === 'paint') { if (S.editObject.voxels.has(k)) editSet(c.x, c.y, c.z, S.selColor); }
+  S.lastVox = k; updateVoxHover();
 }
 function updateVoxHover() {
   const t = pickVoxel();
@@ -111,11 +111,11 @@ function boxExtent() {
 function commitBox() {
   const x = boxExtent();
   for (let i = x.x0; i <= x.x1; i++) for (let j = x.y0; j <= x.y1; j++) for (let k = x.z0; k <= x.z1; k++) {
-    const ky = key(i, j, k);
-    if (S.tool === 'add') S.editObject.voxels.set(ky, S.selColor); else S.editObject.voxels.delete(ky);
+    if (S.tool === 'add') editSet(i, j, k, S.selColor, true); else editDelete(i, j, k, true);
   }
+  markDirtyRange(x.x0, x.y0, x.z0, x.x1, x.y1, x.z1);
   S.liveMeas = null; renderMeasure();
-  rebuildEdit(); invalidateField(); updateChrome(); save();
+  invalidateField(); updateChrome(); save();
 }
 // build the box wireframe as measure-style segments (3 labelled dimension edges + the rest unlabelled)
 function renderBox() {

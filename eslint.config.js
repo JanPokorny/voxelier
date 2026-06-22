@@ -10,7 +10,7 @@ export default [
       globals: {
         window: 'readonly', document: 'readonly', navigator: 'readonly',
         localStorage: 'readonly', devicePixelRatio: 'readonly',
-        requestAnimationFrame: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly',
+        requestAnimationFrame: 'readonly', cancelAnimationFrame: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly',
         prompt: 'readonly', alert: 'readonly', innerWidth: 'readonly', innerHeight: 'readonly', console: 'readonly',
         URL: 'readonly', Blob: 'readonly', FileReader: 'readonly',
       },

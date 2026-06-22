@@ -1,35 +1,25 @@
-// Scene meshing: gather world voxels (walk), build instanced/surface meshes with
-// baked edge AO or glass, and (re)build the whole scene or just the edited object.
+// Scene meshing: gather world voxels (walk), build surface meshes with baked edge
+// AO or glass, and (re)build the whole scene or just the edited object. The edited
+// object is partitioned into chunks so edits re-mesh only what changed.
 import * as THREE from 'three';
 import { S } from './state.js';
-import { addv, rotY, parseKey, xcompose } from './math.js';
-import { scene, boxGeo, matSolid, matSurf, matGlass, matGlassDepth, FACE, AO, overlay, col, dimCol, _m } from './scene-env.js';
+import { addv, rotY, parseKey, key, xcompose } from './math.js';
+import { scene, editGroup, boxGeo, matSurf, matGlass, matGlassDepth, FACE, AO, overlay, col, dimCol } from './scene-env.js';
 import { VIS, contextXform, emptyBox, growBox } from './model.js';
 import { invalidateField } from './measure.js';
 
-export function disposeMeshes() { for (const m of S.meshes) { scene.remove(m); if (m.geometry && m.geometry !== boxGeo) m.geometry.dispose(); m.dispose?.(); } S.meshes = []; }
-
-// instanced cubes — used only for the object being voxel-edited
-export function addMesh(arr, colorOf, { pick = false, childId = null } = {}) {
-  if (!arr.length) return null;
-  const m = new THREE.InstancedMesh(boxGeo, matSolid, arr.length);
-  for (let i = 0; i < arr.length; i++) {
-    const d = arr[i];
-    _m.makeTranslation(d.x + 0.5, d.y + 0.5, d.z + 0.5); m.setMatrixAt(i, _m); m.setColorAt(i, colorOf(d.c));
-  }
-  m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true;
-  m.castShadow = m.receiveShadow = true;
-  scene.add(m); S.meshes.push(m);
-  if (pick) { m.userData.childId = childId; m.userData.emph = true; S.pickMeshes.push(m); (S.childMeshes[childId] || (S.childMeshes[childId] = [])).push(m); }
-  return m;
+export function disposeMeshes() {
+  for (const m of S.meshes) { scene.remove(m); if (m.geometry && m.geometry !== boxGeo) m.geometry.dispose(); m.dispose?.(); }
+  S.meshes = []; editGroup.clear();
+  if (S.editRemesh) { cancelAnimationFrame(S.editRemesh); S.editRemesh = 0; }
+  S.editChunkVox = new Map(); S.editChunkMesh = new Map(); S.editDirty = new Set();
 }
 
-// A surface of only the exterior faces. Opaque surfaces bake per-vertex edge
-// ambient occlusion into the vertex colours; transparent ones read as glass.
-export function addSurface(arr, colorOf, { transparent = false, ao = false, pick = false, childId = null } = {}) {
-  if (!arr.length) return null;
-  const set = new Set(); for (const d of arr) set.add(d.x + ',' + d.y + ',' + d.z);
-  const has = (x, y, z) => set.has(x + ',' + y + ',' + z);
+// Core surface mesher: build a BufferGeometry of the exterior faces of `arr`,
+// culling internal faces and baking per-vertex edge AO against the full voxel
+// field via `has(x,y,z)` — which may see voxels outside `arr` (e.g. the cells of
+// a neighbouring chunk), so seams between chunks shade identically to one mesh.
+function surfaceGeo(arr, has, colorOf, ao) {
   const pos = [], nor = [], colr = [];
   for (const d of arr) {
     const c = colorOf(d.c);
@@ -61,6 +51,16 @@ export function addSurface(arr, colorOf, { transparent = false, ao = false, pick
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(colr, 3));
+  return g;
+}
+
+// A surface of only the exterior faces. Opaque surfaces bake per-vertex edge AO
+// into the vertex colours; transparent ones read as glass.
+export function addSurface(arr, colorOf, { transparent = false, ao = false, pick = false, childId = null } = {}) {
+  if (!arr.length) return null;
+  const set = new Set(); for (const d of arr) set.add(key(d.x, d.y, d.z));
+  const g = surfaceGeo(arr, (x, y, z) => set.has(key(x, y, z)), colorOf, ao);
+  if (!g) return null;
   const m = new THREE.Mesh(g, transparent ? matGlass : matSurf); m.castShadow = true; m.receiveShadow = true;
   scene.add(m); S.meshes.push(m);
   if (transparent) {
@@ -87,20 +87,77 @@ export function walk(node, off, rot, owner, vis, out) {
   }
 }
 
-export function editVoxels() { // edited object's voxels in world space + parallel local list
-  const evox = [], local = [];
-  for (const [k, c] of S.editObject.voxels) { const lv = parseKey(k); const w = addv(rotY(lv, S.editXform.rot), S.editXform.off); evox.push({ x: w.x, y: w.y, z: w.z, c }); local.push(lv); }
-  return { evox, local };
+// ---- edited object: chunked surface meshing ----
+// The object is partitioned into CH³ object-local chunks. Edits re-mesh only the
+// touched chunks (plus neighbours, whose boundary faces / AO depend on the changed
+// cell), so a paint stroke or a large box fill never re-meshes the whole object.
+// Geometry is built in object-local space; editGroup carries the world pose.
+const CH = 32;
+const chunkKeyOf = (x, y, z) => key(Math.floor(x / CH), Math.floor(y / CH), Math.floor(z / CH));
+const editHas = (x, y, z) => S.editObject.voxels.has(key(x, y, z));
+
+function remeshChunk(ck) {
+  const old = S.editChunkMesh.get(ck);
+  if (old) {
+    editGroup.remove(old); old.geometry.dispose();
+    const i = S.meshes.indexOf(old); if (i >= 0) S.meshes.splice(i, 1);
+    const j = S.pickMeshes.indexOf(old); if (j >= 0) S.pickMeshes.splice(j, 1);
+    S.editChunkMesh.delete(ck);
+  }
+  const vm = S.editChunkVox.get(ck); if (!vm || !vm.size) return;
+  const arr = []; for (const [vk, c] of vm) { const p = parseKey(vk); arr.push({ x: p.x, y: p.y, z: p.z, c }); }
+  const g = surfaceGeo(arr, editHas, col, true); if (!g) return;
+  const m = new THREE.Mesh(g, matSurf); m.castShadow = m.receiveShadow = true;
+  editGroup.add(m); S.meshes.push(m); S.pickMeshes.push(m); S.editChunkMesh.set(ck, m);
 }
-// (re)build the edited object's opaque instanced mesh and make it the pick target
+function scheduleRemesh() {
+  if (S.editRemesh) return;
+  S.editRemesh = requestAnimationFrame(() => { S.editRemesh = 0; for (const ck of S.editDirty) remeshChunk(ck); S.editDirty.clear(); });
+}
+function markDirty(x, y, z) {
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++)
+    S.editDirty.add(chunkKeyOf(x + dx, y + dy, z + dz));
+  scheduleRemesh();
+}
+// Set/clear a single edited-object voxel and update chunk membership. `defer`
+// skips the per-cell dirty marking for bulk edits (the caller marks a range).
+export function editSet(x, y, z, c, defer = false) {
+  const vk = key(x, y, z); S.editObject.voxels.set(vk, c);
+  const ck = chunkKeyOf(x, y, z); let m = S.editChunkVox.get(ck); if (!m) S.editChunkVox.set(ck, m = new Map());
+  m.set(vk, c); S.voxVer++; if (!defer) markDirty(x, y, z);
+}
+export function editDelete(x, y, z, defer = false) {
+  const vk = key(x, y, z); if (!S.editObject.voxels.delete(vk)) return;
+  const ck = chunkKeyOf(x, y, z), m = S.editChunkVox.get(ck);
+  if (m) { m.delete(vk); if (!m.size) S.editChunkVox.delete(ck); }
+  S.voxVer++; if (!defer) markDirty(x, y, z);
+}
+// mark every chunk a [x0..x1]×… cell range can touch (grown by one for borders)
+export function markDirtyRange(x0, y0, z0, x1, y1, z1) {
+  const lo = k => Math.floor((k - 1) / CH), hi = k => Math.floor((k + 1) / CH);
+  for (let cx = lo(x0); cx <= hi(x1); cx++) for (let cy = lo(y0); cy <= hi(y1); cy++) for (let cz = lo(z0); cz <= hi(z1); cz++)
+    S.editDirty.add(key(cx, cy, cz));
+  scheduleRemesh();
+}
+
+// (re)build the edited object's chunk meshes and make them the pick targets
 export function buildEditMesh() {
-  const { evox, local } = editVoxels();
-  S.editMesh = addMesh(evox, c => col(c), {}); if (S.editMesh) S.editMesh.userData.local = local;
-  S.pickMeshes = S.editMesh ? [S.editMesh] : [];
+  const { off, rot } = S.editXform;
+  editGroup.position.set(off.x, off.y, off.z);
+  editGroup.rotation.set(0, -rot * Math.PI / 2, 0);   // rotY(v,rot) == a three.js Y-rotation by -rot·90°
+  editGroup.updateMatrixWorld(true);
+  S.editChunkVox = new Map();
+  for (const [vk, c] of S.editObject.voxels) {
+    const p = parseKey(vk), ck = chunkKeyOf(p.x, p.y, p.z);
+    let m = S.editChunkVox.get(ck); if (!m) S.editChunkVox.set(ck, m = new Map());
+    m.set(vk, c);
+  }
+  S.editChunkMesh = new Map(); S.editDirty = new Set(); S.pickMeshes = [];
+  for (const ck of S.editChunkVox.keys()) remeshChunk(ck);
 }
 
 export function rebuild() {
-  disposeMeshes(); S.pickMeshes = []; S.childMeshes = {}; S.childBox = {}; S.editMesh = null; invalidateField();
+  disposeMeshes(); S.pickMeshes = []; S.childMeshes = {}; S.childBox = {}; S.voxVer++; invalidateField();
   const all = []; walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, all);
 
   if (S.editObject) {
@@ -123,10 +180,6 @@ export function rebuild() {
     }
   }
   refreshOverlay();
-}
-export function rebuildEdit() { // fast path while painting (the transparent rest is unchanged)
-  if (S.editMesh) { scene.remove(S.editMesh); S.editMesh.dispose?.(); const i = S.meshes.indexOf(S.editMesh); if (i >= 0) S.meshes.splice(i, 1); }
-  buildEditMesh();
 }
 
 // ---- overlay outlines ----

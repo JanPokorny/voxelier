@@ -18,8 +18,14 @@ export const S = {
   pickMeshes: [],             // meshes raycast for picking
   childMeshes: {},            // childId -> [meshes] (scene mode)
   childBox: {},               // childId -> {min,max}
-  editMesh: null,             // edit object's instanced mesh
   editXform: { off: { x: 0, y: 0, z: 0 }, rot: 0 },
+
+  // ---- edited object: chunked surface meshing ----
+  editChunkVox: new Map(),    // chunkKey -> Map<voxelKey,color> (membership)
+  editChunkMesh: new Map(),   // chunkKey -> THREE.Mesh
+  editDirty: new Set(),       // chunkKeys awaiting a re-mesh
+  editRemesh: 0,              // pending requestAnimationFrame id
+  voxVer: 0,                  // bumped on any voxel change (chrome/colour caches)
 
   // ---- pointer interaction ----
   painting: false, lastVox: null, drag: null,

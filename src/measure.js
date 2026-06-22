@@ -2,7 +2,7 @@
 // three axes through a voxel; left-click freezes a reading, right-click clears.
 import * as THREE from 'three';
 import { S } from './state.js';
-import { parseKey } from './math.js';
+import { parseKey, key } from './math.js';
 import { camera, canvas, raycaster, ndc, measLines, _mv } from './scene-env.js';
 import { walk } from './render.js';
 import { pickVoxel, localGroundCell, groundCell, locToW } from './picking.js';
@@ -17,7 +17,7 @@ export function measureField() {
   if (S.measFieldCache) return S.measFieldCache;
   const set = new Set(), mn = { x: 1e9, y: 1e9, z: 1e9 }, mx = { x: -1e9, y: -1e9, z: -1e9 };
   const acc = (x, y, z) => {
-    set.add(x + ',' + y + ',' + z); mn.x = Math.min(mn.x, x); mn.y = Math.min(mn.y, y); mn.z = Math.min(mn.z, z);
+    set.add(key(x, y, z)); mn.x = Math.min(mn.x, x); mn.y = Math.min(mn.y, y); mn.z = Math.min(mn.z, z);
     mx.x = Math.max(mx.x, x); mx.y = Math.max(mx.y, y); mx.z = Math.max(mx.z, z);
   };
   let toW;
@@ -57,7 +57,7 @@ export function measureAt(cell) { // segments along all 3 axes through `cell`, s
   const f = measureField(), ax = ['x', 'y', 'z'], out = [];
   for (let d = 0; d < 3; d++) {
     const A = ax[d], o1 = ax[(d + 1) % 3], o2 = ax[(d + 2) % 3], lo = f.mn[A], hi = f.mx[A];
-    const c = [cell.x, cell.y, cell.z], at = v => { c[d] = v; return f.set.has(c[0] + ',' + c[1] + ',' + c[2]); };
+    const c = [cell.x, cell.y, cell.z], at = v => { c[d] = v; return f.set.has(key(c[0], c[1], c[2])); };
     let i = lo;
     while (i <= hi) {
       const filled = at(i); let j = i; while (j + 1 <= hi && at(j + 1) === filled) j++;

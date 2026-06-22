@@ -31,7 +31,6 @@ const _palCache = new Map(), _dimCache = new Map();
 export function col(v) { let c = _palCache.get(v); if (!c) { c = new THREE.Color().setHex(v); _palCache.set(v, c); } return c; }
 export function dimCol(v) { let c = _dimCache.get(v); if (!c) { c = new THREE.Color().setHex(v).lerp(bg, 0.62); _dimCache.set(v, c); } return c; }
 
-export const matSolid = new THREE.MeshLambertMaterial();                       // edited object (instanced)
 export const matSurf = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.FrontSide }); // opaque surfaces (baked edge AO)
 // Transparent voxels render as a surface of only the exterior faces, back-face
 // culled — depth-correct yet reading as one glass pane.
@@ -58,6 +57,11 @@ export const AO = [0.5, 0.74, 0.88, 1];   // brightness by exposure (0 = corner 
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000),
   new THREE.MeshLambertMaterial({ color: 0x000000, transparent: true, opacity: 0.32 }));
 ground.rotation.x = -Math.PI / 2; ground.position.y = 0; ground.receiveShadow = true; ground.renderOrder = -1; scene.add(ground);
+
+// the edited object's voxel meshes live under this group; its transform carries
+// the object's accumulated world pose so the chunk meshes can be built in cheap,
+// pose-independent object-local space.
+export const editGroup = new THREE.Group(); scene.add(editGroup);
 
 // overlay group for selection / hover outlines (always on top)
 export const overlay = new THREE.Group(); scene.add(overlay);

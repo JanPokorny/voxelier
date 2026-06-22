@@ -4,7 +4,7 @@
 // collapsed groups). Ctrl-Z walks back through the snapshots, Ctrl-Shift-Z /
 // Ctrl-Y walk forward; making a fresh edit after undoing drops the redo tail.
 import { S } from './state.js';
-import { ser, de, save } from './persistence.js';
+import { ser, de, save, flush } from './persistence.js';
 import { peekUid, seedUid } from './math.js';
 import { findById } from './model.js';
 import { rebuild } from './render.js';
@@ -60,5 +60,7 @@ function restore(snap) {
   restoring = false;
 }
 
-export function undo() { if (index > 0) restore(stack[--index]); }
-export function redo() { if (index < stack.length - 1) restore(stack[++index]); }
+// flush() first so any edits still inside the save-debounce window are recorded
+// as the current top of the stack before we step off it.
+export function undo() { flush(); if (index > 0) restore(stack[--index]); }
+export function redo() { flush(); if (index < stack.length - 1) restore(stack[++index]); }
