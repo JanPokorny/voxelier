@@ -26,20 +26,17 @@ jobs:
       - uses: actions/checkout@v4
 
       # Skip building on a PR close event — we only need the cleanup step below.
-      - uses: pnpm/action-setup@v4
-        if: github.event.action != 'closed'
-      - uses: actions/setup-node@v4
+      - uses: denoland/setup-deno@v2
         if: github.event.action != 'closed'
         with:
-          node-version: 22
-          cache: pnpm
+          deno-version: v2.x
 
-      # esbuild bundles src/ + three into a single self-contained dist/index.html
+      # `deno bundle` (esbuild under the hood) bundles src/ + three from the
+      # src/index.html entrypoint into a self-contained dist/ (HTML + hashed
+      # JS/CSS, no runtime/CDN dependency)
       - name: Build site
         if: github.event.action != 'closed'
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm build
+        run: deno task build
 
       # main -> gh-pages root (keep any existing PR previews intact)
       - name: Deploy production
