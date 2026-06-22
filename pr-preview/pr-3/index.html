@@ -472,7 +472,11 @@ canvas.addEventListener('pointerdown',e=>{
     return;
   }
   if(editObject){
-    if(e.button===0){ painting=true; lastVox=null; applyVoxel(); }
+    if(e.button===0){
+      if(tool==='view'){ drag={...base,mode:'pan'}; }                 // View tool: left-drag pans
+      else if(tool==='add'||tool==='erase'){ startBox(e,base); }      // box select in the horizontal plane
+      else { painting=true; lastVox=null; applyVoxel(); }             // paint
+    }
     else if(e.button===2){ orbitAccum=0; drag={...base,mode:'orbit'}; }
     else if(e.button===1){ drag={...base,mode:'pan'}; }
     return;
@@ -498,12 +502,13 @@ canvas.addEventListener('pointermove',e=>{
     pointerMeasure(); return;
   }
   if(editObject && painting){ applyVoxel(); return; }
-  if(!drag){ if(editObject) updateVoxHover(); return; }
+  if(!drag){ if(editObject && tool!=='view') updateVoxHover(); else hoverVox.visible=false; return; }
   const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
   if(drag.mode==='pan'){ drag.x=e.clientX; drag.y=e.clientY; panCamera(dx,dy); }
   else if(drag.mode==='orbit'){ drag.x=e.clientX; drag.y=e.clientY; orbitView(dx,dy); }
   else if(drag.mode==='move'){ moveDragTo(e); }
   else if(drag.mode==='rotobj'){ rotDragTo(e); }
+  else if(drag.mode==='box'){ boxDragTo(e); }
 });
 
 canvas.addEventListener('pointerup',e=>{
@@ -512,7 +517,11 @@ canvas.addEventListener('pointerup',e=>{
     if(drag && !moved(e)){ if(drag.meas==='freeze') freezeMeasure(); else if(drag.meas==='clear') clearMeasure(); }
     drag=null; return;
   }
-  if(editObject){ if(painting){ painting=false; updateChrome(); save(); } drag=null; return; }
+  if(editObject){
+    if(painting){ painting=false; updateChrome(); save(); }
+    else if(drag && drag.mode==='box'){ commitBox(); }
+    drag=null; return;
+  }
   if(drag){
     if(drag.mode==='pan' && !moved(e)){               // a click -> select / deselect
       const id=drag.clickId;
@@ -580,6 +589,65 @@ function updateVoxHover(){
   hoverVox.visible=true;
   hoverVox.material.color.set(tool==='erase'?0xb5838d:0xa7c4bc);
   hoverVox.position.set(w.x+0.5,w.y+0.5,w.z+0.5);
+}
+
+// ---- box brush (add/erase): drag an NxM footprint, Shift extrudes vertically ----
+const locToW=(x,y,z)=>{ const r=rotY({x,y,z},editXform.rot);
+  return new THREE.Vector3(r.x+editXform.off.x, r.y+editXform.off.y, r.z+editXform.off.z); };
+function localGroundCell(localY){       // pointer -> object-local cell on the horizontal plane at localY
+  const g=groundCell(localY+editXform.off.y); if(!g) return null;
+  const l=rotY({x:g.x-editXform.off.x,y:0,z:g.z-editXform.off.z},(4-editXform.rot)&3);
+  return {x:Math.round(l.x),y:localY,z:Math.round(l.z)};
+}
+function startBox(e,base){
+  const s=voxelTarget(); if(!s) return;                  // nothing under the pointer to start from
+  drag={...base,mode:'box',shiftAnchorY:null,hyBase:0,
+        box:{x0:s.x,y0:s.y,z0:s.z,x1:s.x,z1:s.z,hy:0}};
+  hoverVox.visible=false; renderBox();
+}
+function boxDragTo(e){
+  const b=drag.box;
+  if(e.shiftKey){                                        // vertical extrude (like moving objects with Shift)
+    const perPx=(camera.top-camera.bottom)/canvas.getBoundingClientRect().height;
+    if(drag.shiftAnchorY===null){ drag.shiftAnchorY=e.clientY; drag.hyBase=b.hy; }
+    b.hy=drag.hyBase+Math.round((drag.shiftAnchorY-e.clientY)*perPx);
+  }else{                                                 // horizontal footprint
+    drag.shiftAnchorY=null;
+    const c=localGroundCell(b.y0); if(c){ b.x1=c.x; b.z1=c.z; }
+  }
+  renderBox();
+}
+function boxExtent(){
+  const b=drag.box;
+  return { x0:Math.min(b.x0,b.x1), x1:Math.max(b.x0,b.x1),
+           z0:Math.min(b.z0,b.z1), z1:Math.max(b.z0,b.z1),
+           y0:Math.min(b.y0,b.y0+b.hy), y1:Math.max(b.y0,b.y0+b.hy) };
+}
+function commitBox(){
+  const x=boxExtent();
+  for(let i=x.x0;i<=x.x1;i++)for(let j=x.y0;j<=x.y1;j++)for(let k=x.z0;k<=x.z1;k++){
+    const ky=key(i,j,k);
+    if(tool==='add') editObject.voxels.set(ky,selColor); else editObject.voxels.delete(ky);
+  }
+  liveMeas=null; renderMeasure();
+  rebuildEdit(); invalidateField(); updateChrome(); save();
+}
+// build the box wireframe as measure-style segments (3 labelled dimension edges + the rest unlabelled)
+function renderBox(){
+  const x=boxExtent(), X0=x.x0,X1=x.x1+1, Y0=x.y0,Y1=x.y1+1, Z0=x.z0,Z1=x.z1+1;
+  const nx=X1-X0, ny=Y1-Y0, nz=Z1-Z0;
+  const seg=(ax,ay,az,bx,by,bz,len,label)=>({a:locToW(ax,ay,az),b:locToW(bx,by,bz),
+        mid:locToW((ax+bx)/2,(ay+by)/2,(az+bz)/2),len,filled:true,nolabel:!label});
+  const o=[];
+  o.push(seg(X0,Y0,Z0, X1,Y0,Z0, nx,true));              // X dimension
+  o.push(seg(X0,Y0,Z0, X0,Y0,Z1, nz,true));              // Z dimension
+  o.push(seg(X0,Y0,Z0, X0,Y1,Z0, ny,true));              // Y dimension
+  o.push(seg(X1,Y0,Z0, X1,Y0,Z1,0,false), seg(X0,Y0,Z1, X1,Y0,Z1,0,false));            // rest of bottom
+  o.push(seg(X0,Y1,Z0, X1,Y1,Z0,0,false), seg(X0,Y1,Z0, X0,Y1,Z1,0,false),             // top
+         seg(X1,Y1,Z0, X1,Y1,Z1,0,false), seg(X0,Y1,Z1, X1,Y1,Z1,0,false));
+  o.push(seg(X1,Y0,Z0, X1,Y1,Z0,0,false), seg(X0,Y0,Z1, X0,Y1,Z1,0,false),             // verticals
+         seg(X1,Y0,Z1, X1,Y1,Z1,0,false));
+  liveMeas=o; renderMeasure();
 }
 
 // ============================================================
@@ -780,7 +848,7 @@ function updateCamera(){
 // ============================================================
 //  UI
 // ============================================================
-const VOX_TOOLS=[{id:'add',ic:'＋',label:'Add'},{id:'erase',ic:'－',label:'Erase'},{id:'paint',ic:'❖',label:'Paint'},{id:'measure',ic:'📏',label:'Measure'}];
+const VOX_TOOLS=[{id:'view',ic:'↖',label:'View'},{id:'add',ic:'＋',label:'Add'},{id:'erase',ic:'－',label:'Erase'},{id:'paint',ic:'❖',label:'Paint'},{id:'measure',ic:'📏',label:'Measure'}];
 
 function updateChrome(){
   const tw=document.getElementById('tools'); tw.innerHTML='';
@@ -807,7 +875,9 @@ function updateChrome(){
   document.getElementById('statHint').textContent = measureActive()
     ? 'Measure — hover to read voxel/gap runs on all 3 axes · left-click freezes · right-click clears'
     : editObject
-    ? 'Editing object — Add / Erase / Paint voxels · right-drag to orbit · Esc to finish'
+    ? (tool==='view' ? 'View — left-drag pans · right-drag orbits · Esc to finish'
+       : tool==='paint' ? 'Paint — click/drag to recolour voxels · right-drag orbits · Esc to finish'
+       : `${tool==='add'?'Add':'Erase'} — drag a box in the floor plane (Shift = height) · right-drag orbits · Esc to finish`)
     : (selection.size
         ? `${selection.size} selected — drag to move (Shift: up/down) · right-drag rotate · R rotate · Del · drag in the tree to group`
         : 'Click to select · drag to pan · right-drag to orbit · double-click to enter · N new');
@@ -1075,6 +1145,7 @@ function renderMeasure(){
     const c=seg.filled?M_FILL:M_EMPTY;
     pos.push(seg.a.x,seg.a.y,seg.a.z, seg.b.x,seg.b.y,seg.b.z);
     colr.push(c.r,c.g,c.b, c.r,c.g,c.b);
+    if(seg.nolabel) continue;
     const el=document.createElement('div'); el.className='mlab'+(seg.filled?'':' empty')+(set.fz?' frozen':'');
     el.textContent=seg.len; cont.appendChild(el); measLabels.push({el,w:seg.mid});
   }
