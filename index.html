@@ -312,13 +312,14 @@ const worldXform=node=>pathXform(findPath(node)||[root]);
 // world AABB of a node given accumulated transform
 function nodeBox(node,off,rot,box){
   if(node.type==='object'){
-    for(const [k] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off);
-      box.min.x=Math.min(box.min.x,w.x); box.min.y=Math.min(box.min.y,w.y); box.min.z=Math.min(box.min.z,w.z);
-      box.max.x=Math.max(box.max.x,w.x+1); box.max.y=Math.max(box.max.y,w.y+1); box.max.z=Math.max(box.max.z,w.z+1); }
+    for(const [k] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off); growBox(box,w.x,w.y,w.z); }
   }else for(const ch of node.children){ nodeBox(ch,addv(off,rotY(ch.pos,rot)),(rot+ch.rot)&3,box); }
   return box;
 }
 const emptyBox=()=>({min:{x:1e9,y:1e9,z:1e9},max:{x:-1e9,y:-1e9,z:-1e9}});
+// grow an AABB to contain the unit voxel at (x,y,z)
+const growBox=(b,x,y,z)=>{ b.min.x=Math.min(b.min.x,x);b.min.y=Math.min(b.min.y,y);b.min.z=Math.min(b.min.z,z);
+  b.max.x=Math.max(b.max.x,x+1);b.max.y=Math.max(b.max.y,y+1);b.max.z=Math.max(b.max.z,z+1); };
 
 // gather every world voxel (skipping the object being edited).
 //   tr    = effectively transparent (this node or an ancestor is transparent)
@@ -360,9 +361,7 @@ function rebuild(){
     const gE={},gT={},ctxE=[],ctxT=[];
     for(const v of all){
       if(v.owner){ (v.tr?(gT[v.owner]||(gT[v.owner]=[])):(gE[v.owner]||(gE[v.owner]=[]))).push(v);
-        const b=childBox[v.owner]||(childBox[v.owner]=emptyBox());
-        b.min.x=Math.min(b.min.x,v.x);b.min.y=Math.min(b.min.y,v.y);b.min.z=Math.min(b.min.z,v.z);
-        b.max.x=Math.max(b.max.x,v.x+1);b.max.y=Math.max(b.max.y,v.y+1);b.max.z=Math.max(b.max.z,v.z+1);
+        growBox(childBox[v.owner]||(childBox[v.owner]=emptyBox()),v.x,v.y,v.z);
       }else (v.tr?ctxT:ctxE).push(v);
     }
     addSurface(ctxE,c=>dimCol(c),{ao:true});  addSurface(ctxT,c=>dimCol(c),{transparent:true});
