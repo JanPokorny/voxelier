@@ -15,18 +15,21 @@ import {
 import { emptyBox, nodeBox, worldXform } from "./model.ts";
 import type { Box, Node } from "./types.ts";
 
+// reused scratch so pan/orbit frames allocate no Vector3s
+const _dv = new THREE.Vector3(),
+  _fwd = new THREE.Vector3(),
+  _right = new THREE.Vector3(),
+  _camUp = new THREE.Vector3(),
+  _yUp = new THREE.Vector3(0, 1, 0);
+
 export function panCamera(dx: number, dy: number): void {
   const r = canvas.getBoundingClientRect();
   const perPx = (camera.top - camera.bottom) / r.height;
-  const fwd = new THREE.Vector3();
-  camera.getWorldDirection(fwd);
-  const right = new THREE.Vector3().crossVectors(
-    fwd,
-    new THREE.Vector3(0, 1, 0),
-  ).normalize();
-  const up = new THREE.Vector3().crossVectors(right, fwd).normalize();
-  goal.target.addScaledVector(right, -dx * perPx);
-  goal.target.addScaledVector(up, dy * perPx);
+  camera.getWorldDirection(_fwd);
+  _right.crossVectors(_fwd, _yUp).normalize();
+  _camUp.crossVectors(_right, _fwd).normalize();
+  goal.target.addScaledVector(_right, -dx * perPx);
+  goal.target.addScaledVector(_camUp, dy * perPx);
 }
 export function orbitView(dx: number, dy: number): void { // free orbit (the only camera mode)
   goal.azim -= dx * 0.012; // inverted: drag follows the scene
@@ -88,12 +91,8 @@ export function updateCamera(): void {
   cam.zoom += (goal.zoom - cam.zoom) * 0.25;
   cam.target.lerp(goal.target, 0.25);
   const ce = Math.cos(cam.elev), se = Math.sin(cam.elev);
-  const dv = new THREE.Vector3(
-    ce * Math.sin(cam.azim),
-    se,
-    ce * Math.cos(cam.azim),
-  );
-  camera.position.copy(cam.target).addScaledVector(dv, CAM_DIST);
+  _dv.set(ce * Math.sin(cam.azim), se, ce * Math.cos(cam.azim));
+  camera.position.copy(cam.target).addScaledVector(_dv, CAM_DIST);
   const t = THREE.MathUtils.clamp(
     (cam.elev - 1.45) / (Math.PI / 2 - 1.45),
     0,

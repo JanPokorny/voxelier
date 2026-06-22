@@ -50,9 +50,7 @@ dir2.position.set(-6, 5, -7);
 scene.add(dir2);
 
 export const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-export const _m = new THREE.Matrix4(),
-  _up = new THREE.Vector3(),
-  _upN = new THREE.Vector3();
+export const _up = new THREE.Vector3(), _upN = new THREE.Vector3();
 const bg = new THREE.Color("#0f1115");
 // Voxels store a 0xRRGGBB int; resolve to a (cached) THREE.Color, full or dimmed.
 const _palCache = new Map<number, THREE.Color>(),
