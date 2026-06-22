@@ -37,6 +37,16 @@ export function renameNode(node: Node): void {
   }
 }
 
+// selected context children, resolved to live nodes (dropping stale ids)
+const selectedNodes = (): Node[] =>
+  [...S.selection].map((id) => childById(id)).filter((n): n is Node => !!n);
+// a clone nudged +5 on x/z, so a duplicate/paste lands visibly offset
+const cloneShift = (n: Node): Node => {
+  const d = clone(n);
+  d.pos = { x: n.pos.x + 5, y: n.pos.y, z: n.pos.z + 5 };
+  return d;
+};
+
 export function createObject(): void {
   const o = newObject();
   o.pos = { x: Math.round(goal.target.x), y: 0, z: Math.round(goal.target.z) };
@@ -53,15 +63,7 @@ export function deleteSelection(): void {
   save();
 }
 export function duplicateSelection(): void {
-  const dups = [...S.selection].map((id) => childById(id)).filter((
-    n,
-  ): n is Node => Boolean(n)).map(
-    (n) => {
-      const d = clone(n);
-      d.pos = { x: n.pos.x + 5, y: n.pos.y, z: n.pos.z + 5 };
-      return d;
-    },
-  );
+  const dups = selectedNodes().map(cloneShift);
   if (!dups.length) return;
   S.context.children.push(...dups);
   S.selection = new Set(dups.map((d) => d.id));
@@ -70,11 +72,7 @@ export function duplicateSelection(): void {
   save();
 }
 export function copySelection(): void {
-  S.clipboard = [...S.selection].map((id) => childById(id)).filter((
-    n,
-  ): n is Node => Boolean(n)).map(
-    clone,
-  );
+  S.clipboard = selectedNodes().map(clone);
 }
 export function cutSelection(): void {
   copySelection();
@@ -82,11 +80,7 @@ export function cutSelection(): void {
 }
 export function pasteClipboard(): void {
   if (!S.clipboard.length) return;
-  const ns = S.clipboard.map((n) => {
-    const d = clone(n);
-    d.pos = { x: n.pos.x + 5, y: n.pos.y, z: n.pos.z + 5 };
-    return d;
-  });
+  const ns = S.clipboard.map(cloneShift);
   S.context.children.push(...ns);
   S.selection = new Set(ns.map((d) => d.id));
   rebuild();
@@ -155,8 +149,7 @@ export function wrapInGroup(target: Node, dragged: Node): boolean {
 export function duplicateNode(node: Node): void {
   const par = parentOf(node) as SceneNode | null;
   if (!par) return;
-  const d = clone(node);
-  d.pos = { x: node.pos.x + 5, y: node.pos.y, z: node.pos.z + 5 };
+  const d = cloneShift(node);
   par.children.splice(par.children.indexOf(node) + 1, 0, d);
   selectNode(d);
   save();
