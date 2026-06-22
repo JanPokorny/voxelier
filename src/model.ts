@@ -2,7 +2,7 @@
 // transforms and node AABBs. A node is an `object` (a Map of voxels) or a
 // `scene` (a group of children); the document root is a scene.
 import { S } from "./state.ts";
-import { addv, parseKey, pathXform, rotY, uid } from "./math.ts";
+import { addv, keyToWorld, pathXform, rotY, uid } from "./math.ts";
 import type {
   Box,
   Node,
@@ -136,7 +136,7 @@ export const growBox = (b: Box, x: number, y: number, z: number): void => {
 export function nodeBox(node: Node, off: Vec, rot: Rot, box: Box): Box {
   if (node.type === "object") {
     for (const [k] of node.voxels) {
-      const w = addv(rotY(parseKey(k), rot), off);
+      const w = keyToWorld(k, rot, off);
       growBox(box, w.x, w.y, w.z);
     }
   } else {

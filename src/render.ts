@@ -3,7 +3,7 @@
 // object is partitioned into chunks so edits re-mesh only what changed.
 import * as THREE from "three";
 import { S } from "./state.ts";
-import { addv, key, parseKey, rotY, xcompose } from "./math.ts";
+import { addv, key, keyToWorld, parseKey, rotY, xcompose } from "./math.ts";
 import {
   AO,
   boxGeo,
@@ -154,7 +154,7 @@ export function walk(
   const tr = ev === 1;
   if (node.type === "object") {
     for (const [k, c] of node.voxels) {
-      const w = addv(rotY(parseKey(k), rot), off);
+      const w = keyToWorld(k, rot, off);
       out.push({ x: w.x, y: w.y, z: w.z, c, owner, tr });
     }
   } else {for (const ch of node.children) {

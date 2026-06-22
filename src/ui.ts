@@ -2,7 +2,7 @@
 // object/scene tree (thumbnails, row clicks, context menu, drag & drop) and the
 // global keyboard shortcuts. Attaches its window/tree listeners on import.
 import { S } from "./state.ts";
-import { addv, hex, parseKey, rotY } from "./math.ts";
+import { addv, hex, keyToWorld, rotY } from "./math.ts";
 import { hoverVox } from "./scene-env.ts";
 import { clearMeasure, measureActive } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
@@ -235,7 +235,7 @@ function localVoxels(
 ): ThumbVox[] {
   if (node.type === "object") {
     for (const [k, c] of node.voxels) {
-      const w = addv(rotY(parseKey(k), rot), off);
+      const w = keyToWorld(k, rot, off);
       out.push({ x: w.x, y: w.y, z: w.z, c });
     }
   } else {for (const ch of node.children) {
