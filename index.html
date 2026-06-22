@@ -67,6 +67,9 @@
   .trow .thumb{flex:none;width:26px;height:26px;border-radius:4px;background:#0f1115}
   .trow .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
   .trow.dim .nm{color:var(--ink-dim)}
+  .trow.drop-into{background:#2a3330;box-shadow:inset 0 0 0 1px var(--accent)}
+  .trow.drop-before{box-shadow:inset 0 2px 0 var(--accent)}
+  .trow.drop-after{box-shadow:inset 0 -2px 0 var(--accent)}
   .trow .ph{color:var(--ink-dim);font-style:italic}
   .trow .tb{flex:none;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:4px;background:transparent;padding:0;font-size:12px;color:var(--ink-dim)}
   .trow .tb:hover{color:var(--ink);border-color:var(--line)}
@@ -100,11 +103,8 @@
       <button id="viewIso" class="active" title="Isometric (1)">◈ Iso</button>
       <button id="viewBird" title="Birdseye (2)">▦ Bird</button>
       <button id="viewFree" title="Free / orbit (3)">✦ Free</button>
-      <button id="rotL" title="Rotate left (Q)">⟲</button>
-      <button id="rotR" title="Rotate right (E)">⟳</button>
       <button id="fit" title="Fit (F)">⤢ Fit</button>
     </div>
-    <button id="gridtoggle" title="Grid (G)">▥ Grid</button>
   </div>
 
   <div id="tools"></div>
@@ -228,9 +228,10 @@ const FACE=[ // d=outward normal, a/b=the two in-plane axes (for AO), v=CCW corn
   {d:[0,0,-1],a:0,b:1, v:[[1,0,0],[0,0,0],[0,1,0],[1,1,0]]},
 ];
 
-const grid=new THREE.GridHelper(400,400,0x2e3340,0x22252e); scene.add(grid);
-const ground=new THREE.Mesh(new THREE.PlaneGeometry(4000,4000),new THREE.ShadowMaterial({opacity:0.26}));
-ground.rotation.x=-Math.PI/2; ground.position.y=0.002; ground.receiveShadow=true; scene.add(ground);
+// floor: a semi-transparent black plane (always shown), also catches shadows
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(4000,4000),
+  new THREE.MeshLambertMaterial({color:0x000000,transparent:true,opacity:0.32}));
+ground.rotation.x=-Math.PI/2; ground.position.y=0; ground.receiveShadow=true; scene.add(ground);
 
 // overlay group for selection / hover outlines (always on top)
 const overlay=new THREE.Group(); scene.add(overlay);
@@ -609,6 +610,10 @@ function duplicateSelection(){
   if(!dups.length) return;
   context.children.push(...dups); selection=new Set(dups.map(d=>d.id)); rebuild(); updateChrome(); save();
 }
+function createGroup(){           // new empty sub-scene; drag items into it via the tree
+  const g=newScene(); g.name='Group'; context.children.push(g);
+  selection=new Set([g.id]); rebuild(); updateChrome(); save();
+}
 function copySelection(){ clipboard=[...selection].map(id=>childById(id)).filter(Boolean).map(clone); }
 function cutSelection(){ copySelection(); deleteSelection(); }
 function pasteClipboard(){
@@ -616,20 +621,26 @@ function pasteClipboard(){
   const ns=clipboard.map(n=>{const d=clone(n); d.pos={x:n.pos.x+5,y:n.pos.y,z:n.pos.z+5}; return d;});
   context.children.push(...ns); selection=new Set(ns.map(d=>d.id)); rebuild(); updateChrome(); save();
 }
-function groupSelection(){
-  if(selection.size<1) return;
-  const members=context.children.filter(c=>selection.has(c.id));
-  context.children=context.children.filter(c=>!selection.has(c.id));
-  const g=newScene(); g.children=members; context.children.push(g);
-  selection=new Set([g.id]); rebuild(); updateChrome(); save();
-}
-function ungroupSelection(){
-  const promoted=[];
-  for(const id of [...selection]){ const n=childById(id); if(!n||n.type!=='scene') continue;
-    for(const ch of n.children){ ch.pos=addv(n.pos,rotY(ch.pos,n.rot)); ch.rot=(ch.rot+n.rot)&3; context.children.push(ch); promoted.push(ch.id); }
-    context.children=context.children.filter(c=>c.id!==id);
-  }
-  if(promoted.length){ selection=new Set(promoted); rebuild(); updateChrome(); save(); }
+
+// ---- tree reparenting (drag & drop) -------------------------
+function findById(id,n=root){ if(n.id===id) return n; if(n.type==='scene') for(const c of n.children){ const r=findById(id,c); if(r) return r; } return null; }
+function parentOf(node){ const p=findPath(node); return p&&p.length>1?p[p.length-2]:null; }
+function isDescendant(node,t){ if(node===t) return true; if(node.type!=='scene') return false; return node.children.some(c=>isDescendant(c,t)); }
+function worldXform(node){ const p=findPath(node)||[root]; let off={x:0,y:0,z:0},rot=0;
+  for(let i=1;i<p.length;i++){ const n=p[i]; off=addv(off,rotY(n.pos,rot)); rot=(rot+n.rot)&3; } return {off,rot}; }
+const xcompose=(X,Y)=>({rot:(X.rot+Y.rot)&3, off:addv(rotY(Y.off,X.rot),X.off)});
+const xinvert=T=>{ const r=(4-(T.rot&3))&3, o=rotY(T.off,r); return {rot:r,off:{x:-o.x,y:-o.y,z:-o.z}}; };
+function reparentNode(node,newParent,index){    // move node under newParent at index, preserving world pose
+  if(node===newParent || isDescendant(node,newParent)) return false;
+  const A=parentOf(node); if(!A) return false;
+  const Wn=xcompose(worldXform(A),{off:{...node.pos},rot:node.rot});
+  const local=xcompose(xinvert(worldXform(newParent)),Wn);
+  const ai=A.children.indexOf(node); A.children.splice(ai,1);
+  if(A===newParent && ai<index) index--;
+  node.pos={x:Math.round(local.off.x),y:Math.round(local.off.y),z:Math.round(local.off.z)};
+  node.rot=local.rot&3;
+  newParent.children.splice(Math.max(0,Math.min(index,newParent.children.length)),0,node);
+  return true;
 }
 function rotateSelectionBy(steps){       // rotate selection in 90° steps about each piece's own centre
   const dir=steps<0?-1:1;
@@ -652,7 +663,7 @@ function nudgeY(d){ for(const id of selection){ const c=childById(id); if(c) c.p
 // ============================================================
 //  CAMERA
 // ============================================================
-let view='iso', showGrid=true, azimIndex=0;
+let view='iso', azimIndex=0;
 function panCamera(dx,dy){
   const r=canvas.getBoundingClientRect();
   const perPx=(camera.top-camera.bottom)/r.height;
@@ -663,7 +674,7 @@ function panCamera(dx,dy){
 }
 function orbitView(dx,dy){
   if(view==='free'){
-    goal.azim+=dx*0.012;
+    goal.azim-=dx*0.012;     // inverted: drag follows the scene
     goal.elev=Math.max(-0.35,Math.min(Math.PI/2,goal.elev-dy*0.012));
   }else{ // iso/bird: drag rotates azimuth in 90° detents (elevation locked)
     orbitAccum+=dx;
@@ -714,8 +725,7 @@ function updateCamera(){
 // ============================================================
 const SCENE_ACTIONS=[
   {id:'new',  ic:'＋',label:'Object', fn:createObject, always:true},
-  {id:'group',ic:'⊞',label:'Group',  fn:groupSelection},
-  {id:'ungroup',ic:'⊟',label:'Ungroup',fn:ungroupSelection},
+  {id:'group',ic:'⊞',label:'Group',  fn:createGroup,  always:true},
   {id:'dup',  ic:'⧉',label:'Dupl.',  fn:duplicateSelection},
   {id:'rot',  ic:'⟳',label:'Rotate', fn:rotateSelection},
   {id:'del',  ic:'⌫',label:'Delete', fn:deleteSelection},
@@ -753,7 +763,7 @@ function updateChrome(){
     : editObject
     ? 'Editing object — Add / Erase / Paint voxels · right-drag to orbit · Esc to finish'
     : (selection.size
-        ? `${selection.size} selected — drag to move (Shift: up/down) · right-drag rotate · R rotate · Ctrl+G group · Del`
+        ? `${selection.size} selected — drag to move (Shift: up/down) · right-drag rotate · R rotate · Del · drag in the tree to group`
         : 'Click to select · drag to pan · right-drag to orbit · double-click to enter · N new');
   document.getElementById('hint').textContent = editObject
     ? 'Painting voxels (1 voxel = 1 cm). Esc returns to the scene.'
@@ -846,22 +856,51 @@ function buildTree(){
     r.append(tw,th,nm,vb);
     r.onclick=()=>selectNode(node);
     r.ondblclick=()=>enterNode(node);
+    // drag & drop reparenting (VSCode-style)
+    r.draggable=true;
+    r.addEventListener('dragstart',ev=>{ ev.stopPropagation(); dragId=node.id; if(ev.dataTransfer){ ev.dataTransfer.effectAllowed='move'; try{ev.dataTransfer.setData('text/plain',node.id);}catch(_){ } } });
+    r.addEventListener('dragend',clearDropInd);
+    r.addEventListener('dragover',ev=>{ ev.preventDefault(); ev.stopPropagation(); dropOver(ev,node,r); });
+    r.addEventListener('drop',ev=>{ ev.preventDefault(); ev.stopPropagation(); doDrop(); });
     w.appendChild(r);
     if(node.type==='scene'&&!collapsed.has(node.id)) for(const ch of node.children) row(ch,depth+1);
   };
   for(const ch of root.children) row(ch,0);
 }
 
+// ---- tree drag & drop state/handlers ------------------------
+let dragId=null, dropInfo=null, dropRow=null;
+function clearDropInd(){ if(dropRow) dropRow.classList.remove('drop-into','drop-before','drop-after'); dropRow=null; dropInfo=null; }
+function dropOver(ev,node,row){
+  const dn=dragId&&findById(dragId);
+  if(!dn || dn===node || isDescendant(dn,node)){ clearDropInd(); return; }
+  clearDropInd(); dropRow=row;
+  const rect=row.getBoundingClientRect(), y=ev.clientY-rect.top, h=rect.height;
+  const par=parentOf(node), idx=par?par.children.indexOf(node):0;
+  if(node.type==='scene' && y>h*0.28 && y<h*0.72){ dropInfo={parent:node,index:node.children.length}; row.classList.add('drop-into'); }
+  else if(y<h*0.5){ dropInfo={parent:par,index:idx}; row.classList.add('drop-before'); }
+  else { dropInfo={parent:par,index:idx+1}; row.classList.add('drop-after'); }
+}
+function doDrop(){
+  const dn=dragId&&findById(dragId);
+  if(dn && dropInfo && dropInfo.parent && reparentNode(dn,dropInfo.parent,dropInfo.index)){
+    collapsed.delete(dropInfo.parent.id);     // reveal the target
+    selectNode(dn); save();
+  }
+  clearDropInd(); dragId=null;
+}
+
+{ const treeEl=document.getElementById('tree');   // drop on empty area -> move to scene root
+  treeEl.addEventListener('dragover',ev=>{ if(ev.target===treeEl && dragId){ ev.preventDefault(); clearDropInd(); dropInfo={parent:root,index:root.children.length}; } });
+  treeEl.addEventListener('drop',ev=>{ if(ev.target===treeEl){ ev.preventDefault(); doDrop(); } });
+}
+
 // ---- view / toggle wiring -----------------------------------
 document.getElementById('viewIso').onclick=()=>setView('iso');
 document.getElementById('viewBird').onclick=()=>setView('bird');
 document.getElementById('viewFree').onclick=()=>setView('free');
-document.getElementById('rotL').onclick=()=>rotateView(+1);
-document.getElementById('rotR').onclick=()=>rotateView(-1);
 document.getElementById('fit').onclick=frameView;
 document.getElementById('up').onclick=escapeUp;
-const gridBtn=document.getElementById('gridtoggle');
-gridBtn.onclick=()=>{ showGrid=!showGrid; grid.visible=showGrid; gridBtn.classList.toggle('active',showGrid); };
 
 window.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT') return;
@@ -872,7 +911,6 @@ window.addEventListener('keydown',e=>{
     if(k==='x'){ if(!editObject){cutSelection();e.preventDefault();} return; } // Ctrl+X = cut
     if(k==='v'){ if(!editObject){pasteClipboard();e.preventDefault();} return; }
     if(k==='d'){ if(!editObject){duplicateSelection();e.preventDefault();} return; }
-    if(k==='g'){ e.preventDefault(); if(!editObject){ e.shiftKey?ungroupSelection():groupSelection(); } return; }
     return;
   }
   switch(k){
@@ -882,7 +920,6 @@ window.addEventListener('keydown',e=>{
     case '2': setView('bird'); break;
     case '3': setView('free'); break;
     case 'f': frameView(); break;
-    case 'g': gridBtn.click(); break;
     case 'escape': escapeUp(); break;
     case 'n': if(!editObject) createObject(); break;
     case 'r': if(!editObject) rotateSelection(); break;
@@ -1061,12 +1098,11 @@ window.addEventListener('resize',resize);
 // deemphasised surfaces draw depth-tested on top — so the two interleave
 // correctly in 3D, and shadows come from the normal shadow pass.
 scene.background=bg;
-function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); grid.visible=showGrid; renderer.render(scene,camera); updateMeasureLabels(); }
+function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); renderer.render(scene,camera); updateMeasureLabels(); }
 
 function start(){
   if(!load()) seed();
   path=[root]; context=root; editObject=null; selection.clear();
-  gridBtn.classList.toggle('active',showGrid);
   buildSwatches(); rebuild(); updateChrome(); frameView(); save(); tick();
 }
 start();

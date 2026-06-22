@@ -29,7 +29,11 @@ explorer — with a preview thumbnail for every object and sub-scene. For each r
 - **click** to select it, **double-click** to enter it (descend into a sub-scene,
   or edit an object's voxels), **double-click the name** to rename;
 - the visibility button cycles **◉ visible → ◐ transparent → ⦰ invisible**;
-- the **▸ / ▾** triangle collapses or expands a sub-scene.
+- the **▸ / ▾** triangle collapses or expands a sub-scene;
+- **drag rows** to reorder and reparent (VSCode-style): drop a piece **onto** a
+  group to nest it inside (= grouping), or back out to a parent / the root to
+  un-nest — world position is preserved. The **⊞ Group** tool makes a new empty
+  group to drag things into.
 
 A **transparent** object/scene still lives in 3D — it casts and receives shadows,
 and depth-interleaves with everything else — but it's drawn as a single glass-like
@@ -60,14 +64,15 @@ double-clicking into a group in Inkscape):
 | Orbit / rotate the view | **right-drag** on empty space |
 | Rotate the selected piece 90° | **right-drag** starting on it (snaps) · or `R` |
 | Enter a piece / go up | **double-click** / `Esc` |
-| New object · Duplicate | `N` · `Ctrl+D` (copy/cut/paste `Ctrl+C/X/V`) |
-| Group / Ungroup · Delete | `Ctrl+G` / `Ctrl+Shift+G` · `Delete` |
+| New object · new Group · Duplicate | `N` · ⊞ tool · `Ctrl+D` (copy/cut/paste `Ctrl+C/X/V`) |
+| Group / reparent | **drag rows in the tree** |
+| Delete | `Delete` |
 | Zoom | **wheel** |
-| View: Isometric / Birdseye / Free | `1` / `2` / `3` (Free = arbitrary orbit) · `Q`/`E` rotate · `F` fit |
-| Toggle grid | `G` |
+| View: Isometric / Birdseye / Free | `1` / `2` / `3` (Free = arbitrary orbit) · `F` fit |
 
 Placement is orthogonal and piece rotation is limited to 90° steps. Isometric and
 birdseye are fixed orthographic angles (90°-stepped); **Free** orbits to any angle.
+The floor is a fixed semi-transparent black plane.
 Soft shadows are drawn for depth. The document autosaves to `localStorage`.
 
 ## Colours
