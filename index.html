@@ -217,6 +217,11 @@ const TRANSP_OPACITY=0.42;
 const matGlass=new THREE.MeshLambertMaterial({vertexColors:true,transparent:true,opacity:TRANSP_OPACITY,
                   side:THREE.FrontSide,depthWrite:false});
 matGlass.shadowSide=THREE.DoubleSide;   // still cast a solid shadow
+// Depth pre-pass for glass: write only depth (no colour) so that, per pixel, only
+// the *nearest* glass layer composites. Without this, a ray crossing the near and
+// far walls plus the floor blends differently depending on draw order, and the
+// apparent wall brightness flickers as the camera rotates.
+const matGlassDepth=new THREE.MeshBasicMaterial({colorWrite:false,side:THREE.FrontSide});
 // exterior cube faces, wound CCW for an outward normal (so FrontSide keeps the
 // outward face and culls the one we'd see from "inside")
 const FACE=[ // d=outward normal, a/b=the two in-plane axes (for AO), v=CCW corners
@@ -231,7 +236,7 @@ const FACE=[ // d=outward normal, a/b=the two in-plane axes (for AO), v=CCW corn
 // floor: a semi-transparent black plane (always shown), also catches shadows
 const ground=new THREE.Mesh(new THREE.PlaneGeometry(4000,4000),
   new THREE.MeshLambertMaterial({color:0x000000,transparent:true,opacity:0.32}));
-ground.rotation.x=-Math.PI/2; ground.position.y=0; ground.receiveShadow=true; scene.add(ground);
+ground.rotation.x=-Math.PI/2; ground.position.y=0; ground.receiveShadow=true; ground.renderOrder=-1; scene.add(ground);
 
 // overlay group for selection / hover outlines (always on top)
 const overlay=new THREE.Group(); scene.add(overlay);
@@ -301,6 +306,13 @@ function addSurface(arr,colorOf,{transparent=false,ao=false,pick=false,childId=n
   g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
   const m=new THREE.Mesh(g, transparent?matGlass:matSurf); m.castShadow=true; m.receiveShadow=true;
   scene.add(m); meshes.push(m);
+  if(transparent){
+    // depth-only sibling: lays down the nearest-glass depth before the colour pass
+    // so only one glass layer survives per pixel (order-independent, no flicker).
+    m.renderOrder=2;
+    const dp=new THREE.Mesh(g, matGlassDepth); dp.renderOrder=1; dp.castShadow=false; dp.receiveShadow=false;
+    scene.add(dp); meshes.push(dp);
+  }
   if(pick){ m.userData.childId=childId; m.userData.emph=!transparent; pickMeshes.push(m); (childMeshes[childId]||(childMeshes[childId]=[])).push(m); }
   return m;
 }
@@ -642,6 +654,20 @@ function reparentNode(node,newParent,index){    // move node under newParent at 
   newParent.children.splice(Math.max(0,Math.min(index,newParent.children.length)),0,node);
   return true;
 }
+// wrap a target node in a fresh scene at its place (preserving world pose), then
+// drop another node into that new scene — used when one object is dragged onto another.
+function wrapInGroup(target,dragged){
+  if(dragged===target || isDescendant(dragged,target)) return false;
+  const par=parentOf(target); if(!par) return false;
+  const idx=par.children.indexOf(target);
+  const g=newScene(); g.name='Group'; g.pos={...target.pos}; g.rot=target.rot;
+  par.children.splice(idx,1,g);          // g takes target's slot (and its world pose)
+  target.pos={x:0,y:0,z:0}; target.rot=0; g.children=[target];
+  reparentNode(dragged,g,g.children.length);   // bring the dragged piece in, world pose preserved
+  collapsed.delete(g.id);
+  selection=new Set([g.id]); rebuild(); updateChrome(); save();
+  return true;
+}
 function rotateSelectionBy(steps){       // rotate selection in 90° steps about each piece's own centre
   const dir=steps<0?-1:1;
   for(let n=0;n<Math.abs(steps);n++){
@@ -877,15 +903,22 @@ function dropOver(ev,node,row){
   clearDropInd(); dropRow=row;
   const rect=row.getBoundingClientRect(), y=ev.clientY-rect.top, h=rect.height;
   const par=parentOf(node), idx=par?par.children.indexOf(node):0;
-  if(node.type==='scene' && y>h*0.28 && y<h*0.72){ dropInfo={parent:node,index:node.children.length}; row.classList.add('drop-into'); }
+  if(y>h*0.28 && y<h*0.72){
+    if(node.type==='scene') dropInfo={parent:node,index:node.children.length};   // nest inside the group
+    else dropInfo={wrap:node};                                                   // object onto object -> new group of both
+    row.classList.add('drop-into');
+  }
   else if(y<h*0.5){ dropInfo={parent:par,index:idx}; row.classList.add('drop-before'); }
   else { dropInfo={parent:par,index:idx+1}; row.classList.add('drop-after'); }
 }
 function doDrop(){
   const dn=dragId&&findById(dragId);
-  if(dn && dropInfo && dropInfo.parent && reparentNode(dn,dropInfo.parent,dropInfo.index)){
-    collapsed.delete(dropInfo.parent.id);     // reveal the target
-    selectNode(dn); save();
+  if(dn && dropInfo){
+    if(dropInfo.wrap){ wrapInGroup(dropInfo.wrap,dn); }
+    else if(dropInfo.parent && reparentNode(dn,dropInfo.parent,dropInfo.index)){
+      collapsed.delete(dropInfo.parent.id);     // reveal the target
+      selectNode(dn); save();
+    }
   }
   clearDropInd(); dragId=null;
 }

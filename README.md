@@ -31,8 +31,9 @@ explorer — with a preview thumbnail for every object and sub-scene. For each r
 - the visibility button cycles **◉ visible → ◐ transparent → ⦰ invisible**;
 - the **▸ / ▾** triangle collapses or expands a sub-scene;
 - **drag rows** to reorder and reparent (VSCode-style): drop a piece **onto** a
-  group to nest it inside (= grouping), or back out to a parent / the root to
-  un-nest — world position is preserved. The **⊞ Group** tool makes a new empty
+  group to nest it inside, drop one **object onto another object** to wrap both in
+  a new group (= grouping), or drag back out to a parent / the root to un-nest —
+  world position is always preserved. The **⊞ Group** tool makes a new empty
   group to drag things into.
 
 A **transparent** object/scene still lives in 3D — it casts and receives shadows,
