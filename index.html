@@ -16,26 +16,26 @@
   body{background:var(--bg);color:var(--ink);
     font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     font-size:13px;overflow:hidden;-webkit-user-select:none;user-select:none}
-  #app{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:64px 1fr 200px;
-       grid-template-areas:"top top top" "left stage right" "left status status"}
+  #app{position:fixed;inset:0;display:grid;grid-template-rows:1fr auto;grid-template-columns:64px 1fr 200px;
+       grid-template-areas:"left stage right" "left status status"}
 
-  #topbar{grid-area:top;display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--panel);
-          border-bottom:1px solid var(--line);z-index:5}
-  .brand{font-weight:700;letter-spacing:.4px}
-  .group{display:flex;align-items:center;gap:3px;padding:3px;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius)}
   button{font:inherit;color:var(--ink);background:transparent;border:1px solid transparent;border-radius:6px;
           padding:6px 10px;cursor:pointer;line-height:1;white-space:nowrap}
   button:hover{background:#2b3140}
   button:disabled{opacity:.35;cursor:default;background:transparent}
   button.active{background:var(--accent);color:var(--accent-ink);font-weight:600}
   .sep{flex:1}
-  #crumb{color:var(--ink-dim);font-size:12px;display:flex;align-items:center;gap:6px;min-width:0}
-  #crumb b{color:var(--ink);font-weight:600}
-  #crumb .c{padding:2px 7px;border-radius:6px;background:var(--panel-2);border:1px solid var(--line)}
-  #crumb .c.cur{color:var(--accent);border-color:var(--accent)}
 
   #tools{grid-area:left;background:var(--panel);border-right:1px solid var(--line);
          display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;z-index:4}
+  /* camera-view tool: a button showing the current projection, with a hover flyout */
+  .viewtool{position:relative}
+  .viewtool .flyout{position:absolute;left:100%;top:-1px;display:none;flex-direction:column;gap:2px;
+        background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px;
+        box-shadow:0 12px 36px rgba(0,0,0,.55);z-index:70}
+  .viewtool:hover .flyout{display:flex}
+  .viewtool .flyout button{text-align:left;padding:6px 12px;border-radius:5px}
+  .viewtool .flyout button.active{background:var(--accent);color:var(--accent-ink);font-weight:600}
   .tool{width:50px;min-height:48px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line);
         display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
         font-size:9.5px;color:var(--ink-dim);cursor:pointer;padding:5px 2px;text-align:center}
@@ -65,6 +65,7 @@
   .trow .thumb{flex:none;width:26px;height:26px;border-radius:4px;background:#0f1115}
   .trow .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
   .trow.dim .nm{color:var(--ink-dim)}
+  .trow.root .nm{font-weight:600;color:var(--ink)}
   .trow.drop-into{background:#2a3330;box-shadow:inset 0 0 0 1px var(--accent)}
   .trow.drop-before{box-shadow:inset 0 2px 0 var(--accent)}
   .trow.drop-after{box-shadow:inset 0 -2px 0 var(--accent)}
@@ -99,19 +100,6 @@
 </head>
 <body>
 <div id="app">
-  <div id="topbar">
-    <span class="brand">VOXELIER</span>
-    <button id="up" title="Go up (Esc)">↑ Up</button>
-    <div id="crumb"></div>
-    <div class="sep"></div>
-    <div class="group">
-      <button id="viewIso" class="active" title="Isometric (1)">◈ Iso</button>
-      <button id="viewBird" title="Birdseye (2)">▦ Bird</button>
-      <button id="viewFree" title="Free / orbit (3)">✦ Free</button>
-      <button id="fit" title="Fit (F)">⤢ Fit</button>
-    </div>
-  </div>
-
   <div id="tools"></div>
 
   <div id="stage">
@@ -127,7 +115,7 @@
   </div>
 
   <div id="status"><span id="statHint"></span><span class="sep"></span>
-    <span><kbd>LMB</kbd> pan / move selected · <kbd>RMB</kbd> orbit / rotate selected · <kbd>wheel</kbd> zoom · <kbd>dbl-click</kbd> enter</span>
+    <span><kbd>LMB</kbd> pan / move selected · <kbd>RMB</kbd> orbit / rotate selected · <kbd>wheel</kbd> zoom · tree: <kbd>click</kbd> enter · <kbd>dbl-click</kbd> fit</span>
   </div>
 </div>
 
@@ -671,11 +659,14 @@ function selectNode(node){                         // select a node from the tre
   path=p.slice(0,-1); context=path[path.length-1]; selection=new Set([node.id]); editObject=null;
   rebuild(); updateChrome();
 }
-function enterNode(node){                           // double-click in tree/canvas: descend or voxel-edit
+function isEntered(node){                            // is this node the one currently being edited/descended into?
+  return node.type==='object' ? editObject===node : (context===node && !editObject);
+}
+function enterNode(node,fit){                       // click in tree / dbl-click in canvas: descend or voxel-edit
   const p=findPath(node); if(!p) return;
   if(node.type==='scene'){ path=p; context=node; selection.clear(); editObject=null; tool='add'; }
   else { path=p.slice(0,-1); context=path[path.length-1]; editObject=node; selection.clear(); tool='add'; }
-  rebuild(); updateChrome(); frameView();
+  clearMeasure(); rebuild(); updateChrome(); if(fit) frameView();
 }
 const VIS_CYCLE={visible:'transparent',transparent:'invisible',invisible:'visible'};
 function cycleVis(node){ node.vis=VIS_CYCLE[node.vis||'visible']; rebuild(); updateChrome(); save(); }
@@ -757,7 +748,7 @@ function deleteNode(node){
 }
 function addObjectIn(group){               // new empty object inside a group (enter it)
   const o=newObject(); group.children.push(o);
-  collapsed.delete(group.id); enterNode(o); save();
+  collapsed.delete(group.id); enterNode(o,true); save();
 }
 function addGroupIn(group){                // new empty group inside a group
   const g=newScene(); g.name='Group'; group.children.push(g);
@@ -813,9 +804,7 @@ function setView(v){
   else { goal.elev=v==='bird'?Math.PI/2:ISO_ELEV; const base=v==='bird'?0:Math.PI/4;
     azimIndex=Math.round((cam.azim-base)/(Math.PI/2)); }
   view=v; if(v!=='free') applyAzim();
-  document.getElementById('viewIso').classList.toggle('active',v==='iso');
-  document.getElementById('viewBird').classList.toggle('active',v==='bird');
-  document.getElementById('viewFree').classList.toggle('active',v==='free');
+  refreshViewBtn();
 }
 function rotateView(d){ if(view==='free'){ goal.azim+=d*Math.PI/2; } else { azimIndex+=d; applyAzim(); } }
 function computeBounds(){
@@ -830,6 +819,29 @@ function computeBounds(){
           size:Math.max(b.max.x-b.min.x,b.max.y-b.min.y,b.max.z-b.min.z)};
 }
 function frameView(){ const b=computeBounds(); goal.target.copy(b.center); goal.zoom=Math.max(8,Math.min(400,b.size*1.5+8)); }
+function fitNode(node){                          // frame the camera on one tree node's world bounds
+  if(node===root){ frameView(); return; }
+  const w=worldXform(node), b=nodeBox(node,w.off,w.rot,emptyBox());
+  if(b.max.x<b.min.x) return;                    // empty
+  goal.target.set((b.min.x+b.max.x)/2,(b.min.y+b.max.y)/2,(b.min.z+b.max.z)/2);
+  goal.zoom=Math.max(8,Math.min(400,Math.max(b.max.x-b.min.x,b.max.y-b.min.y,b.max.z-b.min.z)*1.5+8));
+}
+// camera-view tool: a toolbar button showing the current projection, with a hover flyout of all three
+const VIEW_META={iso:{ic:'◈',label:'Iso'},bird:{ic:'▦',label:'Bird'},free:{ic:'✦',label:'Free'}};
+let viewBtnEl=null;
+function makeViewBtn(){
+  const el=document.createElement('div'); el.className='tool viewtool'; el.title='Camera view';
+  el.innerHTML='<span class="ic"></span><span class="vlabel"></span><div class="flyout">'
+    +'<button data-v="iso">◈ Iso</button><button data-v="bird">▦ Bird</button><button data-v="free">✦ Free</button></div>';
+  el.querySelectorAll('.flyout button').forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); setView(b.dataset.v); });
+  return el;
+}
+function refreshViewBtn(){
+  if(!viewBtnEl) return; const m=VIEW_META[view];
+  viewBtnEl.querySelector('.ic').textContent=m.ic;
+  viewBtnEl.querySelector('.vlabel').textContent=m.label;
+  viewBtnEl.querySelectorAll('.flyout button').forEach(b=>b.classList.toggle('active',b.dataset.v===view));
+}
 function updateCamera(){
   cam.azim+=(goal.azim-cam.azim)*0.22; cam.elev+=(goal.elev-cam.elev)*0.22;
   cam.zoom+=(goal.zoom-cam.zoom)*0.25; cam.target.lerp(goal.target,0.25);
@@ -856,20 +868,16 @@ function updateChrome(){
     for(const t of VOX_TOOLS){ const el=document.createElement('button'); el.className='tool'+(tool===t.id?' active':'');
       el.innerHTML=`<span class="ic">${t.ic}</span>${t.label}`;
       el.onclick=()=>{ tool=t.id; clearMeasure(); hoverVox.visible=false; updateChrome(); }; tw.appendChild(el); }
-    const d=document.createElement('div'); d.className='tdiv'; tw.appendChild(d);
-    const fin=document.createElement('button'); fin.className='tool'; fin.innerHTML='<span class="ic">✓</span>Finish'; fin.onclick=exitObject; tw.appendChild(fin);
   }else{
     // scene actions live in the tree's right-click menu; only Measure is a sidebar tool
     const mb=document.createElement('button'); mb.className='tool'+(measMode?' active':'');
     mb.innerHTML='<span class="ic">📏</span>Measure';
     mb.onclick=()=>{ measMode=!measMode; if(!measMode) clearMeasure(); updateChrome(); }; tw.appendChild(mb);
   }
-  // breadcrumb (Scene, then any groups you've descended into)
-  const cr=document.getElementById('crumb'); cr.innerHTML='';
-  path.forEach((n,i)=>{ const s=document.createElement('span'); s.className='c'+(!editObject&&i===path.length-1?' cur':'');
-    s.textContent=i===0?'Scene':(n.name||'group'); if(i>0)cr.appendChild(sep()); cr.appendChild(s); });
-  if(editObject){ cr.appendChild(sep()); const s=document.createElement('span'); s.className='c cur'; s.textContent='✏ '+(editObject.name||'object'); cr.appendChild(s); }
-  document.getElementById('up').disabled = !editObject && path.length<=1;
+  // camera-view button at the bottom of the toolbar
+  const vdiv=document.createElement('div'); vdiv.className='tdiv'; tw.appendChild(vdiv);
+  if(!viewBtnEl) viewBtnEl=makeViewBtn();
+  tw.appendChild(viewBtnEl); refreshViewBtn();
   buildTree(); buildSwatches();
   // status hint
   document.getElementById('statHint').textContent = measureActive()
@@ -879,10 +887,9 @@ function updateChrome(){
        : tool==='paint' ? 'Paint — click/drag to recolour voxels · right-drag orbits · Esc to finish'
        : `${tool==='add'?'Add':'Erase'} — drag a box in the floor plane (Shift = height) · right-drag orbits · Esc to finish`)
     : (selection.size
-        ? `${selection.size} selected — drag to move (Shift: up/down) · right-drag rotate · R rotate · Del · drag in the tree to group`
-        : 'Click to select · drag to pan · right-drag to orbit · double-click to enter · N new');
+        ? `${selection.size} selected — drag to move (Shift: up/down) · right-drag rotate · R rotate · Del`
+        : 'Tree: click a row to enter it · double-click to fit · right-click for actions · N new object');
 }
-function sep(){ const s=document.createElement('span'); s.textContent='›'; return s; }
 
 // distinct colours used in the scene, most-used first
 function sceneColors(){
@@ -890,33 +897,53 @@ function sceneColors(){
   (function rec(n){ if(n.type==='object'){ for(const [,c] of n.voxels) m.set(c,(m.get(c)||0)+1); } else n.children.forEach(rec); })(root);
   return [...m.entries()].sort((a,b)=>b[1]-a[1]).map(e=>e[0]);
 }
+// the palette's colours: scene colours (most-used first), with the selected
+// colour guaranteed present — inserted at #1 if it isn't already in use.
+function paletteColors(){
+  const cols=sceneColors();
+  if(!cols.includes(selColor)) cols.unshift(selColor);
+  return cols;
+}
 function buildSwatches(){
   const w=document.getElementById('swatches'); w.innerHTML='';
-  const cols=sceneColors();
-  for(let i=0;i<15;i++){ const c=cols[i], s=document.createElement('div');
-    if(c===undefined){ s.className='sw empty'; }
-    else { s.className='sw'+(c===selColor?' active':''); s.style.background=hex(c); s.title=hex(c);
-      s.onclick=()=>{ selColor=c; buildSwatches(); }; }
-    w.appendChild(s); }
-  const more=document.createElement('div'); more.className='sw more'; more.textContent='…';
-  more.title='All scene colours / pick any RGB'; more.onclick=openPalette; w.appendChild(more);
+  const cols=paletteColors();
+  const swatch=c=>{ const s=document.createElement('div');
+    s.className='sw'+(c===selColor?' active':''); s.style.background=hex(c); s.title=hex(c);
+    s.onclick=()=>{ selColor=c; buildSwatches(); }; return s; };
+  if(cols.length>15){                          // 14 colours + "…" all-colours menu
+    for(let i=0;i<14;i++) w.appendChild(swatch(cols[i]));
+    const more=document.createElement('div'); more.className='sw more'; more.textContent='…';
+    more.title='All used colours'; more.onclick=openPalette; w.appendChild(more);
+  }else{                                        // up to 15 colours, padded with empties
+    for(let i=0;i<15;i++){ if(i<cols.length) w.appendChild(swatch(cols[i]));
+      else { const e=document.createElement('div'); e.className='sw empty'; w.appendChild(e); } }
+  }
+  // position 16: always the colour picker
+  const pick=document.createElement('div'); pick.className='sw more'; pick.textContent='🎨';
+  pick.title='Use colour picker'; pick.onclick=openColorPicker; w.appendChild(pick);
 }
+// the colour picker: pick any RGB; the chosen colour becomes selected (and so is
+// pushed to the #1 palette spot, since a freshly-picked colour isn't in use yet).
+function openColorPicker(){
+  const inp=document.createElement('input'); inp.type='color'; inp.value=hex(selColor);
+  inp.style.cssText='position:fixed;left:-9999px;top:0';
+  const apply=()=>{ selColor=parseInt(inp.value.slice(1),16); buildSwatches(); };
+  inp.addEventListener('input',apply);
+  inp.addEventListener('change',()=>{ apply(); inp.remove(); });
+  document.body.appendChild(inp); inp.click();
+}
+// the "…" menu: every colour currently used in the scene
 function openPalette(){
   closePalette();
   const back=document.createElement('div'); back.id='palback'; back.onclick=e=>{ if(e.target===back) closePalette(); };
   const pop=document.createElement('div'); pop.id='palpop';
-  const h=document.createElement('div'); h.className='pophead'; h.textContent='Scene colours'; pop.appendChild(h);
+  const h=document.createElement('div'); h.className='pophead'; h.textContent='Used colours'; pop.appendChild(h);
   const grid=document.createElement('div'); grid.className='popgrid';
   const cols=sceneColors();
   if(!cols.length){ const e=document.createElement('div'); e.style.cssText='color:var(--ink-dim);font-size:12px'; e.textContent='No colours yet.'; grid.appendChild(e); }
   for(const c of cols){ const s=document.createElement('div'); s.className='sw'+(c===selColor?' active':''); s.style.background=hex(c); s.title=hex(c);
     s.onclick=()=>{ selColor=c; buildSwatches(); closePalette(); }; grid.appendChild(s); }
   pop.appendChild(grid);
-  const row=document.createElement('div'); row.className='poppick';
-  const inp=document.createElement('input'); inp.type='color'; inp.value=hex(selColor);
-  inp.oninput=()=>{ selColor=parseInt(inp.value.slice(1),16); buildSwatches(); };
-  const lbl=document.createElement('span'); lbl.textContent='Pick any colour';
-  row.append(inp,lbl); pop.appendChild(row);
   back.appendChild(pop); document.body.appendChild(back);
 }
 function closePalette(){ const b=document.getElementById('palback'); if(b){ b.remove(); return true; } return false; }
@@ -948,38 +975,50 @@ function thumbFor(node){
   }
   thumbCache.set(node.id,{sig,cv}); return cv;
 }
+// tree-row click disambiguation: single (delayed) = enter / rename-if-entered, double = fit
+let _clk={node:null,timer:null};
+function rowClick(node){
+  if(_clk.timer && _clk.node===node){ clearTimeout(_clk.timer); _clk={node:null,timer:null}; fitNode(node); return; }
+  if(_clk.timer) clearTimeout(_clk.timer);
+  _clk={node, timer:setTimeout(()=>{ const n=_clk.node; _clk={node:null,timer:null};
+    if(isEntered(n)) renameNode(n); else enterNode(n); },260)};
+}
 function buildTree(){
   const w=document.getElementById('tree'); w.innerHTML='';
   const row=(node,depth)=>{
+    const isRoot=node===root;
     const r=document.createElement('div');
-    const isSel=context.children.includes(node)&&selection.has(node.id);
+    const isSel=!isRoot&&context.children.includes(node)&&selection.has(node.id);
     const v=node.vis||'visible';
-    r.className='trow'+(isSel?' sel':'')+(node===context?' ctx':'')+(node===editObject?' edit':'')+(v!=='visible'?' dim':'');
+    r.className='trow'+(isRoot?' root':'')+(isSel?' sel':'')+(node===context&&!editObject?' ctx':'')+(node===editObject?' edit':'')+(!isRoot&&v!=='visible'?' dim':'');
     r.style.paddingLeft=(4+depth*13)+'px';
     const tw=document.createElement('span'); tw.className='tw';
-    if(node.type==='scene'&&node.children.length){ tw.textContent=collapsed.has(node.id)?'▸':'▾';
+    if(!isRoot && node.type==='scene'&&node.children.length){ tw.textContent=collapsed.has(node.id)?'▸':'▾';
       tw.onclick=e=>{e.stopPropagation(); collapsed.has(node.id)?collapsed.delete(node.id):collapsed.add(node.id); buildTree();}; }
     const th=thumbFor(node); th.className='thumb';
     const nm=document.createElement('span'); nm.className='nm';
-    if(node.name) nm.textContent=node.name; else { nm.innerHTML='<span class="ph">'+(node.type==='scene'?'group':'object')+'</span>'; }
-    nm.ondblclick=e=>{e.stopPropagation(); renameNode(node);};
-    const VI={visible:'◉',transparent:'◐',invisible:'⦰'};
-    const vb=document.createElement('button'); vb.className='tb'+(v==='visible'?' on':''); vb.textContent=VI[v];
-    vb.title='visible → transparent → invisible'; vb.onclick=e=>{e.stopPropagation(); cycleVis(node);};
-    r.append(tw,th,nm,vb);
-    r.onclick=()=>selectNode(node);
-    r.ondblclick=()=>enterNode(node);
-    r.oncontextmenu=e=>{ e.preventDefault(); e.stopPropagation(); selectNode(node); showItemMenu(node,e.clientX,e.clientY); };
-    // drag & drop reparenting (VSCode-style)
-    r.draggable=true;
-    r.addEventListener('dragstart',ev=>{ ev.stopPropagation(); dragId=node.id; if(ev.dataTransfer){ ev.dataTransfer.effectAllowed='move'; try{ev.dataTransfer.setData('text/plain',node.id);}catch(_){ } } });
+    if(isRoot) nm.textContent=node.name||'Project';
+    else if(node.name) nm.textContent=node.name;
+    else nm.innerHTML='<span class="ph">'+(node.type==='scene'?'group':'object')+'</span>';
+    r.append(tw,th,nm);
+    if(!isRoot){
+      const VI={visible:'◉',transparent:'◐',invisible:'⦰'};
+      const vb=document.createElement('button'); vb.className='tb'+(v==='visible'?' on':''); vb.textContent=VI[v];
+      vb.title='visible → transparent → invisible'; vb.onclick=e=>{e.stopPropagation(); cycleVis(node);};
+      r.append(vb);
+    }
+    r.onclick=()=>rowClick(node);
+    r.oncontextmenu=e=>{ e.preventDefault(); e.stopPropagation(); if(!isRoot) selectNode(node); showItemMenu(node,e.clientX,e.clientY); };
+    // drag & drop reparenting (VSCode-style); the root can't be dragged but accepts drops
+    r.draggable=!isRoot;
+    if(!isRoot) r.addEventListener('dragstart',ev=>{ ev.stopPropagation(); dragId=node.id; if(ev.dataTransfer){ ev.dataTransfer.effectAllowed='move'; try{ev.dataTransfer.setData('text/plain',node.id);}catch(_){ } } });
     r.addEventListener('dragend',clearDropInd);
     r.addEventListener('dragover',ev=>{ ev.preventDefault(); ev.stopPropagation(); dropOver(ev,node,r); });
     r.addEventListener('drop',ev=>{ ev.preventDefault(); ev.stopPropagation(); doDrop(); });
     w.appendChild(r);
-    if(node.type==='scene'&&!collapsed.has(node.id)) for(const ch of node.children) row(ch,depth+1);
+    if(node.type==='scene'&&(isRoot||!collapsed.has(node.id))) for(const ch of node.children) row(ch,depth+1);
   };
-  for(const ch of root.children) row(ch,0);
+  row(root,0);
 }
 
 // ---- tree right-click context menu --------------------------
@@ -992,9 +1031,10 @@ function showItemMenu(node,x,y){
   const add=(label,fn,cls)=>{ const it=document.createElement('div'); it.className='ctxitem'+(cls?' '+cls:'');
     it.textContent=label; it.onclick=()=>{ closeItemMenu(); fn(); }; m.appendChild(it); };
   const div=()=>{ const d=document.createElement('div'); d.className='ctxdiv'; m.appendChild(d); };
-  add('Duplicate',()=>duplicateNode(node));
-  add('Delete',()=>deleteNode(node),'danger');
+  add('Rename',()=>renameNode(node));
+  add('Fit',()=>fitNode(node));
   div();
+  if(node!==root){ add('Duplicate',()=>duplicateNode(node)); add('Delete',()=>deleteNode(node),'danger'); div(); }
   if(node.type==='scene'){ add('New object',()=>addObjectIn(node)); add('New group',()=>addGroupIn(node)); }
   else add('New group',()=>wrapNodeAction(node));
   document.body.appendChild(m); ctxMenuEl=m;
@@ -1011,6 +1051,7 @@ function dropOver(ev,node,row){
   const dn=dragId&&findById(dragId);
   if(!dn || dn===node || isDescendant(dn,node)){ clearDropInd(); return; }
   clearDropInd(); dropRow=row;
+  if(node===root){ dropInfo={parent:root,index:root.children.length}; row.classList.add('drop-into'); return; }  // drop onto project root
   const rect=row.getBoundingClientRect(), y=ev.clientY-rect.top, h=rect.height;
   const par=parentOf(node), idx=par?par.children.indexOf(node):0;
   if(y>h*0.28 && y<h*0.72){
@@ -1037,13 +1078,6 @@ function doDrop(){
   treeEl.addEventListener('dragover',ev=>{ if(ev.target===treeEl && dragId){ ev.preventDefault(); clearDropInd(); dropInfo={parent:root,index:root.children.length}; } });
   treeEl.addEventListener('drop',ev=>{ if(ev.target===treeEl){ ev.preventDefault(); doDrop(); } });
 }
-
-// ---- view / toggle wiring -----------------------------------
-document.getElementById('viewIso').onclick=()=>setView('iso');
-document.getElementById('viewBird').onclick=()=>setView('bird');
-document.getElementById('viewFree').onclick=()=>setView('free');
-document.getElementById('fit').onclick=frameView;
-document.getElementById('up').onclick=escapeUp;
 
 window.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT') return;
