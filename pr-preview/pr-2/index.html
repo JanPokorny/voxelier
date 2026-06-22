@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#14161b" />
+<title>Voxelier</title>
+<style>
+  :root{
+    --bg:#14161b; --panel:#1c1f27; --panel-2:#232733; --line:#2e3340;
+    --ink:#e7e3d8; --ink-dim:#9aa0ad; --accent:#a7c4bc; --accent-ink:#14161b; --danger:#b5838d;
+    --radius:9px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:13px;overflow:hidden;-webkit-user-select:none;user-select:none}
+  #app{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr auto;grid-template-columns:64px 1fr 200px;
+       grid-template-areas:"top top top" "left stage right" "left status status"}
+
+  #topbar{grid-area:top;display:flex;align-items:center;gap:12px;padding:8px 12px;background:var(--panel);
+          border-bottom:1px solid var(--line);z-index:5}
+  .brand{font-weight:700;letter-spacing:.4px}
+  .group{display:flex;align-items:center;gap:3px;padding:3px;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--radius)}
+  button{font:inherit;color:var(--ink);background:transparent;border:1px solid transparent;border-radius:6px;
+          padding:6px 10px;cursor:pointer;line-height:1;white-space:nowrap}
+  button:hover{background:#2b3140}
+  button:disabled{opacity:.35;cursor:default;background:transparent}
+  button.active{background:var(--accent);color:var(--accent-ink);font-weight:600}
+  .sep{flex:1}
+  #crumb{color:var(--ink-dim);font-size:12px;display:flex;align-items:center;gap:6px;min-width:0}
+  #crumb b{color:var(--ink);font-weight:600}
+  #crumb .c{padding:2px 7px;border-radius:6px;background:var(--panel-2);border:1px solid var(--line)}
+  #crumb .c.cur{color:var(--accent);border-color:var(--accent)}
+
+  #tools{grid-area:left;background:var(--panel);border-right:1px solid var(--line);
+         display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px;z-index:4}
+  .tool{width:50px;min-height:48px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line);
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+        font-size:9.5px;color:var(--ink-dim);cursor:pointer;padding:5px 2px;text-align:center}
+  .tool .ic{font-size:17px;line-height:1}
+  .tool:hover{color:var(--ink);border-color:#3a4252}
+  .tool.active{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  .tool:disabled,.tool.disabled{opacity:.3;pointer-events:none}
+  .tdiv{height:1px;align-self:stretch;background:var(--line);margin:3px 4px}
+
+  #stage{grid-area:stage;position:relative;overflow:hidden}
+  #c{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+  #hint{position:absolute;left:12px;top:10px;color:var(--ink-dim);font-size:11px;background:rgba(20,22,27,.55);
+        padding:6px 9px;border-radius:7px;border:1px solid var(--line);pointer-events:none;max-width:60%}
+
+  #side{grid-area:right;background:var(--panel);border-left:1px solid var(--line);padding:12px;overflow:auto}
+  h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--ink-dim);font-weight:600}
+  #tree{display:flex;flex-direction:column;gap:1px;max-height:46vh;overflow:auto}
+  .trow{display:flex;align-items:center;gap:4px;padding:2px 4px;border-radius:6px;cursor:pointer;border:1px solid transparent}
+  .trow:hover{background:#252a35}
+  .trow.sel{background:#2a3330;border-color:var(--accent)}
+  .trow.ctx{border-color:#3a4252}
+  .trow.edit{border-color:var(--accent);background:#26302e}
+  .trow .tw{flex:none;width:13px;text-align:center;color:var(--ink-dim);font-size:9px}
+  .trow .thumb{flex:none;width:26px;height:26px;border-radius:4px;background:#0f1115}
+  .trow .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+  .trow.dim .nm{color:var(--ink-dim)}
+  .trow .ph{color:var(--ink-dim);font-style:italic}
+  .trow .tb{flex:none;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border:1px solid transparent;border-radius:4px;background:transparent;padding:0;font-size:12px;color:var(--ink-dim)}
+  .trow .tb:hover{color:var(--ink);border-color:var(--line)}
+  .trow .tb.on{color:var(--accent)}
+  .swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  .sw{aspect-ratio:1;border-radius:6px;cursor:pointer;border:2px solid transparent;outline:1px solid rgba(0,0,0,.35);outline-offset:-1px}
+  .sw.active{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+
+  #status{grid-area:status;background:var(--panel);border-top:1px solid var(--line);
+          padding:5px 12px;color:var(--ink-dim);font-size:11px;display:flex;gap:16px;align-items:center}
+  kbd{background:var(--panel-2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:1px 5px;font:inherit;font-size:10px;color:var(--ink)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <span class="brand">VOXELIER</span>
+    <span style="color:var(--accent);font-size:10px;letter-spacing:1px;border:1px solid var(--line);border-radius:5px;padding:2px 6px">PR PREVIEW</span>
+    <button id="up" title="Go up (Esc)">↑ Up</button>
+    <div id="crumb"></div>
+    <div class="sep"></div>
+    <div class="group">
+      <button id="viewIso" class="active" title="Isometric (1)">◈ Iso</button>
+      <button id="viewBird" title="Birdseye (2)">▦ Bird</button>
+      <button id="rotL" title="Rotate left (Q)">⟲</button>
+      <button id="rotR" title="Rotate right (E)">⟳</button>
+      <button id="fit" title="Fit (F)">⤢ Fit</button>
+    </div>
+    <button id="gridtoggle" title="Grid (G)">▥ Grid</button>
+  </div>
+
+  <div id="tools"></div>
+
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="hint"></div>
+  </div>
+
+  <div id="side">
+    <h3>Scene</h3>
+    <div id="tree"></div>
+    <h3 style="margin-top:14px">Palette</h3>
+    <div class="swatches" id="swatches"></div>
+  </div>
+
+  <div id="status"><span id="statHint"></span><span class="sep"></span>
+    <span><kbd>LMB</kbd> select/draw · <kbd>RMB</kbd> pan · <kbd>wheel</kbd> zoom · <kbd>dbl-click</kbd> enter</span>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ============================================================
+   VOXELIER — a lo-fi voxel scene editor (1 voxel = 1 cm)
+   Model (à la Inkscape SVG):
+     - object : a set of voxels; a singular unit (copy = independent dup)
+     - scene  : a group of objects and sub-scenes
+   The edit "mode" is implicit in what you've entered:
+     - inside a scene  -> arrange children (select / move / group / ...)
+     - inside an object -> paint voxels
+   ============================================================ */
+
+// 16 muted colours
+const PALETTE=['#6b705c','#a5a58d','#b7b7a4','#dcd6c4','#cb997e','#ddbea9','#f0e6d2','#8d6e63',
+               '#d4a373','#9c6644','#b5838d','#6d6875','#7d8597','#5c677d','#6a994e','#a7c4bc'];
+
+// ---- helpers ------------------------------------------------
+const key=(x,y,z)=>x+','+y+','+z;
+const parseKey=k=>{const a=k.split(',');return {x:+a[0],y:+a[1],z:+a[2]};};
+const addv=(a,b)=>({x:a.x+b.x,y:a.y+b.y,z:a.z+b.z});
+function rotY(v,r){ let{x,y,z}=v; r=((r%4)+4)%4; for(let i=0;i<r;i++){const nx=-z,nz=x;x=nx;z=nz;} return {x,y,z}; }
+let _uid=1; const uid=()=>'n'+(_uid++);
+
+// ---- data model ---------------------------------------------
+// A single root scene. Every node (object or sub-scene) may have a name and
+// can be hidden or deemphasised (both inherited by descendants).
+let root;                          // root scene
+let path;                          // array of scenes root..context
+let context;                       // current scene (= path[last])
+let editObject=null;               // object being voxel-edited, or null
+let selection=new Set();           // selected child ids within context
+let clipboard=[];                  // detached node clones
+let tool='add';                    // voxel tool when editing an object
+let selColor=8;
+let collapsed=new Set();           // tree: ids of collapsed sub-scenes
+
+const newObject=()=>({type:'object',id:uid(),name:'',pos:{x:0,y:0,z:0},rot:0,hidden:false,deemph:false,voxels:new Map()});
+const newScene =()=>({type:'scene', id:uid(),name:'',pos:{x:0,y:0,z:0},rot:0,hidden:false,deemph:false,children:[]});
+function clone(n){
+  const base={id:uid(),name:n.name,pos:{...n.pos},rot:n.rot,hidden:n.hidden,deemph:n.deemph};
+  return n.type==='object'
+    ? {type:'object',...base,voxels:new Map(n.voxels)}
+    : {type:'scene', ...base,children:n.children.map(clone)};
+}
+const childById=id=>context.children.find(c=>c.id===id);
+
+// ---- three.js ----------------------------------------------
+const canvas=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const scene=new THREE.Scene(); scene.background=new THREE.Color('#0f1115');
+
+const ISO_ELEV=Math.atan(1/Math.SQRT2);
+const cam={azim:Math.PI/4,elev:ISO_ELEV,zoom:80,target:new THREE.Vector3(30,15,23)};
+const goal={azim:cam.azim,elev:cam.elev,zoom:cam.zoom,target:cam.target.clone()};
+const CAM_DIST=900;
+const camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,4000);
+
+// Render layers: 0 = shadow casters (shadow camera sees this); 1 = emphasised
+// (drawn last, on top); 2 = deemphasised (drawn first, can never cover layer 1).
+const L_EMPH=1, L_DEEMPH=2;
+
+scene.add(withLayers(new THREE.AmbientLight(0xffffff,0.62)));
+const dir=new THREE.DirectionalLight(0xffffff,0.78);
+dir.castShadow=true; dir.shadow.mapSize.set(2048,2048); dir.shadow.normalBias=0.6; dir.shadow.bias=-0.0002;
+{const s=dir.shadow.camera; s.left=-70;s.right=70;s.top=70;s.bottom=-70;s.near=1;s.far=400;}
+scene.add(withLayers(dir)); scene.add(dir.target);
+const dir2=new THREE.DirectionalLight(0xffffff,0.16); dir2.position.set(-6,5,-7); scene.add(withLayers(dir2));
+function withLayers(o){ o.layers.enableAll(); return o; } // lights must be collected in both passes
+
+const boxGeo=new THREE.BoxGeometry(1,1,1);
+const matSolid=new THREE.MeshLambertMaterial();
+const matDeemph=new THREE.MeshLambertMaterial({transparent:true,opacity:0.4});  // deemphasised: semi-opaque
+const _col=new THREE.Color(), _m=new THREE.Matrix4(), _up=new THREE.Vector3(), _upN=new THREE.Vector3();
+const bg=new THREE.Color('#0f1115');
+const dimColor=PALETTE.map(h=>new THREE.Color(h).lerp(bg,0.62));
+const palColor=PALETTE.map(h=>new THREE.Color(h));
+
+const grid=new THREE.GridHelper(400,400,0x2e3340,0x22252e); grid.layers.set(L_DEEMPH); scene.add(grid);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(4000,4000),new THREE.ShadowMaterial({opacity:0.26}));
+ground.rotation.x=-Math.PI/2; ground.position.y=0.002; ground.receiveShadow=true; ground.layers.set(L_DEEMPH); scene.add(ground);
+
+// overlay group for selection / hover outlines (always on top)
+const overlay=new THREE.Group(); scene.add(overlay);
+const hoverVox=new THREE.LineSegments(new THREE.EdgesGeometry(boxGeo),new THREE.LineBasicMaterial({color:0xa7c4bc,depthTest:false}));
+hoverVox.visible=false; hoverVox.layers.set(L_EMPH); hoverVox.renderOrder=999; scene.add(hoverVox);
+
+// dynamic meshes
+let meshes=[];                 // all instanced meshes added this rebuild
+let pickMeshes=[];             // meshes raycast for picking
+let childMeshes={};            // childId -> [meshes] (scene mode; emph + deemph parts)
+let childBox={};               // childId -> {min,max}
+let editMesh=null;             // edit object's mesh
+let editXform={off:{x:0,y:0,z:0},rot:0};
+
+function disposeMeshes(){ for(const m of meshes){scene.remove(m); m.dispose?.();} meshes=[]; }
+// emph pieces are opaque on the top layer; deemph pieces are semi-opaque on the
+// lower layer (so they recede AND can never be drawn in front of the rest).
+function addMesh(arr,colorOf,{emph=true,pick=false,childId=null}={}){
+  if(!arr.length) return null;
+  const m=new THREE.InstancedMesh(boxGeo, emph?matSolid:matDeemph, arr.length);
+  for(let i=0;i<arr.length;i++){ const d=arr[i];
+    _m.makeTranslation(d.x+0.5,d.y+0.5,d.z+0.5); m.setMatrixAt(i,_m); m.setColorAt(i,colorOf(d.c)); }
+  m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
+  m.castShadow=m.receiveShadow=true;
+  m.layers.set(emph?L_EMPH:L_DEEMPH); m.layers.enable(0); // always a shadow caster
+  scene.add(m); meshes.push(m);
+  if(pick){ m.userData.childId=childId; m.userData.emph=emph; pickMeshes.push(m); (childMeshes[childId]||(childMeshes[childId]=[])).push(m); }
+  return m;
+}
+
+// transform from root down to current context
+function contextXform(){
+  let off={x:0,y:0,z:0},rot=0;
+  for(let i=1;i<path.length;i++){ const n=path[i]; off=addv(off,rotY(n.pos,rot)); rot=(rot+n.rot)&3; }
+  return {off,rot};
+}
+// world AABB of a node given accumulated transform
+function nodeBox(node,off,rot,box){
+  if(node.type==='object'){
+    for(const [k] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off);
+      box.min.x=Math.min(box.min.x,w.x); box.min.y=Math.min(box.min.y,w.y); box.min.z=Math.min(box.min.z,w.z);
+      box.max.x=Math.max(box.max.x,w.x+1); box.max.y=Math.max(box.max.y,w.y+1); box.max.z=Math.max(box.max.z,w.z+1); }
+  }else for(const ch of node.children){ nodeBox(ch,addv(off,rotY(ch.pos,rot)),(rot+ch.rot)&3,box); }
+  return box;
+}
+const emptyBox=()=>({min:{x:1e9,y:1e9,z:1e9},max:{x:-1e9,y:-1e9,z:-1e9}});
+
+// gather every world voxel (skipping the object being edited).
+//   dm    = under a deemphasised node -> semi-opaque, lower render layer
+//   owner = id of the current context's direct child this voxel belongs to
+// Hidden subtrees are skipped entirely.
+function walk(node,off,rot,owner,dm,out){
+  if(node===editObject || node.hidden) return;
+  const d=dm||!!node.deemph;
+  if(node.type==='object'){
+    for(const [k,c] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off); out.push({x:w.x,y:w.y,z:w.z,c,owner,dm:d}); }
+  }else for(const ch of node.children){
+    walk(ch, addv(off,rotY(ch.pos,rot)), (rot+ch.rot)&3, (node===context)?ch.id:owner, d, out);
+  }
+}
+
+function editVoxels(){ // edited object's voxels in world space + parallel local list
+  const evox=[],local=[];
+  for(const [k,c] of editObject.voxels){ const lv=parseKey(k); const w=addv(rotY(lv,editXform.rot),editXform.off);
+    evox.push({x:w.x,y:w.y,z:w.z,c}); local.push(lv); }
+  return {evox,local};
+}
+
+function rebuild(){
+  disposeMeshes(); pickMeshes=[]; childMeshes={}; childBox={}; editMesh=null;
+  const all=[]; walk(root,{x:0,y:0,z:0},0,null,false,all);
+
+  if(editObject){
+    const x=contextXform();
+    editXform={off:addv(x.off,rotY(editObject.pos,x.rot)), rot:(x.rot+editObject.rot)&3};
+    const de=[],dd=[]; for(const v of all){ (v.dm?dd:de).push(v); }   // dim the rest
+    addMesh(de,c=>dimColor[c],{emph:true});
+    addMesh(dd,c=>dimColor[c],{emph:false});
+    const {evox,local}=editVoxels();                                  // edited object: always emphasised
+    editMesh=addMesh(evox,c=>palColor[c],{emph:true});
+    if(editMesh){ editMesh.userData.local=local; pickMeshes=[editMesh]; }
+  }else{
+    // owner -> current context's children (full colour, pickable);
+    // otherwise dimmed (an ancestor/sibling you've descended past).
+    const gE={},gD={},ctxE=[],ctxD=[];
+    for(const v of all){
+      if(v.owner){ (v.dm?(gD[v.owner]||(gD[v.owner]=[])):(gE[v.owner]||(gE[v.owner]=[]))).push(v);
+        const b=childBox[v.owner]||(childBox[v.owner]=emptyBox());
+        b.min.x=Math.min(b.min.x,v.x);b.min.y=Math.min(b.min.y,v.y);b.min.z=Math.min(b.min.z,v.z);
+        b.max.x=Math.max(b.max.x,v.x+1);b.max.y=Math.max(b.max.y,v.y+1);b.max.z=Math.max(b.max.z,v.z+1);
+      }else (v.dm?ctxD:ctxE).push(v);
+    }
+    addMesh(ctxE,c=>dimColor[c],{emph:true});  addMesh(ctxD,c=>dimColor[c],{emph:false});
+    for(const id of new Set([...Object.keys(gE),...Object.keys(gD)])){
+      if(gE[id]) addMesh(gE[id],c=>palColor[c],{emph:true,  pick:true,childId:id});
+      if(gD[id]) addMesh(gD[id],c=>palColor[c],{emph:false, pick:true,childId:id});
+    }
+  }
+  refreshOverlay();
+}
+function rebuildEdit(){ // fast path while painting (the dimmed rest is unchanged)
+  if(editMesh){ scene.remove(editMesh); editMesh.dispose?.(); const i=meshes.indexOf(editMesh); if(i>=0)meshes.splice(i,1); }
+  const {evox,local}=editVoxels();
+  editMesh=addMesh(evox,c=>palColor[c],{emph:true});
+  if(editMesh){ editMesh.userData.local=local; }
+  pickMeshes=editMesh?[editMesh]:[];
+}
+
+// ---- overlay outlines ---------------------------------------
+function boxLines(min,max,color){
+  const g=new THREE.BoxGeometry(max.x-min.x,max.y-min.y,max.z-min.z);
+  const e=new THREE.LineSegments(new THREE.EdgesGeometry(g),new THREE.LineBasicMaterial({color,depthTest:false}));
+  e.position.set((min.x+max.x)/2,(min.y+max.y)/2,(min.z+max.z)/2); e.layers.set(L_EMPH); e.renderOrder=999; g.dispose(); return e;
+}
+function refreshOverlay(){
+  for(const c of overlay.children) c.geometry.dispose?.();
+  overlay.clear(); overlay.position.set(0,0,0);
+  if(editObject) return;
+  for(const id of selection){ const b=childBox[id]; if(b) overlay.add(boxLines(b.min,b.max,0xf0e6d2)); }
+}
+
+// ============================================================
+//  PICKING
+// ============================================================
+const raycaster=new THREE.Raycaster();
+const ndc=new THREE.Vector2();
+const _hit=new THREE.Vector3();
+function setNdc(cx,cy){ const r=canvas.getBoundingClientRect();
+  ndc.x=((cx-r.left)/r.width)*2-1; ndc.y=-((cy-r.top)/r.height)*2+1; }
+function pickChild(){ // prefer emphasised hits (they're what's drawn on top)
+  raycaster.setFromCamera(ndc,camera);
+  let be=null,bde=null,bd=Infinity,bdd=Infinity;
+  for(const m of pickMeshes){ const h=raycaster.intersectObject(m,false); if(!h.length) continue;
+    if(m.userData.emph){ if(h[0].distance<bd){bd=h[0].distance;be=m.userData.childId;} }
+    else if(h[0].distance<bdd){bdd=h[0].distance;bde=m.userData.childId;} }
+  return be!=null?be:bde;
+}
+function groundCell(yWorld){
+  raycaster.setFromCamera(ndc,camera);
+  if(raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,1,0),-yWorld),_hit))
+    return {x:Math.floor(_hit.x),y:yWorld,z:Math.floor(_hit.z)};
+  return null;
+}
+function pickVoxel(){ // -> {cell, addCell} in object-local space, or null
+  if(!editMesh) return null;
+  raycaster.setFromCamera(ndc,camera);
+  const h=raycaster.intersectObject(editMesh,false); if(!h.length) return null;
+  const lv=editMesh.userData.local[h[0].instanceId];
+  const n=h[0].face?h[0].face.normal:new THREE.Vector3(0,1,0);
+  const ln=rotY({x:Math.round(n.x),y:Math.round(n.y),z:Math.round(n.z)},(4-editXform.rot)&3);
+  return {cell:lv, addCell:{x:lv.x+ln.x,y:lv.y+ln.y,z:lv.z+ln.z}};
+}
+function voxelTarget(){ // local cell for the active voxel tool
+  const t=pickVoxel();
+  if(tool==='add'){ if(t) return t.addCell;
+    const g=groundCell(editXform.off.y); if(!g) return null;
+    const l=rotY({x:g.x-editXform.off.x,y:0,z:g.z-editXform.off.z},(4-editXform.rot)&3);
+    return {x:Math.round(l.x),y:0,z:Math.round(l.z)}; }
+  return t?t.cell:null;
+}
+
+// ============================================================
+//  INTERACTION (desktop mouse)
+// ============================================================
+let panning=false,panLast=null,painting=false,lastVox=null,drag=null;
+
+canvas.addEventListener('pointerdown',e=>{
+  canvas.setPointerCapture(e.pointerId); setNdc(e.clientX,e.clientY);
+  if(e.button===1||e.button===2){ panning=true; panLast={x:e.clientX,y:e.clientY}; return; }
+  if(e.button!==0) return;
+
+  if(editObject){ painting=true; lastVox=null; applyVoxel(); return; }
+
+  // scene: select / begin move
+  const id=pickChild();
+  if(id){
+    if(e.shiftKey){ selection.has(id)?selection.delete(id):selection.add(id); }
+    else if(!selection.has(id)){ selection=new Set([id]); }
+    const start=groundCell(0);
+    drag={start, moved:false, base:{}};
+    for(const s of selection){ const c=childById(s); if(c) drag.base[s]={...c.pos}; }
+    refreshOverlay(); updateChrome();
+  }else{
+    if(!e.shiftKey){ selection.clear(); refreshOverlay(); updateChrome(); }
+    drag=null;
+  }
+});
+
+canvas.addEventListener('pointermove',e=>{
+  setNdc(e.clientX,e.clientY);
+  if(panning&&panLast){ const dx=e.clientX-panLast.x,dy=e.clientY-panLast.y; panLast={x:e.clientX,y:e.clientY}; panCamera(dx,dy); return; }
+  if(editObject){ if(painting) applyVoxel(); else updateVoxHover(); return; }
+  if(drag&&drag.start){
+    const g=groundCell(0); if(!g) return;
+    const dW={x:g.x-drag.start.x,z:g.z-drag.start.z};
+    if(dW.x||dW.z) drag.moved=true;
+    for(const id of selection){ for(const m of (childMeshes[id]||[])) m.position.set(dW.x,0,dW.z); }
+    overlay.position.set(dW.x,0,dW.z);
+  }
+});
+
+canvas.addEventListener('pointerup',e=>{
+  try{canvas.releasePointerCapture(e.pointerId);}catch(_){}
+  panning=false; panLast=null;
+  if(editObject){ if(painting){painting=false; save();} return; }
+  if(drag&&drag.moved){
+    const x=contextXform(); const inv=(4-x.rot)&3;
+    const m0=(childMeshes[[...selection][0]]||[])[0];
+    const dW=m0?{x:Math.round(m0.position.x),z:Math.round(m0.position.z)}:{x:0,z:0};
+    const dL=rotY({x:dW.x,y:0,z:dW.z},inv);
+    for(const id of selection){ const c=childById(id); if(c){ c.pos.x+=dL.x; c.pos.z+=dL.z; } }
+    overlay.position.set(0,0,0); rebuild(); save();
+  }
+  drag=null;
+});
+canvas.addEventListener('pointerleave',()=>{ hoverVox.visible=false; });
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+canvas.addEventListener('wheel',e=>{ e.preventDefault();
+  goal.zoom*=(e.deltaY>0?1/0.9:0.9); goal.zoom=Math.max(6,Math.min(400,goal.zoom)); },{passive:false});
+
+canvas.addEventListener('dblclick',e=>{
+  if(editObject) return;
+  setNdc(e.clientX,e.clientY); const id=pickChild(); if(!id) return;
+  const ch=childById(id);
+  if(ch.type==='scene') descend(ch); else enterObject(ch);
+});
+
+function applyVoxel(){
+  const c=voxelTarget(); if(!c) return;
+  const k=key(c.x,c.y,c.z);
+  if(tool==='add'){ if(k===lastVox) return; editObject.voxels.set(k,selColor); }
+  else if(tool==='erase'){ editObject.voxels.delete(k); }
+  else if(tool==='paint'){ if(editObject.voxels.has(k)) editObject.voxels.set(k,selColor); }
+  lastVox=k; rebuildEdit(); updateVoxHover();
+}
+function updateVoxHover(){
+  const t=pickVoxel();
+  let cell=null;
+  if(tool==='add'){ cell = t?t.addCell:voxelTarget(); } else cell = t?t.cell:null;
+  if(!cell){ hoverVox.visible=false; return; }
+  const w=addv(rotY(cell,editXform.rot),editXform.off);
+  hoverVox.visible=true;
+  hoverVox.material.color.set(tool==='erase'?0xb5838d:0xa7c4bc);
+  hoverVox.position.set(w.x+0.5,w.y+0.5,w.z+0.5);
+}
+
+// ============================================================
+//  NAVIGATION / EDITS
+// ============================================================
+function descend(s){ path.push(s); context=s; selection.clear(); editObject=null; rebuild(); updateChrome(); frameView(); }
+function ascend(){ if(path.length>1){ const c=path.pop(); context=path[path.length-1]; selection=new Set([c.id]); editObject=null; rebuild(); updateChrome(); } }
+function enterObject(o){ editObject=o; selection.clear(); tool='add'; rebuild(); updateChrome(); frameView(); }
+function exitObject(){ const o=editObject; editObject=null; selection=new Set([o.id]); rebuild(); updateChrome(); }
+function escapeUp(){ if(editObject) exitObject(); else ascend(); }
+
+// ---- tree navigation ----------------------------------------
+function findPath(target,node=root,acc=[]){
+  const a=[...acc,node];
+  if(node===target) return a;
+  if(node.type==='scene') for(const ch of node.children){ const r=findPath(target,ch,a); if(r) return r; }
+  return null;
+}
+function selectNode(node){                         // select a node from the tree (enters its parent context)
+  const p=findPath(node); if(!p) return;
+  path=p.slice(0,-1); context=path[path.length-1]; selection=new Set([node.id]); editObject=null;
+  rebuild(); updateChrome();
+}
+function enterNode(node){                           // double-click in tree/canvas: descend or voxel-edit
+  const p=findPath(node); if(!p) return;
+  if(node.type==='scene'){ path=p; context=node; selection.clear(); editObject=null; tool='add'; }
+  else { path=p.slice(0,-1); context=path[path.length-1]; editObject=node; selection.clear(); tool='add'; }
+  rebuild(); updateChrome(); frameView();
+}
+function toggleHidden(node){ node.hidden=!node.hidden; rebuild(); updateChrome(); save(); }
+function toggleDeemph(node){ node.deemph=!node.deemph; rebuild(); updateChrome(); save(); }
+function renameNode(node){ const n=prompt('Name',node.name||''); if(n!=null){ node.name=n.trim(); updateChrome(); save(); } }
+
+function createObject(){
+  const o=newObject(); o.pos={x:Math.round(goal.target.x),y:0,z:Math.round(goal.target.z)};
+  context.children.push(o); enterObject(o); save();
+}
+function deleteSelection(){
+  if(!selection.size) return;
+  context.children=context.children.filter(c=>!selection.has(c.id));
+  selection.clear(); rebuild(); updateChrome(); save();
+}
+function duplicateSelection(){
+  const dups=[...selection].map(id=>childById(id)).filter(Boolean).map(n=>{const d=clone(n); d.pos={x:n.pos.x+5,y:n.pos.y,z:n.pos.z+5}; return d;});
+  if(!dups.length) return;
+  context.children.push(...dups); selection=new Set(dups.map(d=>d.id)); rebuild(); updateChrome(); save();
+}
+function copySelection(){ clipboard=[...selection].map(id=>childById(id)).filter(Boolean).map(clone); }
+function cutSelection(){ copySelection(); deleteSelection(); }
+function pasteClipboard(){
+  if(!clipboard.length) return;
+  const ns=clipboard.map(n=>{const d=clone(n); d.pos={x:n.pos.x+5,y:n.pos.y,z:n.pos.z+5}; return d;});
+  context.children.push(...ns); selection=new Set(ns.map(d=>d.id)); rebuild(); updateChrome(); save();
+}
+function groupSelection(){
+  if(selection.size<1) return;
+  const members=context.children.filter(c=>selection.has(c.id));
+  context.children=context.children.filter(c=>!selection.has(c.id));
+  const g=newScene(); g.children=members; context.children.push(g);
+  selection=new Set([g.id]); rebuild(); updateChrome(); save();
+}
+function ungroupSelection(){
+  const promoted=[];
+  for(const id of [...selection]){ const n=childById(id); if(!n||n.type!=='scene') continue;
+    for(const ch of n.children){ ch.pos=addv(n.pos,rotY(ch.pos,n.rot)); ch.rot=(ch.rot+n.rot)&3; context.children.push(ch); promoted.push(ch.id); }
+    context.children=context.children.filter(c=>c.id!==id);
+  }
+  if(promoted.length){ selection=new Set(promoted); rebuild(); updateChrome(); save(); }
+}
+function rotateSelection(){
+  const x=contextXform();
+  for(const id of selection){ const ch=childById(id); if(!ch) continue;
+    const before=nodeBox(ch, addv(x.off,rotY(ch.pos,x.rot)), (x.rot+ch.rot)&3, emptyBox());
+    ch.rot=(ch.rot+1)&3;
+    const after =nodeBox(ch, addv(x.off,rotY(ch.pos,x.rot)), (x.rot+ch.rot)&3, emptyBox());
+    const dW={x:(before.min.x+before.max.x)/2-(after.min.x+after.max.x)/2, z:(before.min.z+before.max.z)/2-(after.min.z+after.max.z)/2};
+    const dL=rotY({x:Math.round(dW.x),y:0,z:Math.round(dW.z)},(4-x.rot)&3);
+    ch.pos.x+=dL.x; ch.pos.z+=dL.z;
+  }
+  if(selection.size){ rebuild(); save(); }
+}
+function nudgeY(d){ for(const id of selection){ const c=childById(id); if(c) c.pos.y+=d; } if(selection.size){rebuild();save();} }
+
+// ============================================================
+//  CAMERA
+// ============================================================
+let view='iso', showGrid=true, azimIndex=0;
+function panCamera(dx,dy){
+  const r=canvas.getBoundingClientRect();
+  const perPx=(camera.top-camera.bottom)/r.height;
+  const fwd=new THREE.Vector3(); camera.getWorldDirection(fwd);
+  const right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+  const up=new THREE.Vector3().crossVectors(right,fwd).normalize();
+  goal.target.addScaledVector(right,-dx*perPx); goal.target.addScaledVector(up,dy*perPx);
+}
+function applyAzim(){ goal.azim=azimIndex*Math.PI/2 + (view==='bird'?0:Math.PI/4); }
+function setView(v){ view=v; goal.elev=v==='bird'?Math.PI/2:ISO_ELEV; applyAzim();
+  document.getElementById('viewIso').classList.toggle('active',v==='iso');
+  document.getElementById('viewBird').classList.toggle('active',v==='bird'); }
+function rotateView(d){ azimIndex+=d; applyAzim(); }
+function computeBounds(){
+  const b=emptyBox();
+  if(editObject){ nodeBox(editObject, editXform.off, editXform.rot, b);
+    if(b.max.x<b.min.x){ const o=editXform.off; return {center:new THREE.Vector3(o.x,o.y+6,o.z),size:22}; } }
+  else for(const id in childBox){ const c=childBox[id];
+    b.min.x=Math.min(b.min.x,c.min.x);b.min.y=Math.min(b.min.y,c.min.y);b.min.z=Math.min(b.min.z,c.min.z);
+    b.max.x=Math.max(b.max.x,c.max.x);b.max.y=Math.max(b.max.y,c.max.y);b.max.z=Math.max(b.max.z,c.max.z); }
+  if(b.max.x<b.min.x) return {center:new THREE.Vector3(0,1,0),size:10};
+  return {center:new THREE.Vector3((b.min.x+b.max.x)/2,(b.min.y+b.max.y)/2,(b.min.z+b.max.z)/2),
+          size:Math.max(b.max.x-b.min.x,b.max.y-b.min.y,b.max.z-b.min.z)};
+}
+function frameView(){ const b=computeBounds(); goal.target.copy(b.center); goal.zoom=Math.max(8,Math.min(400,b.size*1.5+8)); }
+function updateCamera(){
+  cam.azim+=(goal.azim-cam.azim)*0.22; cam.elev+=(goal.elev-cam.elev)*0.22;
+  cam.zoom+=(goal.zoom-cam.zoom)*0.25; cam.target.lerp(goal.target,0.25);
+  const ce=Math.cos(cam.elev),se=Math.sin(cam.elev);
+  const dv=new THREE.Vector3(ce*Math.sin(cam.azim),se,ce*Math.cos(cam.azim));
+  camera.position.copy(cam.target).addScaledVector(dv,CAM_DIST);
+  const t=THREE.MathUtils.clamp((cam.elev-1.0)/(Math.PI/2-1.0),0,1);
+  _upN.set(-Math.sin(cam.azim),0,-Math.cos(cam.azim)); _up.set(0,1,0).lerp(_upN,t);
+  if(_up.lengthSq()<1e-6)_up.copy(_upN); camera.up.copy(_up.normalize()); camera.lookAt(cam.target);
+  dir.position.set(cam.target.x+50,110,cam.target.z+38); dir.target.position.set(cam.target.x,0,cam.target.z); dir.target.updateMatrixWorld();
+  const r=canvas.getBoundingClientRect(), a=r.width/r.height, h=cam.zoom, w=h*a;
+  camera.left=-w/2;camera.right=w/2;camera.top=h/2;camera.bottom=-h/2;camera.near=0.1;camera.far=4000;camera.zoom=1;
+  camera.updateProjectionMatrix();
+}
+
+// ============================================================
+//  UI
+// ============================================================
+const SCENE_ACTIONS=[
+  {id:'new',  ic:'＋',label:'Object', fn:createObject, always:true},
+  {id:'group',ic:'⊞',label:'Group',  fn:groupSelection},
+  {id:'ungroup',ic:'⊟',label:'Ungroup',fn:ungroupSelection},
+  {id:'dup',  ic:'⧉',label:'Dupl.',  fn:duplicateSelection},
+  {id:'rot',  ic:'⟳',label:'Rotate', fn:rotateSelection},
+  {id:'del',  ic:'⌫',label:'Delete', fn:deleteSelection},
+];
+const VOX_TOOLS=[{id:'add',ic:'＋',label:'Add'},{id:'erase',ic:'－',label:'Erase'},{id:'paint',ic:'❖',label:'Paint'}];
+
+function updateChrome(){
+  const tw=document.getElementById('tools'); tw.innerHTML='';
+  if(editObject){
+    for(const t of VOX_TOOLS){ const el=document.createElement('button'); el.className='tool'+(tool===t.id?' active':'');
+      el.innerHTML=`<span class="ic">${t.ic}</span>${t.label}`; el.onclick=()=>{tool=t.id;updateChrome();}; tw.appendChild(el); }
+    const d=document.createElement('div'); d.className='tdiv'; tw.appendChild(d);
+    const fin=document.createElement('button'); fin.className='tool'; fin.innerHTML='<span class="ic">✓</span>Finish'; fin.onclick=exitObject; tw.appendChild(fin);
+  }else{
+    const has=selection.size>0;
+    for(const a of SCENE_ACTIONS){ const el=document.createElement('button');
+      el.className='tool'+((a.always||has)?'':' disabled');
+      el.innerHTML=`<span class="ic">${a.ic}</span>${a.label}`; el.onclick=a.fn; tw.appendChild(el); }
+  }
+  // breadcrumb (Scene, then any groups you've descended into)
+  const cr=document.getElementById('crumb'); cr.innerHTML='';
+  path.forEach((n,i)=>{ const s=document.createElement('span'); s.className='c'+(!editObject&&i===path.length-1?' cur':'');
+    s.textContent=i===0?'Scene':(n.name||'group'); if(i>0)cr.appendChild(sep()); cr.appendChild(s); });
+  if(editObject){ cr.appendChild(sep()); const s=document.createElement('span'); s.className='c cur'; s.textContent='✏ '+(editObject.name||'object'); cr.appendChild(s); }
+  document.getElementById('up').disabled = !editObject && path.length<=1;
+  buildTree();
+  // status hint
+  document.getElementById('statHint').textContent = editObject
+    ? 'Editing object — Add / Erase / Paint voxels · Esc to finish'
+    : (selection.size
+        ? `${selection.size} selected — drag to move · R rotate · Ctrl+G group · Del delete`
+        : 'Click to select · double-click to enter · N new object');
+  document.getElementById('hint').textContent = editObject
+    ? 'Painting voxels (1 voxel = 1 cm). Esc returns to the scene.'
+    : (selection.size? 'Drag to move. Double-click an object to edit its voxels.' : 'Double-click a piece to enter it.');
+}
+function sep(){ const s=document.createElement('span'); s.textContent='›'; return s; }
+
+function buildSwatches(){ const w=document.getElementById('swatches'); w.innerHTML='';
+  PALETTE.forEach((hex,i)=>{ const s=document.createElement('div'); s.className='sw'+(i===selColor?' active':'');
+    s.style.background=hex; s.onclick=()=>{selColor=i; buildSwatches();}; w.appendChild(s); }); }
+
+// ---- object/scene tree --------------------------------------
+// collect a node's own voxels in local space (for the thumbnail)
+function localVoxels(node,off,rot,out){
+  if(node.type==='object'){ for(const [k,c] of node.voxels){ const w=addv(rotY(parseKey(k),rot),off); out.push({x:w.x,y:w.y,z:w.z,c}); } }
+  else for(const ch of node.children) localVoxels(ch, addv(off,rotY(ch.pos,rot)), (rot+ch.rot)&3, out);
+  return out;
+}
+const thumbCache=new Map();
+function thumbSig(node){ return node.type==='object'? 'o'+node.voxels.size : 's'+node.children.map(c=>c.id+thumbSig(c)).join(); }
+function thumbFor(node){
+  const sig=thumbSig(node), hit=thumbCache.get(node.id);
+  if(hit&&hit.sig===sig) return hit.cv;
+  const cv=document.createElement('canvas'); cv.width=cv.height=52; cv.style.width=cv.style.height='26px';
+  const g=cv.getContext('2d'); g.fillStyle='#0f1115'; g.fillRect(0,0,52,52);
+  let vox=localVoxels(node,{x:0,y:0,z:0},0,[]);
+  if(vox.length){
+    let mnx=1e9,mny=1e9,mnz=1e9,mxx=-1e9,mxy=-1e9,mxz=-1e9;
+    for(const v of vox){mnx=Math.min(mnx,v.x);mny=Math.min(mny,v.y);mnz=Math.min(mnz,v.z);mxx=Math.max(mxx,v.x);mxy=Math.max(mxy,v.y);mxz=Math.max(mxz,v.z);}
+    const span=Math.max(mxx-mnx,mxy-mny,mxz-mnz,1)+1, s=Math.min(7,44/span);
+    const stride=Math.ceil(vox.length/1400); if(stride>1) vox=vox.filter((_,i)=>i%stride===0);
+    vox.sort((a,b)=>(a.x+a.z-a.y)-(b.x+b.z-b.y));
+    const cxp=26-((mnx+mxx)/2-(mnz+mxz)/2)*s*0.5, cyp=30+((mny+mxy)/2)*s*0.6-((mnx+mxx)/2+(mnz+mxz)/2)*s*0.28;
+    for(const v of vox){ const px=cxp+(v.x-v.z)*s*0.5, py=cyp-v.y*s*0.6+(v.x+v.z)*s*0.28;
+      g.fillStyle=PALETTE[v.c]; g.fillRect(px-s*0.5,py-s*0.5,s+0.5,s+0.5); }
+  }
+  thumbCache.set(node.id,{sig,cv}); return cv;
+}
+function buildTree(){
+  const w=document.getElementById('tree'); w.innerHTML='';
+  const row=(node,depth)=>{
+    const r=document.createElement('div');
+    const isSel=context.children.includes(node)&&selection.has(node.id);
+    r.className='trow'+(isSel?' sel':'')+(node===context?' ctx':'')+(node===editObject?' edit':'')+(node.hidden?' dim':'');
+    r.style.paddingLeft=(4+depth*13)+'px';
+    const tw=document.createElement('span'); tw.className='tw';
+    if(node.type==='scene'&&node.children.length){ tw.textContent=collapsed.has(node.id)?'▸':'▾';
+      tw.onclick=e=>{e.stopPropagation(); collapsed.has(node.id)?collapsed.delete(node.id):collapsed.add(node.id); buildTree();}; }
+    const th=thumbFor(node); th.className='thumb';
+    const nm=document.createElement('span'); nm.className='nm';
+    if(node.name) nm.textContent=node.name; else { nm.innerHTML='<span class="ph">'+(node.type==='scene'?'group':'object')+'</span>'; }
+    nm.ondblclick=e=>{e.stopPropagation(); renameNode(node);};
+    const eye=document.createElement('button'); eye.className='tb'+(node.hidden?'':' on'); eye.textContent=node.hidden?'⦰':'◉'; eye.title='Show / hide';
+    eye.onclick=e=>{e.stopPropagation(); toggleHidden(node);};
+    const dee=document.createElement('button'); dee.className='tb'+(node.deemph?' on':''); dee.textContent='◐'; dee.title='Deemphasise';
+    dee.onclick=e=>{e.stopPropagation(); toggleDeemph(node);};
+    r.append(tw,th,nm,eye,dee);
+    r.onclick=()=>selectNode(node);
+    r.ondblclick=()=>enterNode(node);
+    w.appendChild(r);
+    if(node.type==='scene'&&!collapsed.has(node.id)) for(const ch of node.children) row(ch,depth+1);
+  };
+  for(const ch of root.children) row(ch,0);
+}
+
+// ---- view / toggle wiring -----------------------------------
+document.getElementById('viewIso').onclick=()=>setView('iso');
+document.getElementById('viewBird').onclick=()=>setView('bird');
+document.getElementById('rotL').onclick=()=>rotateView(+1);
+document.getElementById('rotR').onclick=()=>rotateView(-1);
+document.getElementById('fit').onclick=frameView;
+document.getElementById('up').onclick=escapeUp;
+const gridBtn=document.getElementById('gridtoggle');
+gridBtn.onclick=()=>{ showGrid=!showGrid; grid.visible=showGrid; gridBtn.classList.toggle('active',showGrid); };
+
+window.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT') return;
+  const k=e.key.toLowerCase(), mod=e.ctrlKey||e.metaKey;
+  if(mod){
+    if(k==='c'){ if(!editObject){copySelection();e.preventDefault();} return; }
+    if(k==='x'){ if(!editObject){cutSelection();e.preventDefault();} return; } // Ctrl+X = cut
+    if(k==='v'){ if(!editObject){pasteClipboard();e.preventDefault();} return; }
+    if(k==='d'){ if(!editObject){duplicateSelection();e.preventDefault();} return; }
+    if(k==='g'){ e.preventDefault(); if(!editObject){ e.shiftKey?ungroupSelection():groupSelection(); } return; }
+    return;
+  }
+  switch(k){
+    case 'q': rotateView(+1); break;
+    case 'e': rotateView(-1); break;
+    case '1': setView('iso'); break;
+    case '2': setView('bird'); break;
+    case 'f': frameView(); break;
+    case 'g': gridBtn.click(); break;
+    case 'escape': escapeUp(); break;
+    case 'n': if(!editObject) createObject(); break;
+    case 'r': if(!editObject) rotateSelection(); break;
+    case '[': if(!editObject) nudgeY(-1); break;
+    case ']': if(!editObject) nudgeY(+1); break;
+    case 'delete': case 'backspace': if(!editObject){ e.preventDefault(); deleteSelection(); } break;
+  }
+});
+
+// ============================================================
+//  PERSISTENCE
+// ============================================================
+const LS='voxelier-v6';
+function ser(n){ const b={id:n.id,nm:n.name||'',p:n.pos,r:n.rot,h:n.hidden?1:0,d:n.deemph?1:0};
+  return n.type==='object' ? {t:'o',...b,v:[...n.voxels]} : {t:'s',...b,c:n.children.map(ser)}; }
+function de(d){ const b={id:d.id,name:d.nm||'',pos:d.p,rot:d.r,hidden:!!d.h,deemph:!!d.d};
+  return d.t==='o' ? {type:'object',...b,voxels:new Map(d.v)} : {type:'scene',...b,children:d.c.map(de)}; }
+let saveT=null;
+function save(){ clearTimeout(saveT); saveT=setTimeout(()=>{ try{
+  localStorage.setItem(LS,JSON.stringify({uid:_uid,root:ser(root)})); }catch(_){}} ,250); }
+function load(){ try{ const d=JSON.parse(localStorage.getItem(LS)); if(!d||!d.root)return false;
+  _uid=d.uid||1; root=de(d.root); return true; }catch(_){ return false; } }
+
+// ============================================================
+//  EXAMPLE SCENE
+// ============================================================
+function seed(){
+  // --- Room object (60 x 46 floor, 34 tall, with a doorway) ---
+  const room=newObject(); const rv=(x,y,z,c)=>room.voxels.set(key(x,y,z),c);
+  const W=60,D=46,H=34;
+  for(let x=0;x<W;x++)for(let z=0;z<D;z++) rv(x,0,z,3);                 // floor
+  for(let y=1;y<=H;y++){ for(let x=0;x<W;x++){ rv(x,y,0,2); rv(x,y,D-1,2); }
+                         for(let z=0;z<D;z++){ rv(0,y,z,2); rv(W-1,y,z,2); } }
+  const dw=14,dh=26,dx=Math.floor((W-dw)/2);                            // doorway in front wall
+  for(let y=1;y<=dh;y++)for(let x=dx;x<dx+dw;x++) room.voxels.delete(key(x,y,0));
+
+  // --- Desk object (30 x 16 x 18) ---
+  const desk=newObject(); const dv=(x,y,z,c)=>desk.voxels.set(key(x,y,z),c);
+  for(let x=0;x<30;x++)for(let z=0;z<16;z++) dv(x,17,z,9);              // top
+  for(const [lx,lz] of [[0,0],[28,0],[0,14],[28,14]]) for(let y=0;y<17;y++){ dv(lx,y,lz,7); dv(lx+1,y,lz,7); dv(lx,y,lz+1,7); dv(lx+1,y,lz+1,7); }
+
+  // --- Computer object (monitor on a stand) ---
+  const comp=newObject(); const cv=(x,y,z,c)=>comp.voxels.set(key(x,y,z),c);
+  for(let x=0;x<6;x++)for(let z=0;z<5;z++) cv(x+6,0,z,11);              // foot
+  for(let y=1;y<5;y++){ cv(8,y,2,11); cv(9,y,2,11); }                   // neck
+  for(let x=0;x<18;x++)for(let y=5;y<16;y++){ cv(x,y,1,11); cv(x,y,0,13);} // screen (back/face)
+
+  // --- Chair object (16 x 16 seat, tall back) ---
+  const chair=newObject(); const hv=(x,y,z,c)=>chair.voxels.set(key(x,y,z),c);
+  for(let x=0;x<16;x++)for(let z=0;z<16;z++) hv(x,17,z,13);            // seat
+  for(const [lx,lz] of [[0,0],[14,0],[0,14],[14,14]]) for(let y=0;y<17;y++){ hv(lx,y,lz,7); hv(lx+1,y,lz,7); }
+  for(let x=0;x<16;x++)for(let y=18;y<34;y++) hv(x,y,0,13);            // backrest
+
+  // --- Plant object (pot + foliage) ---
+  const plant=newObject(); const pv=(x,y,z,c)=>plant.voxels.set(key(x,y,z),c);
+  for(let y=0;y<9;y++)for(let x=0;x<10;x++)for(let z=0;z<10;z++)
+    if(y===0||x===0||x===9||z===0||z===9) pv(x,y,z,9);                 // pot shell
+  for(let y=9;y<14;y++) pv(4,y,4,14);                                  // stem
+  for(let y=14;y<30;y++)for(let x=-1;x<11;x++)for(let z=-1;z<11;z++){
+    if(Math.hypot(x-4,(y-22)*0.8,z-4)<6) pv(x,y,z,14);                 // foliage blob
+  }
+
+  // --- assemble into one named tree ---
+  room.name='Room'; room.pos={x:0,y:0,z:0}; room.deemph=true;          // walls deemphasised by default
+  desk.name='Desk'; desk.pos={x:0,y:0,z:0};
+  comp.name='Computer'; comp.pos={x:6,y:18,z:4};
+  const dws=newScene(); dws.name='Desk + Computer'; dws.pos={x:6,y:1,z:30};
+  dws.children=[desk,comp];
+  chair.name='Chair'; chair.pos={x:20,y:1,z:14}; chair.rot=2;
+  plant.name='Plant'; plant.pos={x:46,y:1,z:6};
+
+  root=newScene(); root.children=[room,dws,chair,plant];
+}
+
+// ============================================================
+//  BOOT
+// ============================================================
+function resize(){ const r=canvas.getBoundingClientRect();
+  const w=Math.max(1,Math.round(r.width)),h=Math.max(1,Math.round(r.height)),pr=Math.min(devicePixelRatio,2);
+  if(canvas.width!==Math.round(w*pr)||canvas.height!==Math.round(h*pr)) renderer.setSize(w,h,false); }
+window.addEventListener('resize',resize);
+
+// Two-pass render: deemphasised layer first, then clear the depth buffer and
+// draw the emphasised layer on top — so deemphasised pieces never cover the
+// rest, while a single shadow pass keeps everyone casting/receiving shadows.
+renderer.autoClear=false;
+renderer.shadowMap.autoUpdate=false;
+renderer.setClearColor(bg,1); scene.background=null;
+function renderFrame(){
+  renderer.shadowMap.needsUpdate=true;   // recompute shadows once (light follows camera)
+  renderer.clear();
+  grid.visible=showGrid;
+  camera.layers.set(L_DEEMPH); renderer.render(scene,camera);   // pass 1 (also updates shadows from the full scene)
+  renderer.shadowMap.needsUpdate=false;
+  renderer.clearDepth();
+  camera.layers.set(L_EMPH);   renderer.render(scene,camera);   // pass 2, on top
+}
+function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); renderFrame(); }
+
+function start(){
+  if(!load()) seed();
+  path=[root]; context=root; editObject=null; selection.clear();
+  gridBtn.classList.toggle('active',showGrid);
+  buildSwatches(); rebuild(); updateChrome(); frameView(); save(); tick();
+}
+start();
+</script>
+</body>
+</html>
