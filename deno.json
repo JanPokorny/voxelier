@@ -1,10 +1,10 @@
 {
   "tasks": {
-    "build": "deno run --allow-read --allow-write --allow-run=deno build.ts",
+    "build": "deno bundle --platform browser --minify --outdir dist src/index.html",
     "dev": "deno task build --watch",
     "lint": "deno lint",
     "fmt": "deno fmt",
-    "check": "deno check build.ts selfcheck.ts src/main.ts",
+    "check": "deno check selfcheck.ts src/main.ts",
     "test": "deno test selfcheck.ts"
   },
   "imports": {
@@ -16,10 +16,10 @@
     "strict": true
   },
   "fmt": {
-    "include": ["src/", "build.ts", "selfcheck.ts", "deno.json"]
+    "include": ["src/", "selfcheck.ts", "deno.json"]
   },
   "lint": {
-    "include": ["src/", "build.ts", "selfcheck.ts"],
+    "include": ["src/", "selfcheck.ts"],
     "rules": {
       "exclude": ["no-window", "no-window-prefix"]
     }

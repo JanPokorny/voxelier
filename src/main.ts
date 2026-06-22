@@ -1,5 +1,6 @@
 // Entry point: wire the canvas size, the render loop, and boot (load or seed,
 // then render). Importing interaction/ui for their listener side effects.
+import "./style.css"; // bundled + injected into the HTML by `deno bundle`
 import { S } from "./state.ts";
 import { camera, canvas, renderer, scene } from "./scene-env.ts";
 import { rebuild } from "./render.ts";

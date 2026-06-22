@@ -31,8 +31,9 @@ jobs:
         with:
           deno-version: v2.x
 
-      # `deno bundle` (esbuild under the hood) bundles src/ + three into a single
-      # self-contained dist/index.html
+      # `deno bundle` (esbuild under the hood) bundles src/ + three from the
+      # src/index.html entrypoint into a self-contained dist/ (HTML + hashed
+      # JS/CSS, no runtime/CDN dependency)
       - name: Build site
         if: github.event.action != 'closed'
         run: deno task build
