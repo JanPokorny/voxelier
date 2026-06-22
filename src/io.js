@@ -13,9 +13,10 @@ import { clearMeasure } from './measure.js';
 export function exportScene() {
   const data = JSON.stringify({ uid: peekUid(), root: ser(S.root) });
   const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const name = S.root.name || 'Project';                 // matches the root's name in the scene tree
+  const stamp = new Date().toISOString().slice(0, 19);   // ISO timestamp, seconds precision
   const a = document.createElement('a');
-  a.href = url; a.download = `voxelier-${stamp}.json`; a.click();
+  a.href = url; a.download = `${name} -- ${stamp}.voxelier.json`; a.click();
   URL.revokeObjectURL(url);
 }
 
