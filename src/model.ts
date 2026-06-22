@@ -84,14 +84,15 @@ export function findPath(
   node: Node = S.root,
   acc: Node[] = [],
 ): Node[] | null {
-  const a = [...acc, node];
-  if (node === target) return a;
+  acc.push(node); // backtracking DFS: push on entry, pop on a dead end
+  if (node === target) return acc.slice(); // fresh root..target copy for the caller
   if (node.type === "scene") {
     for (const ch of node.children) {
-      const r = findPath(target, ch, a);
+      const r = findPath(target, ch, acc);
       if (r) return r;
     }
   }
+  acc.pop();
   return null;
 }
 export function findById(id: string, n: Node = S.root): Node | null {
