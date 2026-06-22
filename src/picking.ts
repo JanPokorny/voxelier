@@ -72,8 +72,8 @@ export const locToW = (x: number, y: number, z: number): THREE.Vector3 => {
     r.z + S.editXform.off.z,
   );
 };
-export function voxelTarget(): Vec | null { // local cell for the active voxel tool
-  const t = pickVoxel();
+export type Pick = { cell: Vec; addCell: Vec } | null;
+export function voxelTarget(t: Pick = pickVoxel()): Vec | null { // local cell for the active voxel tool
   if (S.tool === "add") return t ? t.addCell : localGroundCell(0);
   return t ? t.cell : null;
 }

@@ -11,6 +11,7 @@ import {
   groundCell,
   localGroundCell,
   locToW,
+  type Pick,
   pickChild,
   pickVoxel,
   setNdc,
@@ -137,7 +138,8 @@ function rotDragTo(e: PointerEvent): void {
 }
 
 function applyVoxel(): void {
-  const c = voxelTarget();
+  const t = pickVoxel();
+  const c = voxelTarget(t);
   if (!c) return;
   const k = key(c.x, c.y, c.z);
   if (S.tool === "add") {
@@ -148,12 +150,11 @@ function applyVoxel(): void {
     if (S.editObject!.voxels.has(k)) editSet(c.x, c.y, c.z, S.selColor);
   }
   S.lastVox = k;
-  updateVoxHover();
+  updateVoxHover(t);
 }
-function updateVoxHover(): void {
-  const t = pickVoxel();
+function updateVoxHover(t: Pick = pickVoxel()): void {
   let cell: Vec | null = null;
-  if (S.tool === "add") cell = t ? t.addCell : voxelTarget();
+  if (S.tool === "add") cell = t ? t.addCell : voxelTarget(t);
   else cell = t ? t.cell : null;
   if (!cell) {
     hoverVox.visible = false;
