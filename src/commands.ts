@@ -178,22 +178,20 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
   const dir = steps < 0 ? -1 : 1;
   for (let n = 0; n < Math.abs(steps); n++) {
     const x = contextXform();
+    // world AABB of a context child under the current context transform
+    const worldBox = (ch: Node) =>
+      nodeBox(
+        ch,
+        addv(x.off, rotY(ch.pos, x.rot)),
+        (x.rot + ch.rot) & 3,
+        emptyBox(),
+      );
     for (const id of S.selection) {
       const ch = childById(id);
       if (!ch) continue;
-      const before = nodeBox(
-        ch,
-        addv(x.off, rotY(ch.pos, x.rot)),
-        (x.rot + ch.rot) & 3,
-        emptyBox(),
-      );
+      const before = worldBox(ch);
       ch.rot = (ch.rot + dir) & 3;
-      const after = nodeBox(
-        ch,
-        addv(x.off, rotY(ch.pos, x.rot)),
-        (x.rot + ch.rot) & 3,
-        emptyBox(),
-      );
+      const after = worldBox(ch);
       const dW = {
         x: (before.min.x + before.max.x) / 2 - (after.min.x + after.max.x) / 2,
         z: (before.min.z + before.max.z) / 2 - (after.min.z + after.max.z) / 2,
