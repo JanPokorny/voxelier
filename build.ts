@@ -1,33 +1,35 @@
-// Build: bundle + minify src/main.js with `Deno.bundle` (esbuild under the
+// Build: bundle + minify src/main.ts with `deno bundle` (esbuild under the
 // hood), minify the CSS the same way, and inline both into a single
 // self-contained dist/index.html (three.js is bundled in, so the page has no
 // runtime/CDN dependency). `deno task dev` rebuilds on any change under src/.
+//
+// We shell out to the `deno bundle` CLI rather than the programmatic
+// `Deno.bundle()` API: the CLI is the stable interface (no --unstable-bundle
+// flag, no untyped API), and with no -o flag it writes the bundle to stdout,
+// which is exactly the in-memory string we want to inline.
 const inject = (template: string, marker: string, value: string) =>
   template.replace(marker, () => value);
 
-// `Deno.bundle` is an unstable API (enabled at runtime via --unstable-bundle);
-// its types aren't surfaced to `deno check`, so reach it through a typed boundary.
-type BundleResult = {
-  success: boolean;
-  errors: unknown[];
-  outputFiles?: { text(): string }[];
-};
-const denoBundle = (Deno as unknown as {
-  bundle: (opts: Record<string, unknown>) => Promise<BundleResult>;
-}).bundle;
-
-async function bundle(entrypoint: string) {
-  const result = await denoBundle({
-    entrypoints: [entrypoint],
-    platform: "browser",
-    format: "iife",
-    minify: true,
-    write: false,
-  });
-  if (!result.success) {
-    throw new AggregateError(result.errors, `bundling ${entrypoint} failed`);
+async function bundle(entrypoint: string): Promise<string> {
+  const { success, stdout, stderr } = await new Deno.Command("deno", {
+    args: [
+      "bundle",
+      "--platform",
+      "browser",
+      "--format",
+      "iife",
+      "--minify",
+      entrypoint,
+    ],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (!success) {
+    throw new Error(
+      `bundling ${entrypoint} failed:\n${new TextDecoder().decode(stderr)}`,
+    );
   }
-  return result.outputFiles![0].text().trim();
+  return new TextDecoder().decode(stdout).trim();
 }
 
 async function build() {
