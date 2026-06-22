@@ -175,35 +175,46 @@ const goal={azim:cam.azim,elev:cam.elev,zoom:cam.zoom,target:cam.target.clone()}
 const CAM_DIST=900;
 const camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,4000);
 
-// Render layers: 0 = shadow casters (shadow camera sees this); 1 = emphasised
-// (drawn last, on top); 2 = deemphasised (rendered opaque to its own buffer,
-// then composited semi-opaque so it never covers layer 1); 3 = helpers (grid,
-// shadow-catcher) drawn at full opacity.
-const L_EMPH=1, L_DEEMPH=2, L_HELPER=3;
-
-scene.add(withLayers(new THREE.AmbientLight(0xffffff,0.62)));
+scene.add(new THREE.AmbientLight(0xffffff,0.62));
 const dir=new THREE.DirectionalLight(0xffffff,0.78);
 dir.castShadow=true; dir.shadow.mapSize.set(2048,2048); dir.shadow.normalBias=0.6; dir.shadow.bias=-0.0002;
 {const s=dir.shadow.camera; s.left=-70;s.right=70;s.top=70;s.bottom=-70;s.near=1;s.far=400;}
-scene.add(withLayers(dir)); scene.add(dir.target);
-const dir2=new THREE.DirectionalLight(0xffffff,0.16); dir2.position.set(-6,5,-7); scene.add(withLayers(dir2));
-function withLayers(o){ o.layers.enableAll(); return o; } // lights must be collected in both passes
+scene.add(dir); scene.add(dir.target);
+const dir2=new THREE.DirectionalLight(0xffffff,0.16); dir2.position.set(-6,5,-7); scene.add(dir2);
 
 const boxGeo=new THREE.BoxGeometry(1,1,1);
-const matSolid=new THREE.MeshLambertMaterial();   // everything is opaque; deemphasis is a composite
+const matSolid=new THREE.MeshLambertMaterial();   // opaque (emphasised) voxels
+// Deemphasised voxels render as a translucent surface built from only the
+// exterior faces, with back-face culling — so it sits in the real 3D scene
+// (depth-correct, can interleave with solids) yet reads as one glass pane:
+// no internal voxel faces and never the "inside" of a face.
+const DEEMPH_OPACITY=0.42;
+const matDeemph=new THREE.MeshLambertMaterial({vertexColors:true,transparent:true,opacity:DEEMPH_OPACITY,
+                  side:THREE.FrontSide,depthWrite:false});
+matDeemph.shadowSide=THREE.DoubleSide;   // still cast a solid shadow
 const _col=new THREE.Color(), _m=new THREE.Matrix4(), _up=new THREE.Vector3(), _upN=new THREE.Vector3();
 const bg=new THREE.Color('#0f1115');
 const dimColor=PALETTE.map(h=>new THREE.Color(h).lerp(bg,0.62));
 const palColor=PALETTE.map(h=>new THREE.Color(h));
+// exterior cube faces, wound CCW for an outward normal (so FrontSide keeps the
+// outward face and culls the one we'd see from "inside")
+const FACE=[
+  {d:[1,0,0], v:[[1,0,0],[1,1,0],[1,1,1],[1,0,1]]},
+  {d:[-1,0,0],v:[[0,0,1],[0,1,1],[0,1,0],[0,0,0]]},
+  {d:[0,1,0], v:[[0,1,0],[0,1,1],[1,1,1],[1,1,0]]},
+  {d:[0,-1,0],v:[[0,0,0],[1,0,0],[1,0,1],[0,0,1]]},
+  {d:[0,0,1], v:[[0,0,1],[1,0,1],[1,1,1],[0,1,1]]},
+  {d:[0,0,-1],v:[[1,0,0],[0,0,0],[0,1,0],[1,1,0]]},
+];
 
-const grid=new THREE.GridHelper(400,400,0x2e3340,0x22252e); grid.layers.set(L_HELPER); scene.add(grid);
+const grid=new THREE.GridHelper(400,400,0x2e3340,0x22252e); scene.add(grid);
 const ground=new THREE.Mesh(new THREE.PlaneGeometry(4000,4000),new THREE.ShadowMaterial({opacity:0.26}));
-ground.rotation.x=-Math.PI/2; ground.position.y=0.002; ground.receiveShadow=true; ground.layers.set(L_HELPER); scene.add(ground);
+ground.rotation.x=-Math.PI/2; ground.position.y=0.002; ground.receiveShadow=true; scene.add(ground);
 
 // overlay group for selection / hover outlines (always on top)
 const overlay=new THREE.Group(); scene.add(overlay);
 const hoverVox=new THREE.LineSegments(new THREE.EdgesGeometry(boxGeo),new THREE.LineBasicMaterial({color:0xa7c4bc,depthTest:false}));
-hoverVox.visible=false; hoverVox.layers.set(L_EMPH); hoverVox.renderOrder=999; scene.add(hoverVox);
+hoverVox.visible=false; hoverVox.renderOrder=999; scene.add(hoverVox);
 
 // dynamic meshes
 let meshes=[];                 // all instanced meshes added this rebuild
@@ -213,19 +224,42 @@ let childBox={};               // childId -> {min,max}
 let editMesh=null;             // edit object's mesh
 let editXform={off:{x:0,y:0,z:0},rot:0};
 
-function disposeMeshes(){ for(const m of meshes){scene.remove(m); m.dispose?.();} meshes=[]; }
-// emph -> top layer; deemph -> the lower layer (rendered opaque to an offscreen
-// buffer that is later composited semi-opaque, so cubes occlude cleanly).
-function addMesh(arr,colorOf,{emph=true,pick=false,childId=null}={}){
+function disposeMeshes(){ for(const m of meshes){ scene.remove(m); if(m.geometry&&m.geometry!==boxGeo) m.geometry.dispose(); m.dispose?.(); } meshes=[]; }
+
+// opaque (emphasised) voxels as an instanced mesh
+function addMesh(arr,colorOf,{pick=false,childId=null}={}){
   if(!arr.length) return null;
   const m=new THREE.InstancedMesh(boxGeo, matSolid, arr.length);
   for(let i=0;i<arr.length;i++){ const d=arr[i];
     _m.makeTranslation(d.x+0.5,d.y+0.5,d.z+0.5); m.setMatrixAt(i,_m); m.setColorAt(i,colorOf(d.c)); }
   m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
   m.castShadow=m.receiveShadow=true;
-  m.layers.set(emph?L_EMPH:L_DEEMPH); m.layers.enable(0); // always a shadow caster
   scene.add(m); meshes.push(m);
-  if(pick){ m.userData.childId=childId; m.userData.emph=emph; pickMeshes.push(m); (childMeshes[childId]||(childMeshes[childId]=[])).push(m); }
+  if(pick){ m.userData.childId=childId; m.userData.emph=true; pickMeshes.push(m); (childMeshes[childId]||(childMeshes[childId]=[])).push(m); }
+  return m;
+}
+
+// deemphasised voxels as a translucent surface (exterior faces only)
+function addSurface(arr,colorOf,{pick=false,childId=null}={}){
+  if(!arr.length) return null;
+  const set=new Set(); for(const d of arr) set.add(d.x+','+d.y+','+d.z);
+  const pos=[],nor=[],col=[];
+  for(const d of arr){ const c=colorOf(d.c);
+    for(const f of FACE){
+      if(set.has((d.x+f.d[0])+','+(d.y+f.d[1])+','+(d.z+f.d[2]))) continue;   // hidden internal face
+      const q=f.v;
+      for(const i of [0,1,2,0,2,3]){ const w=q[i];
+        pos.push(d.x+w[0],d.y+w[1],d.z+w[2]); nor.push(f.d[0],f.d[1],f.d[2]); col.push(c.r,c.g,c.b); }
+    }
+  }
+  if(!pos.length) return null;
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+  g.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));
+  g.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+  const m=new THREE.Mesh(g,matDeemph); m.castShadow=true; m.receiveShadow=true;
+  scene.add(m); meshes.push(m);
+  if(pick){ m.userData.childId=childId; m.userData.emph=false; pickMeshes.push(m); (childMeshes[childId]||(childMeshes[childId]=[])).push(m); }
   return m;
 }
 
@@ -274,9 +308,9 @@ function rebuild(){
   if(editObject){
     const x=contextXform();
     editXform={off:addv(x.off,rotY(editObject.pos,x.rot)), rot:(x.rot+editObject.rot)&3};
-    addMesh(all,c=>palColor[c],{emph:false});                         // everything else: deemphasised
-    const {evox,local}=editVoxels();                                  // edited object: emphasised, on top
-    editMesh=addMesh(evox,c=>palColor[c],{emph:true});
+    addSurface(all,c=>palColor[c],{});                                // everything else: deemphasised
+    const {evox,local}=editVoxels();                                  // edited object: opaque, in 3D
+    editMesh=addMesh(evox,c=>palColor[c],{});
     if(editMesh){ editMesh.userData.local=local; pickMeshes=[editMesh]; }
   }else{
     // owner -> current context's children (full colour, pickable);
@@ -289,18 +323,18 @@ function rebuild(){
         b.max.x=Math.max(b.max.x,v.x+1);b.max.y=Math.max(b.max.y,v.y+1);b.max.z=Math.max(b.max.z,v.z+1);
       }else (v.dm?ctxD:ctxE).push(v);
     }
-    addMesh(ctxE,c=>dimColor[c],{emph:true});  addMesh(ctxD,c=>dimColor[c],{emph:false});
+    addMesh(ctxE,c=>dimColor[c],{});  addSurface(ctxD,c=>dimColor[c],{});
     for(const id of new Set([...Object.keys(gE),...Object.keys(gD)])){
-      if(gE[id]) addMesh(gE[id],c=>palColor[c],{emph:true,  pick:true,childId:id});
-      if(gD[id]) addMesh(gD[id],c=>palColor[c],{emph:false, pick:true,childId:id});
+      if(gE[id]) addMesh(gE[id],c=>palColor[c],{pick:true,childId:id});
+      if(gD[id]) addSurface(gD[id],c=>palColor[c],{pick:true,childId:id});
     }
   }
   refreshOverlay();
 }
-function rebuildEdit(){ // fast path while painting (the dimmed rest is unchanged)
+function rebuildEdit(){ // fast path while painting (the deemphasised rest is unchanged)
   if(editMesh){ scene.remove(editMesh); editMesh.dispose?.(); const i=meshes.indexOf(editMesh); if(i>=0)meshes.splice(i,1); }
   const {evox,local}=editVoxels();
-  editMesh=addMesh(evox,c=>palColor[c],{emph:true});
+  editMesh=addMesh(evox,c=>palColor[c],{});
   if(editMesh){ editMesh.userData.local=local; }
   pickMeshes=editMesh?[editMesh]:[];
 }
@@ -309,7 +343,7 @@ function rebuildEdit(){ // fast path while painting (the dimmed rest is unchange
 function boxLines(min,max,color){
   const g=new THREE.BoxGeometry(max.x-min.x,max.y-min.y,max.z-min.z);
   const e=new THREE.LineSegments(new THREE.EdgesGeometry(g),new THREE.LineBasicMaterial({color,depthTest:false}));
-  e.position.set((min.x+max.x)/2,(min.y+max.y)/2,(min.z+max.z)/2); e.layers.set(L_EMPH); e.renderOrder=999; g.dispose(); return e;
+  e.position.set((min.x+max.x)/2,(min.y+max.y)/2,(min.z+max.z)/2); e.renderOrder=999; g.dispose(); return e;
 }
 function refreshOverlay(){
   for(const c of overlay.children) c.geometry.dispose?.();
@@ -777,49 +811,16 @@ function seed(){
 // ============================================================
 //  BOOT
 // ============================================================
-// Offscreen buffer for the deemphasised layer + a fullscreen quad to composite it.
-const DEEMPH_OPACITY=0.45;
-const rtDeemph=new THREE.WebGLRenderTarget(1,1,{samples:4});
-const quadScene=new THREE.Scene();
-const quadCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
-quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),
-  new THREE.MeshBasicMaterial({map:rtDeemph.texture,transparent:true,opacity:DEEMPH_OPACITY,depthTest:false,depthWrite:false})));
-const _db=new THREE.Vector2();
-
 function resize(){ const r=canvas.getBoundingClientRect();
   const w=Math.max(1,Math.round(r.width)),h=Math.max(1,Math.round(r.height)),pr=Math.min(devicePixelRatio,2);
-  if(canvas.width!==Math.round(w*pr)||canvas.height!==Math.round(h*pr)) renderer.setSize(w,h,false);
-  renderer.getDrawingBufferSize(_db);
-  if(rtDeemph.width!==_db.x||rtDeemph.height!==_db.y) rtDeemph.setSize(_db.x,_db.y); }
+  if(canvas.width!==Math.round(w*pr)||canvas.height!==Math.round(h*pr)) renderer.setSize(w,h,false); }
 window.addEventListener('resize',resize);
 
-// Render in three stages so the deemphasised layer reads as one translucent
-// pane (not a pile of see-through cubes), never covers the emphasised layer,
-// and everyone still casts/receives shadows from a single shadow pass.
-renderer.autoClear=false;
-renderer.shadowMap.autoUpdate=false;
-scene.background=null;
-function renderFrame(){
-  grid.visible=showGrid;
-  renderer.shadowMap.needsUpdate=true;                          // recompute shadows once (light follows camera)
-
-  // 1) deemphasised layer -> offscreen buffer, opaque (also runs the shadow pass)
-  renderer.setRenderTarget(rtDeemph);
-  renderer.setClearColor(bg,0); renderer.clear(true,true,true);
-  camera.layers.set(L_DEEMPH); renderer.render(scene,camera);
-  renderer.shadowMap.needsUpdate=false;
-
-  // 2) screen: helpers, then the deemphasised buffer composited at reduced opacity
-  renderer.setRenderTarget(null);
-  renderer.setClearColor(bg,1); renderer.clear(true,true,true);
-  camera.layers.set(L_HELPER); renderer.render(scene,camera);
-  renderer.render(quadScene,quadCam);
-
-  // 3) emphasised layer on top, with a fresh depth buffer
-  renderer.clearDepth();
-  camera.layers.set(L_EMPH); renderer.render(scene,camera);
-}
-function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); renderFrame(); }
+// Single pass: opaque (emphasised) voxels write depth, then the translucent
+// deemphasised surfaces draw depth-tested on top — so the two interleave
+// correctly in 3D, and shadows come from the normal shadow pass.
+scene.background=bg;
+function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); grid.visible=showGrid; renderer.render(scene,camera); }
 
 function start(){
   if(!load()) seed();
