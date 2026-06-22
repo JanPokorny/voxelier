@@ -14,7 +14,9 @@ export function exportScene() {
   const data = JSON.stringify({ uid: peekUid(), root: ser(S.root) });
   const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
   const name = S.root.name || 'Project';                 // matches the root's name in the scene tree
-  const stamp = new Date().toISOString().slice(0, 19);   // ISO timestamp, seconds precision
+  const d = new Date();                                  // local-time stamp: "YYYY-MM-DD HH-MM-SS"
+  const stamp = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    .toISOString().slice(0, 19).replace('T', ' ').replace(/:/g, '-');
   const a = document.createElement('a');
   a.href = url; a.download = `${name} -- ${stamp}.voxelier.json`; a.click();
   URL.revokeObjectURL(url);
