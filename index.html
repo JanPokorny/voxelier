@@ -176,8 +176,10 @@ const CAM_DIST=900;
 const camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,4000);
 
 // Render layers: 0 = shadow casters (shadow camera sees this); 1 = emphasised
-// (drawn last, on top); 2 = deemphasised (drawn first, can never cover layer 1).
-const L_EMPH=1, L_DEEMPH=2;
+// (drawn last, on top); 2 = deemphasised (rendered opaque to its own buffer,
+// then composited semi-opaque so it never covers layer 1); 3 = helpers (grid,
+// shadow-catcher) drawn at full opacity.
+const L_EMPH=1, L_DEEMPH=2, L_HELPER=3;
 
 scene.add(withLayers(new THREE.AmbientLight(0xffffff,0.62)));
 const dir=new THREE.DirectionalLight(0xffffff,0.78);
@@ -188,16 +190,15 @@ const dir2=new THREE.DirectionalLight(0xffffff,0.16); dir2.position.set(-6,5,-7)
 function withLayers(o){ o.layers.enableAll(); return o; } // lights must be collected in both passes
 
 const boxGeo=new THREE.BoxGeometry(1,1,1);
-const matSolid=new THREE.MeshLambertMaterial();
-const matDeemph=new THREE.MeshLambertMaterial({transparent:true,opacity:0.4});  // deemphasised: semi-opaque
+const matSolid=new THREE.MeshLambertMaterial();   // everything is opaque; deemphasis is a composite
 const _col=new THREE.Color(), _m=new THREE.Matrix4(), _up=new THREE.Vector3(), _upN=new THREE.Vector3();
 const bg=new THREE.Color('#0f1115');
 const dimColor=PALETTE.map(h=>new THREE.Color(h).lerp(bg,0.62));
 const palColor=PALETTE.map(h=>new THREE.Color(h));
 
-const grid=new THREE.GridHelper(400,400,0x2e3340,0x22252e); grid.layers.set(L_DEEMPH); scene.add(grid);
+const grid=new THREE.GridHelper(400,400,0x2e3340,0x22252e); grid.layers.set(L_HELPER); scene.add(grid);
 const ground=new THREE.Mesh(new THREE.PlaneGeometry(4000,4000),new THREE.ShadowMaterial({opacity:0.26}));
-ground.rotation.x=-Math.PI/2; ground.position.y=0.002; ground.receiveShadow=true; ground.layers.set(L_DEEMPH); scene.add(ground);
+ground.rotation.x=-Math.PI/2; ground.position.y=0.002; ground.receiveShadow=true; ground.layers.set(L_HELPER); scene.add(ground);
 
 // overlay group for selection / hover outlines (always on top)
 const overlay=new THREE.Group(); scene.add(overlay);
@@ -213,11 +214,11 @@ let editMesh=null;             // edit object's mesh
 let editXform={off:{x:0,y:0,z:0},rot:0};
 
 function disposeMeshes(){ for(const m of meshes){scene.remove(m); m.dispose?.();} meshes=[]; }
-// emph pieces are opaque on the top layer; deemph pieces are semi-opaque on the
-// lower layer (so they recede AND can never be drawn in front of the rest).
+// emph -> top layer; deemph -> the lower layer (rendered opaque to an offscreen
+// buffer that is later composited semi-opaque, so cubes occlude cleanly).
 function addMesh(arr,colorOf,{emph=true,pick=false,childId=null}={}){
   if(!arr.length) return null;
-  const m=new THREE.InstancedMesh(boxGeo, emph?matSolid:matDeemph, arr.length);
+  const m=new THREE.InstancedMesh(boxGeo, matSolid, arr.length);
   for(let i=0;i<arr.length;i++){ const d=arr[i];
     _m.makeTranslation(d.x+0.5,d.y+0.5,d.z+0.5); m.setMatrixAt(i,_m); m.setColorAt(i,colorOf(d.c)); }
   m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true;
@@ -273,10 +274,8 @@ function rebuild(){
   if(editObject){
     const x=contextXform();
     editXform={off:addv(x.off,rotY(editObject.pos,x.rot)), rot:(x.rot+editObject.rot)&3};
-    const de=[],dd=[]; for(const v of all){ (v.dm?dd:de).push(v); }   // dim the rest
-    addMesh(de,c=>dimColor[c],{emph:true});
-    addMesh(dd,c=>dimColor[c],{emph:false});
-    const {evox,local}=editVoxels();                                  // edited object: always emphasised
+    addMesh(all,c=>palColor[c],{emph:false});                         // everything else: deemphasised
+    const {evox,local}=editVoxels();                                  // edited object: emphasised, on top
     editMesh=addMesh(evox,c=>palColor[c],{emph:true});
     if(editMesh){ editMesh.userData.local=local; pickMeshes=[editMesh]; }
   }else{
@@ -747,11 +746,12 @@ function seed(){
   for(let y=1;y<5;y++){ cv(8,y,2,11); cv(9,y,2,11); }                   // neck
   for(let x=0;x<18;x++)for(let y=5;y<16;y++){ cv(x,y,1,11); cv(x,y,0,13);} // screen (back/face)
 
-  // --- Chair object (16 x 16 seat, tall back) ---
+  // --- Chair object (10 x 10 seat, modest back; backrest at local z=0) ---
   const chair=newObject(); const hv=(x,y,z,c)=>chair.voxels.set(key(x,y,z),c);
-  for(let x=0;x<16;x++)for(let z=0;z<16;z++) hv(x,17,z,13);            // seat
-  for(const [lx,lz] of [[0,0],[14,0],[0,14],[14,14]]) for(let y=0;y<17;y++){ hv(lx,y,lz,7); hv(lx+1,y,lz,7); }
-  for(let x=0;x<16;x++)for(let y=18;y<34;y++) hv(x,y,0,13);            // backrest
+  const CS=10;
+  for(let x=0;x<CS;x++)for(let z=0;z<CS;z++) hv(x,9,z,13);             // seat (top at y=10)
+  for(const [lx,lz] of [[1,1],[CS-2,1],[1,CS-2],[CS-2,CS-2]]) for(let y=0;y<9;y++) hv(lx,y,lz,7); // legs
+  for(let x=0;x<CS;x++)for(let y=10;y<20;y++) hv(x,y,0,13);           // backrest
 
   // --- Plant object (pot + foliage) ---
   const plant=newObject(); const pv=(x,y,z,c)=>plant.voxels.set(key(x,y,z),c);
@@ -768,7 +768,7 @@ function seed(){
   comp.name='Computer'; comp.pos={x:6,y:18,z:4};
   const dws=newScene(); dws.name='Desk + Computer'; dws.pos={x:6,y:1,z:30};
   dws.children=[desk,comp];
-  chair.name='Chair'; chair.pos={x:20,y:1,z:14}; chair.rot=2;
+  chair.name='Chair'; chair.pos={x:16,y:1,z:20}; chair.rot=0;   // in front of the desk, facing it
   plant.name='Plant'; plant.pos={x:46,y:1,z:6};
 
   root=newScene(); root.children=[room,dws,chair,plant];
@@ -777,25 +777,47 @@ function seed(){
 // ============================================================
 //  BOOT
 // ============================================================
+// Offscreen buffer for the deemphasised layer + a fullscreen quad to composite it.
+const DEEMPH_OPACITY=0.45;
+const rtDeemph=new THREE.WebGLRenderTarget(1,1,{samples:4});
+const quadScene=new THREE.Scene();
+const quadCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),
+  new THREE.MeshBasicMaterial({map:rtDeemph.texture,transparent:true,opacity:DEEMPH_OPACITY,depthTest:false,depthWrite:false})));
+const _db=new THREE.Vector2();
+
 function resize(){ const r=canvas.getBoundingClientRect();
   const w=Math.max(1,Math.round(r.width)),h=Math.max(1,Math.round(r.height)),pr=Math.min(devicePixelRatio,2);
-  if(canvas.width!==Math.round(w*pr)||canvas.height!==Math.round(h*pr)) renderer.setSize(w,h,false); }
+  if(canvas.width!==Math.round(w*pr)||canvas.height!==Math.round(h*pr)) renderer.setSize(w,h,false);
+  renderer.getDrawingBufferSize(_db);
+  if(rtDeemph.width!==_db.x||rtDeemph.height!==_db.y) rtDeemph.setSize(_db.x,_db.y); }
 window.addEventListener('resize',resize);
 
-// Two-pass render: deemphasised layer first, then clear the depth buffer and
-// draw the emphasised layer on top — so deemphasised pieces never cover the
-// rest, while a single shadow pass keeps everyone casting/receiving shadows.
+// Render in three stages so the deemphasised layer reads as one translucent
+// pane (not a pile of see-through cubes), never covers the emphasised layer,
+// and everyone still casts/receives shadows from a single shadow pass.
 renderer.autoClear=false;
 renderer.shadowMap.autoUpdate=false;
-renderer.setClearColor(bg,1); scene.background=null;
+scene.background=null;
 function renderFrame(){
-  renderer.shadowMap.needsUpdate=true;   // recompute shadows once (light follows camera)
-  renderer.clear();
   grid.visible=showGrid;
-  camera.layers.set(L_DEEMPH); renderer.render(scene,camera);   // pass 1 (also updates shadows from the full scene)
+  renderer.shadowMap.needsUpdate=true;                          // recompute shadows once (light follows camera)
+
+  // 1) deemphasised layer -> offscreen buffer, opaque (also runs the shadow pass)
+  renderer.setRenderTarget(rtDeemph);
+  renderer.setClearColor(bg,0); renderer.clear(true,true,true);
+  camera.layers.set(L_DEEMPH); renderer.render(scene,camera);
   renderer.shadowMap.needsUpdate=false;
+
+  // 2) screen: helpers, then the deemphasised buffer composited at reduced opacity
+  renderer.setRenderTarget(null);
+  renderer.setClearColor(bg,1); renderer.clear(true,true,true);
+  camera.layers.set(L_HELPER); renderer.render(scene,camera);
+  renderer.render(quadScene,quadCam);
+
+  // 3) emphasised layer on top, with a fresh depth buffer
   renderer.clearDepth();
-  camera.layers.set(L_EMPH);   renderer.render(scene,camera);   // pass 2, on top
+  camera.layers.set(L_EMPH); renderer.render(scene,camera);
 }
 function tick(){ requestAnimationFrame(tick); resize(); updateCamera(); renderFrame(); }
 
