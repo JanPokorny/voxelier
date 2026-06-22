@@ -22,11 +22,16 @@ import { enterNode, selectNode } from "./navigation.ts";
 import { save } from "./persistence.ts";
 import type { Node, SceneNode } from "./types.ts";
 
-export function cycleVis(node: Node): void {
-  node.vis = VIS_CYCLE[node.vis || "visible"];
+// re-mesh the scene, refresh the chrome and persist — the tail of most edits
+const commit = (): void => {
   rebuild();
   updateChrome();
   save();
+};
+
+export function cycleVis(node: Node): void {
+  node.vis = VIS_CYCLE[node.vis || "visible"];
+  commit();
 }
 export function renameNode(node: Node): void {
   const n = prompt("Name", node.name || "");
@@ -58,18 +63,14 @@ export function deleteSelection(): void {
   if (!S.selection.size) return;
   S.context.children = S.context.children.filter((c) => !S.selection.has(c.id));
   S.selection.clear();
-  rebuild();
-  updateChrome();
-  save();
+  commit();
 }
 export function duplicateSelection(): void {
   const dups = selectedNodes().map(cloneShift);
   if (!dups.length) return;
   S.context.children.push(...dups);
   S.selection = new Set(dups.map((d) => d.id));
-  rebuild();
-  updateChrome();
-  save();
+  commit();
 }
 export function copySelection(): void {
   S.clipboard = selectedNodes().map(clone);
@@ -83,9 +84,7 @@ export function pasteClipboard(): void {
   const ns = S.clipboard.map(cloneShift);
   S.context.children.push(...ns);
   S.selection = new Set(ns.map((d) => d.id));
-  rebuild();
-  updateChrome();
-  save();
+  commit();
 }
 
 // ---- tree reparenting (drag & drop) ----
@@ -139,9 +138,7 @@ export function wrapInGroup(target: Node, dragged: Node): boolean {
   reparentNode(dragged, g, g.children.length); // bring the dragged piece in, world pose preserved
   S.collapsed.delete(g.id);
   S.selection = new Set([g.id]);
-  rebuild();
-  updateChrome();
-  save();
+  commit();
   return true;
 }
 
@@ -160,9 +157,7 @@ export function deleteNode(node: Node): void {
   par.children = par.children.filter((c) => c !== node);
   S.selection.delete(node.id);
   if (S.editObject === node) S.editObject = null;
-  rebuild();
-  updateChrome();
-  save();
+  commit();
 }
 export function addObjectIn(group: SceneNode): void { // new empty object inside a group (enter it)
   const o = newObject();
