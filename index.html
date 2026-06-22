@@ -138,6 +138,9 @@ const key=(x,y,z)=>x+','+y+','+z;
 const parseKey=k=>{const a=k.split(',');return {x:+a[0],y:+a[1],z:+a[2]};};
 const addv=(a,b)=>({x:a.x+b.x,y:a.y+b.y,z:a.z+b.z});
 function rotY(v,r){ let{x,y,z}=v; r=((r%4)+4)%4; for(let i=0;i<r;i++){const nx=-z,nz=x;x=nx;z=nz;} return {x,y,z}; }
+// transform algebra: a transform is {off,rot}. compose nests Y inside X; invert undoes one.
+const xcompose=(X,Y)=>({rot:(X.rot+Y.rot)&3, off:addv(rotY(Y.off,X.rot),X.off)});
+const xinvert=T=>{ const r=(4-(T.rot&3))&3, o=rotY(T.off,r); return {rot:r,off:{x:-o.x,y:-o.y,z:-o.z}}; };
 let _uid=1; const uid=()=>'n'+(_uid++);
 
 // ---- data model ---------------------------------------------
@@ -302,12 +305,10 @@ function addSurface(arr,colorOf,{transparent=false,ao=false,pick=false,childId=n
   return m;
 }
 
-// transform from root down to current context
-function contextXform(){
-  let off={x:0,y:0,z:0},rot=0;
-  for(let i=1;i<path.length;i++){ const n=path[i]; off=addv(off,rotY(n.pos,rot)); rot=(rot+n.rot)&3; }
-  return {off,rot};
-}
+// accumulated transform along a root..node path (root contributes nothing)
+const pathXform=p=>p.slice(1).reduce((X,n)=>xcompose(X,{off:n.pos,rot:n.rot}),{off:{x:0,y:0,z:0},rot:0});
+const contextXform=()=>pathXform(path);                 // root -> current context
+const worldXform=node=>pathXform(findPath(node)||[root]);
 // world AABB of a node given accumulated transform
 function nodeBox(node,off,rot,box){
   if(node.type==='object'){
@@ -347,8 +348,7 @@ function rebuild(){
   const all=[]; walk(root,{x:0,y:0,z:0},0,null,0,all);
 
   if(editObject){
-    const x=contextXform();
-    editXform={off:addv(x.off,rotY(editObject.pos,x.rot)), rot:(x.rot+editObject.rot)&3};
+    editXform=xcompose(contextXform(),{off:editObject.pos,rot:editObject.rot});
     addSurface(all,c=>col(c),{transparent:true});                     // everything else: transparent
     const {evox,local}=editVoxels();                                  // edited object: opaque, in 3D
     editMesh=addMesh(evox,c=>col(c),{});
@@ -682,10 +682,6 @@ function pasteClipboard(){
 function findById(id,n=root){ if(n.id===id) return n; if(n.type==='scene') for(const c of n.children){ const r=findById(id,c); if(r) return r; } return null; }
 function parentOf(node){ const p=findPath(node); return p&&p.length>1?p[p.length-2]:null; }
 function isDescendant(node,t){ if(node===t) return true; if(node.type!=='scene') return false; return node.children.some(c=>isDescendant(c,t)); }
-function worldXform(node){ const p=findPath(node)||[root]; let off={x:0,y:0,z:0},rot=0;
-  for(let i=1;i<p.length;i++){ const n=p[i]; off=addv(off,rotY(n.pos,rot)); rot=(rot+n.rot)&3; } return {off,rot}; }
-const xcompose=(X,Y)=>({rot:(X.rot+Y.rot)&3, off:addv(rotY(Y.off,X.rot),X.off)});
-const xinvert=T=>{ const r=(4-(T.rot&3))&3, o=rotY(T.off,r); return {rot:r,off:{x:-o.x,y:-o.y,z:-o.z}}; };
 function reparentNode(node,newParent,index){    // move node under newParent at index, preserving world pose
   if(node===newParent || isDescendant(node,newParent)) return false;
   const A=parentOf(node); if(!A) return false;
