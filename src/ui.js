@@ -51,15 +51,19 @@ export function updateChrome() {
         : 'Tree: click a row to enter it · double-click to fit · right-click for actions · N new object');
 }
 
-// distinct colours used in the scene, most-used first
+// distinct colours used in the scene, most-used first. Cached by S.voxVer so it
+// isn't recomputed over every voxel on each chrome refresh (e.g. after a box fill).
+let _scCache = { ver: -1, cols: [] };
 function sceneColors() {
+  if (_scCache.ver === S.voxVer) return _scCache.cols;
   const m = new Map();
   (function rec(n) { if (n.type === 'object') { for (const [, c] of n.voxels) m.set(c, (m.get(c) || 0) + 1); } else n.children.forEach(rec); })(S.root);
-  return [...m.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+  _scCache = { ver: S.voxVer, cols: [...m.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]) };
+  return _scCache.cols;
 }
 export function buildSwatches() {
   const w = document.getElementById('swatches'); w.innerHTML = '';
-  const cols = sceneColors();
+  const cols = sceneColors().slice();                         // copy: we may unshift the selected colour
   if (!cols.includes(S.selColor)) cols.unshift(S.selColor);   // selected colour is always shown, at #1 if unused
   const swatch = c => {
     const s = document.createElement('div');
@@ -117,7 +121,9 @@ function localVoxels(node, off, rot, out) {
 const thumbCache = new Map();
 function thumbSig(node) { return node.type === 'object' ? 'o' + node.voxels.size : 's' + node.children.map(c => c.id + thumbSig(c)).join(); }
 function thumbFor(node) {
-  const sig = thumbSig(node), hit = thumbCache.get(node.id);
+  const hit = thumbCache.get(node.id);
+  if (node === S.editObject && hit) return hit.cv;       // don't re-rasterise the object being actively edited
+  const sig = thumbSig(node);
   if (hit && hit.sig === sig) return hit.cv;
   const cv = document.createElement('canvas'); cv.width = cv.height = 52; cv.style.width = cv.style.height = '26px';
   const g = cv.getContext('2d'); g.fillStyle = '#0f1115'; g.fillRect(0, 0, 52, 52);

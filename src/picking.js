@@ -22,13 +22,17 @@ export function groundCell(yWorld) {
   return null;
 }
 export function pickVoxel() { // -> {cell, addCell} in object-local space, or null
-  if (!S.editMesh) return null;
+  if (!S.pickMeshes.length) return null;
   raycaster.setFromCamera(ndc, camera);
-  const h = raycaster.intersectObject(S.editMesh, false); if (!h.length) return null;
-  const lv = S.editMesh.userData.local[h[0].instanceId];
-  const n = h[0].face ? h[0].face.normal : new THREE.Vector3(0, 1, 0);
-  const ln = rotY({ x: Math.round(n.x), y: Math.round(n.y), z: Math.round(n.z) }, (4 - S.editXform.rot) & 3);
-  return { cell: lv, addCell: { x: lv.x + ln.x, y: lv.y + ln.y, z: lv.z + ln.z } };
+  const hits = raycaster.intersectObjects(S.pickMeshes, false); if (!hits.length) return null;
+  const h = hits[0];
+  // chunk geometry is built in object-local space (editGroup carries the pose), so
+  // the face normal is already local; convert the world hit point back to local.
+  const off = S.editXform.off, r = (4 - S.editXform.rot) & 3;
+  const lp = rotY({ x: h.point.x - off.x, y: h.point.y - off.y, z: h.point.z - off.z }, r);
+  const n = h.face ? h.face.normal : { x: 0, y: 1, z: 0 };
+  const sx = Math.floor(lp.x - n.x * 0.5), sy = Math.floor(lp.y - n.y * 0.5), sz = Math.floor(lp.z - n.z * 0.5);
+  return { cell: { x: sx, y: sy, z: sz }, addCell: { x: sx + Math.round(n.x), y: sy + Math.round(n.y), z: sz + Math.round(n.z) } };
 }
 // pointer -> object-local cell on the horizontal plane at the given local Y
 export function localGroundCell(localY) {

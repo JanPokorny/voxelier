@@ -6,7 +6,7 @@ import { rebuild } from './render.js';
 import { updateChrome, buildSwatches } from './ui.js';
 import { updateCamera, frameView } from './camera.js';
 import { updateMeasureLabels } from './measure.js';
-import { load, save } from './persistence.js';
+import { load, flush } from './persistence.js';
 import { seed } from './seed.js';
 import './interaction.js';   // attaches canvas pointer/wheel/dblclick listeners
 
@@ -22,6 +22,6 @@ function tick() { requestAnimationFrame(tick); resize(); updateCamera(); rendere
 function start() {
   if (!load()) S.root = seed();
   S.path = [S.root]; S.context = S.root; S.editObject = null; S.selection.clear();
-  buildSwatches(); rebuild(); updateChrome(); frameView(); save(); tick();
+  buildSwatches(); rebuild(); updateChrome(); frameView(); flush(); tick();   // flush: synchronous baseline undo snapshot
 }
 start();
