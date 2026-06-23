@@ -151,6 +151,7 @@ function rotDragTo(e: PointerEvent): void {
   if (steps !== S.drag!.steps) {
     rotateSelectionBy(steps - S.drag!.steps!);
     S.drag!.steps = steps;
+    S.drag!.dirty = true; // re-centering rounds per step, so a net-zero drag can still move pos
   }
 }
 
@@ -421,7 +422,10 @@ canvas.addEventListener("pointerup", (e) => {
       refreshOverlay();
       updateChrome();
     } else if (S.drag.mode === "move") commitMove();
-    else if (S.drag.mode === "rotobj" && S.drag.steps) save();
+    else if (S.drag.mode === "rotobj" && S.drag.dirty) {
+      updateChrome(); // tree thumbnails track the new pose
+      save();
+    }
   }
   S.drag = null;
 });

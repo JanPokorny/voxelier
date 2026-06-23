@@ -89,6 +89,7 @@ export type Drag = {
   shiftAnchorY?: number | null;
   start?: Vec | null;
   steps?: number;
+  dirty?: boolean; // rotobj: a rotation was applied during the drag (commit even if net steps == 0)
   clickId?: string | null;
   meas?: "freeze" | "clear";
   box?: {
