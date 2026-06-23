@@ -11,6 +11,8 @@ import {
   camera,
   canvas,
   goal,
+  ground,
+  setHorizon,
   ZOOM_MAX,
 } from "./scene-env.ts";
 import { emptyBox, nodeBox, worldXform } from "./model.ts";
@@ -21,6 +23,7 @@ const _dv = new THREE.Vector3(),
   _fwd = new THREE.Vector3(),
   _right = new THREE.Vector3(),
   _camUp = new THREE.Vector3(),
+  _gp = new THREE.Vector3(),
   _yUp = new THREE.Vector3(0, 1, 0);
 
 export function panCamera(dx: number, dy: number): void {
@@ -142,4 +145,11 @@ export function updateCamera(): void {
   camera.far = far + 10;
   camera.zoom = 1;
   camera.updateProjectionMatrix();
+  // invisible shadow catcher tracks the view
+  ground.position.set(cam.target.x, 0, cam.target.z);
+  // slide the backdrop horizon to where ground level (y=0 under the target)
+  // projects, so it sits naturally as the camera orbits/pans
+  camera.updateMatrixWorld();
+  _gp.set(cam.target.x, 0, cam.target.z).project(camera);
+  setHorizon((1 - _gp.y) / 2);
 }

@@ -11,26 +11,31 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 export const scene = new THREE.Scene();
 // Backdrop: a screen-space vertical gradient — blue sky on top, green below the
-// horizon. In an orthographic view a ground plane can't make a horizon (it's
-// either a finite slab or fills the screen), so the horizon lives here; the
-// ground plane just blends into the green lower half and catches shadows.
-function skyTexture(): THREE.CanvasTexture {
-  const cv = document.createElement("canvas");
-  cv.width = 2;
-  cv.height = 256;
-  const g = cv.getContext("2d")!;
-  const grd = g.createLinearGradient(0, 0, 0, 256);
+// horizon. Orthographic can't make a real horizon, so it lives here; setHorizon()
+// slides the blue->green transition to the screen fraction (0 top .. 1 bottom)
+// where the camera projects ground level, so it tracks orbit/pan.
+const skyCv = document.createElement("canvas");
+skyCv.width = 2;
+skyCv.height = 256;
+const skyCtx = skyCv.getContext("2d")!;
+const skyTex = new THREE.CanvasTexture(skyCv);
+skyTex.colorSpace = THREE.SRGBColorSpace;
+let _horizon = -1;
+export function setHorizon(frac: number): void {
+  const f = Math.max(0.08, Math.min(0.96, frac));
+  if (Math.abs(f - _horizon) < 0.004) return; // unchanged enough to skip the redraw
+  _horizon = f;
+  const grd = skyCtx.createLinearGradient(0, 0, 0, 256);
   grd.addColorStop(0, "#3a6ea5"); // sky overhead
-  grd.addColorStop(0.46, "#9bb6d4"); // pale band just above the horizon
-  grd.addColorStop(0.52, "#5d7a4a"); // ground starts
-  grd.addColorStop(1, "#46613a"); // ground (matches the ground plane)
-  g.fillStyle = grd;
-  g.fillRect(0, 0, 2, 256);
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  grd.addColorStop(f - 0.06, "#9bb6d4"); // pale band just above the horizon
+  grd.addColorStop(f, "#5d7a4a"); // ground starts
+  grd.addColorStop(1, "#46613a"); // distant ground
+  skyCtx.fillStyle = grd;
+  skyCtx.fillRect(0, 0, 2, 256);
+  skyTex.needsUpdate = true;
 }
-scene.background = skyTexture();
+setHorizon(0.55);
+scene.background = skyTex;
 
 export const ISO_ELEV = Math.atan(1 / Math.SQRT2);
 export const cam = {
@@ -142,10 +147,12 @@ export const FACE = [
 ];
 export const AO = [0.5, 0.74, 0.88, 1]; // brightness by exposure (0 = corner most occluded)
 
-// ground: a dark-green plane (always shown), also catches shadows
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(4000, 4000),
-  new THREE.MeshLambertMaterial({ color: 0x3f5e3a }),
+// ground: an invisible shadow catcher at y=0 (no visible plane/edges — the
+// "ground" is the green lower half of the backdrop). Follows the camera target
+// (see updateCamera) so shadows stay under the view at any pan.
+export const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(8000, 8000),
+  new THREE.ShadowMaterial({ opacity: 0.32 }),
 );
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = 0;
