@@ -260,7 +260,12 @@ function thumbSig(node: Node): string {
       node.boxes.map((b) =>
         `${b.x0},${b.y0},${b.z0},${b.x1},${b.y1},${b.z1},${b.c}`
       ).join(";")
-    : "s" + node.children.map((c) => c.id + thumbSig(c)).join();
+    // include each child's pose: the thumbnail lays children out by pos/rot,
+    // so moving/rotating one must invalidate the parent group's cached image
+    : "s" +
+      node.children.map((c) =>
+        `${c.id}@${c.pos.x},${c.pos.y},${c.pos.z}/${c.rot};${thumbSig(c)}`
+      ).join();
 }
 // draw the boxes as little isometric cuboids (three shaded faces), painter-sorted
 function thumbFor(node: Node): HTMLCanvasElement {
