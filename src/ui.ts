@@ -185,11 +185,15 @@ function openColorPicker(): void {
     S.selColor = parseInt(inp.value.slice(1), 16);
     buildSwatches();
   };
+  // change fires when the dialog commits; a cancel fires no change but returns
+  // focus to the page, so remove the hidden input on that too (else it leaks)
+  const close = () => inp.remove();
   inp.addEventListener("input", apply);
   inp.addEventListener("change", () => {
     apply();
-    inp.remove();
+    close();
   });
+  window.addEventListener("focus", close, { once: true });
   document.body.appendChild(inp);
   inp.click();
 }
