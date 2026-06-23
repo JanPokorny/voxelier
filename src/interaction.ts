@@ -25,19 +25,19 @@ import {
   voxelTarget,
 } from "./picking.ts";
 import {
-  editDelete,
-  editSet,
-  markDirtyRange,
+  eachObject,
+  editAdd,
+  editErase,
+  editPaint,
   rebuild,
   refreshOverlay,
-  walk,
 } from "./render.ts";
+import { boxesOverlap, worldBox } from "./boxes.ts";
 import { childById, contextXform } from "./model.ts";
 import { orbitView, panCamera } from "./camera.ts";
 import {
   clearMeasure,
   freezeMeasure,
-  invalidateField,
   measureActive,
   pointerMeasure,
   renderMeasure,
@@ -46,7 +46,7 @@ import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
 import { updateChrome } from "./ui.ts";
 import { save } from "./persistence.ts";
-import type { Drag, Seg, Vec, Voxel } from "./types.ts";
+import type { Box3, Drag, Seg, Vec } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
@@ -62,16 +62,16 @@ function dragPanOrbit(e: PointerEvent): boolean {
   return true;
 }
 
-// Collision avoidance for moves. Snapshot (once per drag) every solid cell in
-// the scene — every visible/transparent voxel except the moving selection's own
-// — plus the selection's voxels, all in world space. Invisible objects are
-// absent from walk(), so they never block. A candidate offset is blocked if any
-// moved voxel would land on an occupied cell.
-function moveCollision(): { occ: Set<number>; sel: Voxel[] } {
-  const occ = new Set<number>(), sel: Voxel[] = [];
-  walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (x, y, z, c, owner, tr) => {
-    if (owner && S.selection.has(owner)) sel.push({ x, y, z, c, owner, tr });
-    else occ.add(key(x, y, z));
+// Collision avoidance for moves. Snapshot (once per drag) every solid object's
+// world boxes — split into the moving selection's own boxes and everyone else's
+// (the obstacles). Invisible objects are absent from eachObject(), so they never
+// block. A candidate offset is blocked if a shifted selection box overlaps an
+// obstacle box.
+function moveCollision(): { occ: Box3[]; sel: Box3[] } {
+  const occ: Box3[] = [], sel: Box3[] = [];
+  eachObject(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (n, off, rot, owner) => {
+    const tgt = owner && S.selection.has(owner) ? sel : occ;
+    for (const b of n.boxes) tgt.push(worldBox(b, rot, off));
   });
   return { occ, sel };
 }
@@ -80,7 +80,7 @@ const moveBlocked = (
   dx: number,
   dy: number,
   dz: number,
-) => (d.sel ?? []).some((v) => d.occ!.has(key(v.x + dx, v.y + dy, v.z + dz)));
+) => boxesOverlap(d.sel ?? [], d.occ ?? [], dx, dy, dz);
 
 function moveDragTo(e: PointerEvent): void {
   const d = S.drag!;
@@ -143,19 +143,18 @@ function rotDragTo(e: PointerEvent): void {
   }
 }
 
-function applyVoxel(): void {
+function applyVoxel(): void { // paint: recolour the filled cell under the cursor
   const t = pickVoxel();
   const c = voxelTarget(t);
   if (!c) return;
   const k = key(c.x, c.y, c.z);
-  if (S.tool === "add") {
-    if (k === S.lastVox) return;
-    editSet(c.x, c.y, c.z, S.selColor);
-  } else if (S.tool === "erase") editDelete(c.x, c.y, c.z);
-  else if (S.tool === "paint") {
-    if (S.editObject!.voxels.has(k)) editSet(c.x, c.y, c.z, S.selColor);
+  if (k !== S.lastVox) {
+    editPaint(
+      { x0: c.x, y0: c.y, z0: c.z, x1: c.x + 1, y1: c.y + 1, z1: c.z + 1 },
+      S.selColor,
+    ); // paintBox only touches already-filled cells
+    S.lastVox = k;
   }
-  S.lastVox = k;
   updateVoxHover(t);
 }
 function updateVoxHover(t: Pick = pickVoxel()): void {
@@ -224,18 +223,19 @@ function boxExtent() {
 }
 function commitBox(): void {
   const x = boxExtent();
-  for (let i = x.x0; i <= x.x1; i++) {
-    for (let j = x.y0; j <= x.y1; j++) {
-      for (let k = x.z0; k <= x.z1; k++) {
-        if (S.tool === "add") editSet(i, j, k, S.selColor, true);
-        else editDelete(i, j, k, true);
-      }
-    }
-  }
-  markDirtyRange(x.x0, x.y0, x.z0, x.x1, x.y1, x.z1);
+  // boxExtent is inclusive; box regions are half-open
+  const r = {
+    x0: x.x0,
+    y0: x.y0,
+    z0: x.z0,
+    x1: x.x1 + 1,
+    y1: x.y1 + 1,
+    z1: x.z1 + 1,
+  };
+  if (S.tool === "add") editAdd(r, S.selColor);
+  else editErase(r);
   S.liveMeas = null;
   renderMeasure();
-  invalidateField();
   updateChrome();
   save();
 }
@@ -267,9 +267,10 @@ function renderBox(): void {
     nolabel: !label,
   });
   const o: Seg[] = [];
-  o.push(seg(X0, Y0, Z0, X1, Y0, Z0, nx, true)); // X dimension
-  o.push(seg(X0, Y0, Z0, X0, Y0, Z1, nz, true)); // Z dimension
-  o.push(seg(X0, Y0, Z0, X0, Y1, Z0, ny, true)); // Y dimension
+  // label a dimension only when it's >= 2: a "1" is crammed and self-evident
+  o.push(seg(X0, Y0, Z0, X1, Y0, Z0, nx, nx >= 2)); // X dimension
+  o.push(seg(X0, Y0, Z0, X0, Y0, Z1, nz, nz >= 2)); // Z dimension
+  o.push(seg(X0, Y0, Z0, X0, Y1, Z0, ny, ny >= 2)); // Y dimension
   o.push(
     seg(X1, Y0, Z0, X1, Y0, Z1, 0, false),
     seg(X0, Y0, Z1, X1, Y0, Z1, 0, false),

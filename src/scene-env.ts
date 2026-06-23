@@ -10,7 +10,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 export const scene = new THREE.Scene();
-scene.background = new THREE.Color("#0f1115");
+scene.background = new THREE.Color("#7aa0c4"); // fallback; the sky quad covers it
 
 export const ISO_ELEV = Math.atan(1 / Math.SQRT2);
 export const cam = {
@@ -28,6 +28,37 @@ export const goal = {
 export const CAM_DIST = 900;
 export const ZOOM_MAX = 2000; // max orthographic view height (zoom-out limit)
 export const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
+
+// Sky: a full-screen vertical gradient. Looking down from above the ground we
+// see the world, so the backdrop is green; looking up from below it's blue. A
+// short blend across the side-on angle avoids a hard pop. (No true horizon —
+// that doesn't survive an orthographic projection.)
+const skyU = { uGround: { value: 1 } }; // 1 = green (above), 0 = blue (below)
+const sky = new THREE.Mesh(
+  new THREE.PlaneGeometry(2, 2),
+  new THREE.ShaderMaterial({
+    uniforms: skyU,
+    depthWrite: false,
+    depthTest: false,
+    vertexShader:
+      `varying vec2 vN; void main(){ vN = position.xy; gl_Position = vec4(position.xy, 1.0, 1.0); }`,
+    fragmentShader: `precision highp float;
+      varying vec2 vN; uniform float uGround;
+      void main(){
+        float t = (vN.y + 1.0) * 0.5; // 0 bottom .. 1 top
+        vec3 grn = mix(vec3(0.24, 0.33, 0.19), vec3(0.42, 0.55, 0.34), t);
+        vec3 blu = mix(vec3(0.62, 0.74, 0.86), vec3(0.20, 0.40, 0.62), t);
+        gl_FragColor = vec4(mix(blu, grn, uGround), 1.0);
+      }`,
+  }),
+);
+sky.frustumCulled = false;
+sky.renderOrder = -1e9; // draw before everything
+scene.add(sky);
+export function updateSky(): void {
+  // ramp green<->blue across a few degrees either side of side-on (elev 0)
+  skyU.uGround.value = Math.max(0, Math.min(1, (cam.elev + 0.05) / 0.1));
+}
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.62));
 export const dir = new THREE.DirectionalLight(0xffffff, 0.78);
@@ -122,14 +153,12 @@ export const FACE = [
 ];
 export const AO = [0.5, 0.74, 0.88, 1]; // brightness by exposure (0 = corner most occluded)
 
-// floor: a semi-transparent black plane (always shown), also catches shadows
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(4000, 4000),
-  new THREE.MeshLambertMaterial({
-    color: 0x000000,
-    transparent: true,
-    opacity: 0.32,
-  }),
+// ground: an invisible shadow catcher at y=0 (no visible plane/edges — the
+// "ground" is the green lower half of the backdrop). Follows the camera target
+// (see updateCamera) so shadows stay under the view at any pan.
+export const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(8000, 8000),
+  new THREE.ShadowMaterial({ opacity: 0.32 }),
 );
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = 0;

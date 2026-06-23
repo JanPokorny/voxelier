@@ -2,7 +2,8 @@
 // object/scene tree (thumbnails, row clicks, context menu, drag & drop) and the
 // global keyboard shortcuts. Attaches its window/tree listeners on import.
 import { S } from "./state.ts";
-import { addv, hex, keyToWorld, rotY } from "./math.ts";
+import { addv, hex, rotY } from "./math.ts";
+import { boundaryCells, buildIndex, cellCount, colorCounts } from "./boxes.ts";
 import { hoverVox } from "./scene-env.ts";
 import { clearMeasure, measureActive } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
@@ -118,16 +119,15 @@ export function updateChrome(): void {
       : "Tree: click a row to enter it · double-click to fit · right-click for actions · N new object");
 }
 
-// distinct colours used in the scene, most-used first. Cached by S.voxVer so it
-// isn't recomputed over every voxel on each chrome refresh (e.g. after a box fill).
+// distinct colours used in the scene, most-used (by cell volume) first. Cached by
+// S.voxVer so it isn't recomputed on every chrome refresh.
 let _scCache: { ver: number; cols: number[] } = { ver: -1, cols: [] };
 function sceneColors(): number[] {
   if (_scCache.ver === S.voxVer) return _scCache.cols;
   const m = new Map<number, number>();
   (function rec(n: Node) {
-    if (n.type === "object") {
-      for (const [, c] of n.voxels) m.set(c, (m.get(c) || 0) + 1);
-    } else n.children.forEach(rec);
+    if (n.type === "object") colorCounts(n.boxes, m);
+    else n.children.forEach(rec);
   })(S.root);
   _scCache = {
     ver: S.voxVer,
@@ -238,7 +238,7 @@ function closePalette(): boolean {
 }
 
 // ---- object/scene tree ----
-// collect a node's own voxels in local space (for the thumbnail)
+// collect a node's surface cells in local space (for the thumbnail)
 type ThumbVox = { x: number; y: number; z: number; c: number };
 function localVoxels(
   node: Node,
@@ -247,9 +247,12 @@ function localVoxels(
   out: ThumbVox[],
 ): ThumbVox[] {
   if (node.type === "object") {
-    for (const [k, c] of node.voxels) {
-      const w = keyToWorld(k, rot, off);
-      out.push({ x: w.x, y: w.y, z: w.z, c });
+    // cap: a huge object has millions of surface cells; a sample is plenty here
+    for (
+      const cell of boundaryCells(node.boxes, buildIndex(node.boxes), 8000)
+    ) {
+      const w = addv(rotY(cell, rot), off);
+      out.push({ x: w.x, y: w.y, z: w.z, c: cell.c });
     }
   } else {for (const ch of node.children) {
       localVoxels(ch, addv(off, rotY(ch.pos, rot)), (rot + ch.rot) & 3, out);
@@ -259,7 +262,7 @@ function localVoxels(
 const thumbCache = new Map<string, { sig: string; cv: HTMLCanvasElement }>();
 function thumbSig(node: Node): string {
   return node.type === "object"
-    ? "o" + node.voxels.size
+    ? "o" + node.boxes.length + ":" + cellCount(node.boxes)
     : "s" + node.children.map((c) => c.id + thumbSig(c)).join();
 }
 function thumbFor(node: Node): HTMLCanvasElement {

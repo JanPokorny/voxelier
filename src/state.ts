@@ -14,7 +14,6 @@ import type {
   SceneNode,
   Seg,
   Tool,
-  VoxelMap,
   Xform,
 } from "./types.ts";
 
@@ -35,14 +34,13 @@ export type State = {
   pickMeshes: THREE.Mesh[]; // meshes raycast for picking
   childMeshes: Record<string, THREE.Mesh[]>; // childId -> [meshes] (scene mode)
   childBox: Record<string, Box>; // childId -> {min,max}
+  sceneBox: Box | null; // world AABB of all geometry (for camera depth + shadows)
   editXform: Xform;
 
-  // ---- edited object: chunked surface meshing ----
-  editChunkVox: Map<number, VoxelMap>; // chunkKey -> Map<voxelKey,color>
-  editChunkMesh: Map<number, THREE.Mesh>; // chunkKey -> THREE.Mesh
-  editDirty: Set<number>; // chunkKeys awaiting a re-mesh
+  // ---- edited object: surface mesh (rebuilt on edit, rAF-debounced) ----
+  editMesh: THREE.Mesh | null;
   editRemesh: number; // pending requestAnimationFrame id
-  voxVer: number; // bumped on any voxel change (chrome/colour caches)
+  voxVer: number; // bumped on any box change (chrome/colour caches)
 
   // ---- pointer interaction ----
   painting: boolean;
@@ -82,11 +80,10 @@ export const S: State = {
   pickMeshes: [],
   childMeshes: {},
   childBox: {},
+  sceneBox: null,
   editXform: { off: { x: 0, y: 0, z: 0 }, rot: 0 },
 
-  editChunkVox: new Map(),
-  editChunkMesh: new Map(),
-  editDirty: new Set(),
+  editMesh: null,
   editRemesh: 0,
   voxVer: 0,
 

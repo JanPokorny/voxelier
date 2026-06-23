@@ -5,9 +5,11 @@ import { peekUid, seedUid } from "./math.ts";
 import { record } from "./history.ts";
 import type { Node, ObjectNode, SceneNode, Vis } from "./types.ts";
 
-const LS = "voxelier-v10"; // v10: furnished M.03 room (separate floor/walls)
+const LS = "voxelier-v11"; // v11: box model — objects serialise as colour boxes
 
 // The on-disk / localStorage shape (compact field names), distinct from `Node`.
+// A box serialises as the 7-tuple [x0,y0,z0,x1,y1,z1,colour].
+type SerBox = [number, number, number, number, number, number, number];
 type SerBase = {
   id: string;
   nm: string;
@@ -15,7 +17,7 @@ type SerBase = {
   r: Node["rot"];
   vs: Vis;
 };
-type SerObject = SerBase & { t: "o"; v: [number, number][] };
+type SerObject = SerBase & { t: "o"; b: SerBox[] };
 type SerScene = SerBase & { t: "s"; c: SerNode[] };
 export type SerNode = SerObject | SerScene;
 
@@ -28,7 +30,11 @@ export function ser(n: Node): SerNode {
     vs: n.vis || "visible",
   };
   return n.type === "object"
-    ? { t: "o", ...b, v: [...n.voxels] }
+    ? {
+      t: "o",
+      ...b,
+      b: n.boxes.map((x): SerBox => [x.x0, x.y0, x.z0, x.x1, x.y1, x.z1, x.c]),
+    }
     : { t: "s", ...b, c: n.children.map(ser) };
 }
 export function de(d: SerNode): Node {
@@ -40,7 +46,19 @@ export function de(d: SerNode): Node {
     vis: d.vs || "visible",
   };
   return d.t === "o"
-    ? { type: "object", ...b, voxels: new Map(d.v) } as ObjectNode
+    ? {
+      type: "object",
+      ...b,
+      boxes: d.b.map((a) => ({
+        x0: a[0],
+        y0: a[1],
+        z0: a[2],
+        x1: a[3],
+        y1: a[4],
+        z1: a[5],
+        c: a[6],
+      })),
+    } as ObjectNode
     : { type: "scene", ...b, children: d.c.map(de) } as SceneNode;
 }
 // Snapshotting (whole-document JSON for undo) and persistence both serialise the

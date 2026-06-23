@@ -1,8 +1,9 @@
 // The data model: node factories, visibility tables, tree queries, accumulated
-// transforms and node AABBs. A node is an `object` (a Map of voxels) or a
+// transforms and node AABBs. A node is an `object` (a set of colour boxes) or a
 // `scene` (a group of children); the document root is a scene.
 import { S } from "./state.ts";
-import { addv, keyToWorld, pathXform, rotY, uid } from "./math.ts";
+import { addv, pathXform, rotY, uid } from "./math.ts";
+import { growBounds, worldBox } from "./boxes.ts";
 import type {
   Box,
   Node,
@@ -53,7 +54,7 @@ export const newObject = (): ObjectNode => ({
   pos: { x: 0, y: 0, z: 0 },
   rot: 0,
   vis: "visible",
-  voxels: new Map(),
+  boxes: [],
 });
 export const newScene = (): SceneNode => ({
   type: "scene",
@@ -73,7 +74,7 @@ export function clone(n: Node): Node {
     vis: n.vis,
   };
   return n.type === "object"
-    ? { type: "object", ...base, voxels: new Map(n.voxels) }
+    ? { type: "object", ...base, boxes: n.boxes.map((b) => ({ ...b })) }
     : { type: "scene", ...base, children: n.children.map(clone) };
 }
 
@@ -136,10 +137,7 @@ export const growBox = (b: Box, x: number, y: number, z: number): void => {
 // world AABB of a node given an accumulated transform
 export function nodeBox(node: Node, off: Vec, rot: Rot, box: Box): Box {
   if (node.type === "object") {
-    for (const [k] of node.voxels) {
-      const w = keyToWorld(k, rot, off);
-      growBox(box, w.x, w.y, w.z);
-    }
+    growBounds(node.boxes.map((b) => worldBox(b, rot, off)), box);
   } else {
     for (const ch of node.children) {
       nodeBox(ch, addv(off, rotY(ch.pos, rot)), (rot + ch.rot) & 3, box);
