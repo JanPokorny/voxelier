@@ -6,7 +6,14 @@
 import * as THREE from "three";
 import { S } from "./state.ts";
 import { addv, rotY, xcompose } from "./math.ts";
-import { addBox, eraseBox, growBounds, paintBox, worldBox } from "./boxes.ts";
+import {
+  addBox,
+  buildIndex,
+  eraseBox,
+  growBounds,
+  paintBox,
+  worldBox,
+} from "./boxes.ts";
 import {
   boxGeo,
   col,
@@ -85,18 +92,35 @@ const FACE6 = [
   { a: 2, hi: false, u: 1, v: 0, n: [0, 0, -1] },
 ] as const;
 type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
+// brightness by number of occluding outside-layer cells around a face vertex
+// (0 = open -> full bright, 3 = deep concave corner -> darkest), matching the old
+// baked edge AO ramp.
+const AO4 = [1.0, 0.88, 0.74, 0.5];
+// grid lines splitting [lo,hi) into a 1-cell border + a single interior span, so
+// AO is localised to within one cell of a face's edges (the interior stays one
+// bright quad regardless of size).
+function splitCoords(lo: number, hi: number): number[] {
+  const c = [lo];
+  if (lo + 1 < hi) c.push(lo + 1);
+  if (hi - 1 > lo + 1) c.push(hi - 1);
+  c.push(hi);
+  return c;
+}
 function boxFaceGeo(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
+  ao: boolean,
 ): THREE.BufferGeometry | null {
   const pos: number[] = [], nor: number[] = [], colr: number[] = [];
   const lo = boxes.map((b) => [b.x0, b.y0, b.z0]);
   const hi = boxes.map((b) => [b.x1, b.y1, b.z1]);
+  const has = ao ? buildIndex(boxes) : null; // for AO occluder sampling
   for (let i = 0; i < boxes.length; i++) {
     const c = colorOf(boxes[i].c), cr = c.r, cg = c.g, cb = c.b;
     const blo = lo[i], bhi = hi[i];
     for (const f of FACE6) {
       const { a, u, v } = f, plane = f.hi ? bhi[a] : blo[a];
+      const wo = f.hi ? plane : plane - 1; // outside cell layer, for AO sampling
       // faces of neighbouring boxes that abut (and so hide) this one
       const covers: Rect[] = [];
       for (let j = 0; j < boxes.length; j++) {
@@ -127,22 +151,40 @@ function boxFaceGeo(
         pieces = next;
         if (!pieces.length) break;
       }
-      const corner = (uu: number, vv: number): [number, number, number] => {
-        const o: [number, number, number] = [0, 0, 0];
+      // AO at a face grid vertex = how many of the 4 outside-layer cells meeting
+      // there are filled (the empty side over the face never counts).
+      const aoAt = (uu: number, vv: number): number => {
+        if (!has) return 1;
+        let occ = 0;
+        const cell = [0, 0, 0];
+        cell[a] = wo;
+        for (let du = -1; du <= 0; du++) {
+          for (let dv = -1; dv <= 0; dv++) {
+            cell[u] = uu + du;
+            cell[v] = vv + dv;
+            if (has(cell[0], cell[1], cell[2])) occ++;
+          }
+        }
+        return AO4[occ < 3 ? occ : 3];
+      };
+      const vert = (uu: number, vv: number) => {
+        const o = [0, 0, 0];
         o[a] = plane;
         o[u] = uu;
         o[v] = vv;
-        return o;
+        const b = aoAt(uu, vv);
+        pos.push(o[0], o[1], o[2]);
+        nor.push(f.n[0], f.n[1], f.n[2]);
+        colr.push(cr * b, cg * b, cb * b);
       };
       for (const p of pieces) {
-        const A = corner(p[0], p[1]),
-          B = corner(p[2], p[1]),
-          C = corner(p[2], p[3]),
-          D = corner(p[0], p[3]);
-        for (const q of [A, B, C, A, C, D]) {
-          pos.push(q[0], q[1], q[2]);
-          nor.push(f.n[0], f.n[1], f.n[2]);
-          colr.push(cr, cg, cb);
+        const us = splitCoords(p[0], p[2]), vs = splitCoords(p[1], p[3]);
+        for (let iu = 0; iu < us.length - 1; iu++) {
+          for (let iv = 0; iv < vs.length - 1; iv++) {
+            const ua = us[iu], ub = us[iu + 1], va = vs[iv], vb = vs[iv + 1];
+            vert(ua, va), vert(ub, va), vert(ub, vb);
+            vert(ua, va), vert(ub, vb), vert(ua, vb);
+          }
         }
       }
     }
@@ -155,7 +197,8 @@ function boxFaceGeo(
   return g;
 }
 
-// Mesh one solid (a world box list) as a surface; transparent ones read as glass.
+// Mesh one solid (a world box list) as a surface; transparent ones read as glass
+// (and skip AO).
 function meshSurface(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
@@ -166,7 +209,7 @@ function meshSurface(
   } = {},
 ): THREE.Mesh | null {
   if (!boxes.length) return null;
-  const g = boxFaceGeo(boxes, colorOf);
+  const g = boxFaceGeo(boxes, colorOf, !transparent);
   if (!g) return null;
   const m = new THREE.Mesh(g, transparent ? matGlass : matSurf);
   m.castShadow = true;
@@ -249,7 +292,7 @@ export function buildEditMesh(): void {
     const i = S.meshes.indexOf(S.editMesh);
     if (i >= 0) S.meshes.splice(i, 1);
   }
-  const g = boxFaceGeo(S.editObject!.boxes, col);
+  const g = boxFaceGeo(S.editObject!.boxes, col, true);
   S.editMesh = g ? new THREE.Mesh(g, matSurf) : null;
   if (S.editMesh) {
     S.editMesh.castShadow = S.editMesh.receiveShadow = true;
