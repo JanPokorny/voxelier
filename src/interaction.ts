@@ -197,25 +197,44 @@ function startBox(
     shiftAnchorY: null,
     hyBase: 0,
     box: { x0: s.x, y0: s.y, z0: s.z, x1: s.x, z1: s.z, hy: 0 },
+    // add collides with the object's own solids; snapshot them (immutable during
+    // the drag) so the box can't be dragged to overlap a filled cell (Alt: ignore)
+    occ: S.tool === "add" ? S.editObject!.boxes.slice() : undefined,
   };
   hoverVox.visible = false;
   renderBox();
 }
 function boxDragTo(e: PointerEvent): void {
   const d = S.drag!, b = d.box!;
+  // would the box with this corner/height clear every solid? (Alt ignores them)
+  const collide = S.tool === "add" && !e.altKey;
+  const clear = (x1: number, z1: number, hy: number): boolean => {
+    if (!collide) return true;
+    const r: Box3 = {
+      x0: Math.min(b.x0, x1),
+      y0: Math.min(b.y0, b.y0 + hy),
+      z0: Math.min(b.z0, z1),
+      x1: Math.max(b.x0, x1) + 1,
+      y1: Math.max(b.y0, b.y0 + hy) + 1,
+      z1: Math.max(b.z0, z1) + 1,
+      c: 0,
+    };
+    return !boxesOverlap([r], d.occ ?? [], 0, 0, 0);
+  };
   if (e.shiftKey) { // vertical extrude (like moving objects with Shift)
     if (d.shiftAnchorY === null) {
       d.shiftAnchorY = e.clientY;
       d.hyBase = b.hy;
     }
-    b.hy = d.hyBase! +
+    const hy = d.hyBase! +
       Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel());
+    if (clear(b.x1, b.z1, hy)) b.hy = hy; // else stop at the last clear height
   } else { // horizontal footprint
     d.shiftAnchorY = null;
     const c = localGroundCell(b.y0);
-    if (c) {
-      b.x1 = c.x;
-      b.z1 = c.z;
+    if (c) { // advance each axis only where it stays clear (slides along solids)
+      if (clear(c.x, b.z1, b.hy)) b.x1 = c.x;
+      if (clear(b.x1, c.z, b.hy)) b.z1 = c.z;
     }
   }
   renderBox();
@@ -231,7 +250,7 @@ function boxExtent() {
     y1: Math.max(b.y0, b.y0 + b.hy),
   };
 }
-function commitBox(alt: boolean): void {
+function commitBox(): void {
   const x = boxExtent();
   // boxExtent is inclusive; box regions are half-open
   const r = {
@@ -242,8 +261,7 @@ function commitBox(alt: boolean): void {
     y1: x.y1 + 1,
     z1: x.z1 + 1,
   };
-  // add collides with existing solids (fills only empty cells); Alt overwrites
-  if (S.tool === "add") editAdd(r, S.selColor, !alt);
+  if (S.tool === "add") editAdd(r, S.selColor);
   else editErase(r);
   S.liveMeas = null;
   renderMeasure();
@@ -388,7 +406,7 @@ canvas.addEventListener("pointerup", (e) => {
       S.painting = false;
       updateChrome();
       save();
-    } else if (S.drag && S.drag.mode === "box") commitBox(e.altKey);
+    } else if (S.drag && S.drag.mode === "box") commitBox();
     S.drag = null;
     return;
   }

@@ -8,7 +8,6 @@ import { S } from "./state.ts";
 import { addv, rotY, xcompose } from "./math.ts";
 import {
   addBox,
-  addBoxOnto,
   buildIndex,
   eraseBox,
   growBounds,
@@ -342,10 +341,8 @@ function afterEdit(): void {
 }
 // Edited-object box ops (region is half-open [x0,x1)×…). add lays colour `c`,
 // erase carves, paint recolours only already-filled cells.
-export function editAdd(r: Region, c: number, collide = false): void {
-  S.editObject!.boxes = collide
-    ? addBoxOnto(S.editObject!.boxes, r, c) // solids block the add
-    : addBox(S.editObject!.boxes, r, c); // overwrite (Alt)
+export function editAdd(r: Region, c: number): void {
+  S.editObject!.boxes = addBox(S.editObject!.boxes, r, c);
   afterEdit();
 }
 export function editErase(r: Region): void {
