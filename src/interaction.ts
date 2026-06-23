@@ -321,6 +321,10 @@ function renderBox(): void {
 }
 
 canvas.addEventListener("pointerdown", (e) => {
+  // a gesture is single-button: ignore extra buttons pressed while one is held
+  // (mouse buttons share a pointerId). Replacing S.drag/ignoring S.painting here
+  // would orphan an in-progress move/box/paint that only its pointerup finalises.
+  if (S.drag || S.painting) return;
   canvas.setPointerCapture(e.pointerId);
   setNdc(e.clientX, e.clientY);
   const base = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY };
