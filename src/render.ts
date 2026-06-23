@@ -63,9 +63,9 @@ function fitShadow(box: Box): void {
   sc.near = Math.max(1, d - R - 20);
   sc.far = d + R + 20;
   sc.updateProjectionMatrix();
-  // bias ~1 shadow texel (texel = 2R / mapSize) so the shadow meets the contact
-  // edge without peter-panning, regardless of how big the fitted frustum is
-  dir.shadow.normalBias = (2 * R) / dir.shadow.mapSize.x;
+  // bias ~half a shadow texel (texel = 2R / mapSize): enough to avoid acne but
+  // small enough that the shadow still meets contact edges (no light rim)
+  dir.shadow.normalBias = R / dir.shadow.mapSize.x;
 }
 
 export function disposeMeshes(): void {
@@ -99,16 +99,6 @@ type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
 // (0 = open -> full bright, 3 = deep concave corner -> darkest), matching the old
 // baked edge AO ramp.
 const AO4 = [1.0, 0.88, 0.74, 0.5];
-// grid lines splitting [lo,hi) into a 1-cell border + a single interior span, so
-// AO is localised to within one cell of a face's edges (the interior stays one
-// bright quad regardless of size).
-function splitCoords(lo: number, hi: number): number[] {
-  const c = [lo];
-  if (lo + 1 < hi) c.push(lo + 1);
-  if (hi - 1 > lo + 1) c.push(hi - 1);
-  c.push(hi);
-  return c;
-}
 function boxFaceGeo(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
@@ -154,40 +144,70 @@ function boxFaceGeo(
         pieces = next;
         if (!pieces.length) break;
       }
-      // AO at a face grid vertex = how many of the 4 outside-layer cells meeting
-      // there are filled (the empty side over the face never counts).
-      const aoAt = (uu: number, vv: number): number => {
-        if (!has) return 1;
-        let occ = 0;
+      // Flat per-cell AO on a 1-cell border ring (interior stays one bright
+      // quad). Flat shading -> no cross-cell interpolation, so split seams and
+      // convex edges read identically on both sides — no stray light/dark lines.
+      const occAt = (cu: number, cv: number): number => {
+        let n = 0;
         const cell = [0, 0, 0];
         cell[a] = wo;
         for (let du = -1; du <= 0; du++) {
           for (let dv = -1; dv <= 0; dv++) {
-            cell[u] = uu + du;
-            cell[v] = vv + dv;
-            if (has(cell[0], cell[1], cell[2])) occ++;
+            cell[u] = cu + du;
+            cell[v] = cv + dv;
+            if (has!(cell[0], cell[1], cell[2])) n++;
           }
         }
-        return AO4[occ < 3 ? occ : 3];
+        return n;
       };
-      const vert = (uu: number, vv: number) => {
+      const cellBright = (cu: number, cv: number): number =>
+        (AO4[Math.min(occAt(cu, cv), 3)] +
+          AO4[Math.min(occAt(cu + 1, cv), 3)] +
+          AO4[Math.min(occAt(cu + 1, cv + 1), 3)] +
+          AO4[Math.min(occAt(cu, cv + 1), 3)]) / 4;
+      const quad = (
+        qu0: number,
+        qv0: number,
+        qu1: number,
+        qv1: number,
+        br: number,
+      ) => {
         const o = [0, 0, 0];
-        o[a] = plane;
-        o[u] = uu;
-        o[v] = vv;
-        const b = aoAt(uu, vv);
-        pos.push(o[0], o[1], o[2]);
-        nor.push(f.n[0], f.n[1], f.n[2]);
-        colr.push(cr * b, cg * b, cb * b);
+        const P = (uu: number, vv: number): [number, number, number] => {
+          o[a] = plane;
+          o[u] = uu;
+          o[v] = vv;
+          return [o[0], o[1], o[2]];
+        };
+        const A = P(qu0, qv0),
+          B = P(qu1, qv0),
+          C = P(qu1, qv1),
+          D = P(qu0, qv1);
+        const R = cr * br, G = cg * br, Bl = cb * br;
+        for (const q of [A, B, C, A, C, D]) {
+          pos.push(q[0], q[1], q[2]);
+          nor.push(f.n[0], f.n[1], f.n[2]);
+          colr.push(R, G, Bl);
+        }
       };
       for (const p of pieces) {
-        const us = splitCoords(p[0], p[2]), vs = splitCoords(p[1], p[3]);
-        for (let iu = 0; iu < us.length - 1; iu++) {
-          for (let iv = 0; iv < vs.length - 1; iv++) {
-            const ua = us[iu], ub = us[iu + 1], va = vs[iv], vb = vs[iv + 1];
-            vert(ua, va), vert(ub, va), vert(ub, vb);
-            vert(ua, va), vert(ub, vb), vert(ua, vb);
-          }
+        const [pu0, pv0, pu1, pv1] = p;
+        if (!has) { // glass: no AO, one quad
+          quad(pu0, pv0, pu1, pv1, 1);
+          continue;
+        }
+        const cell = (cu: number, cv: number) =>
+          quad(cu, cv, cu + 1, cv + 1, cellBright(cu, cv));
+        for (let cu = pu0; cu < pu1; cu++) { // bottom & top rows of the ring
+          cell(cu, pv0);
+          if (pv1 - 1 > pv0) cell(cu, pv1 - 1);
+        }
+        for (let cv = pv0 + 1; cv < pv1 - 1; cv++) { // left & right columns
+          cell(pu0, cv);
+          if (pu1 - 1 > pu0) cell(pu1 - 1, cv);
+        }
+        if (pu0 + 1 < pu1 - 1 && pv0 + 1 < pv1 - 1) {
+          quad(pu0 + 1, pv0 + 1, pu1 - 1, pv1 - 1, 1); // bright interior
         }
       }
     }
