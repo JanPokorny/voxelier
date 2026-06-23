@@ -79,7 +79,7 @@ function restore(snap: Snap): void {
   S.lastVox = null;
   rebuild();
   updateChrome();
-  save(); // persist; record() bails (restoring still true)
+  save(); // persist; the debounced record() dedups against the unchanged snapshot
   restoring = false;
 }
 
