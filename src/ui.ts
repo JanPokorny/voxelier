@@ -247,7 +247,10 @@ function localVoxels(
   out: ThumbVox[],
 ): ThumbVox[] {
   if (node.type === "object") {
-    for (const cell of boundaryCells(node.boxes, buildIndex(node.boxes))) {
+    // cap: a huge object has millions of surface cells; a sample is plenty here
+    for (
+      const cell of boundaryCells(node.boxes, buildIndex(node.boxes), 8000)
+    ) {
       const w = addv(rotY(cell, rot), off);
       out.push({ x: w.x, y: w.y, z: w.z, c: cell.c });
     }

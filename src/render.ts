@@ -1,28 +1,18 @@
 // Scene meshing for the box model: gather each object's colour boxes in world
-// space, emit just the surface cells of the union (boundaryCells), and feed them
-// to the per-cell mesher (surfaceGeo) with a grid-indexed has() so baked edge AO
-// still works — but interior cells are never visited. The edited object is meshed
-// on its own in object-local space and rebuilt (rAF-debounced) as boxes change.
+// space and greedily mesh them (boxFaceGeo) — one merged quad per exposed face
+// rectangle, so cost is O(boxes), not O(surface cells). The edited object is
+// meshed on its own in object-local space, rebuilt (rAF-debounced) as boxes
+// change. (Trade-off: no baked per-cell edge AO; shading is directional + shadows.)
 import * as THREE from "three";
 import { S } from "./state.ts";
 import { addv, rotY, xcompose } from "./math.ts";
+import { addBox, eraseBox, growBounds, paintBox, worldBox } from "./boxes.ts";
 import {
-  addBox,
-  boundaryCells,
-  buildIndex,
-  eraseBox,
-  growBounds,
-  paintBox,
-  worldBox,
-} from "./boxes.ts";
-import {
-  AO,
   boxGeo,
   col,
   dimCol,
   dir,
   editGroup,
-  FACE,
   matGlass,
   matGlassDepth,
   matSurf,
@@ -32,16 +22,7 @@ import {
 } from "./scene-env.ts";
 import { contextXform, emptyBox, nodeBox, VIS } from "./model.ts";
 import { invalidateField } from "./measure.ts";
-import type {
-  Box,
-  Box3,
-  Cell,
-  Node,
-  ObjectNode,
-  Region,
-  Rot,
-  Vec,
-} from "./types.ts";
+import type { Box, Box3, Node, ObjectNode, Region, Rot, Vec } from "./types.ts";
 
 // Fixed key-light direction (the original +50,+110,+38 offset, normalised). The
 // light + its shadow camera are anchored to the scene's world bounds — not the
@@ -91,53 +72,78 @@ export function disposeMeshes(): void {
   S.editMesh = null;
 }
 
-// Core surface mesher: build a BufferGeometry of the exterior faces of `arr`,
-// culling internal faces and baking per-vertex edge AO against the full field via
-// has(x,y,z). `arr` holds only surface cells, but has() answers for the whole
-// solid, so the result is identical to meshing every cell.
-// Per face, per corner: the three AO probe offsets (relative to the empty
-// neighbour cell). Precomputed once so the inner mesher does pure has() lookups
-// and zero per-vertex allocation.
-const FACE_AO = FACE.map((f) =>
-  f.v.map((w) => {
-    const sa = w[f.a] ? 1 : -1, sb = w[f.b] ? 1 : -1;
-    const ax = [0, 0, 0], bx = [0, 0, 0];
-    ax[f.a] = sa;
-    bx[f.b] = sb;
-    return [ax, bx, [ax[0] + bx[0], ax[1] + bx[1], ax[2] + bx[2]]];
-  })
-);
-const TRI = [0, 1, 2, 0, 2, 3];
-function surfaceGeo(
-  arr: Cell[],
-  has: (x: number, y: number, z: number) => boolean,
+// Greedy box-face mesher: one merged quad per exposed face rectangle, so cost is
+// O(boxes), not O(surface cells) — a 1000³ box is six quads, not six million.
+// The six faces, each as { axis, high side, the two in-plane axes ordered so the
+// quad winds CCW toward an outward normal }.
+const FACE6 = [
+  { a: 0, hi: true, u: 1, v: 2, n: [1, 0, 0] },
+  { a: 0, hi: false, u: 2, v: 1, n: [-1, 0, 0] },
+  { a: 1, hi: true, u: 2, v: 0, n: [0, 1, 0] },
+  { a: 1, hi: false, u: 0, v: 2, n: [0, -1, 0] },
+  { a: 2, hi: true, u: 0, v: 1, n: [0, 0, 1] },
+  { a: 2, hi: false, u: 1, v: 0, n: [0, 0, -1] },
+] as const;
+type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
+function boxFaceGeo(
+  boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
-  ao: boolean,
 ): THREE.BufferGeometry | null {
   const pos: number[] = [], nor: number[] = [], colr: number[] = [];
-  const bri = [1, 1, 1, 1];
-  for (const d of arr) {
-    const c = colorOf(d.c), cr = c.r, cg = c.g, cb = c.b;
-    for (let fi = 0; fi < 6; fi++) {
-      const f = FACE[fi], dx = f.d[0], dy = f.d[1], dz = f.d[2];
-      const nx = d.x + dx, ny = d.y + dy, nz = d.z + dz;
-      if (has(nx, ny, nz)) continue; // hidden internal face
-      if (ao) {
-        const fa = FACE_AO[fi];
-        for (let i = 0; i < 4; i++) {
-          const [oa, ob, oc] = fa[i];
-          const A = has(nx + oa[0], ny + oa[1], nz + oa[2]),
-            B = has(nx + ob[0], ny + ob[1], nz + ob[2]),
-            C = has(nx + oc[0], ny + oc[1], nz + oc[2]);
-          bri[i] =
-            AO[(A && B) ? 0 : 3 - ((A ? 1 : 0) + (B ? 1 : 0) + (C ? 1 : 0))];
-        }
+  const lo = boxes.map((b) => [b.x0, b.y0, b.z0]);
+  const hi = boxes.map((b) => [b.x1, b.y1, b.z1]);
+  for (let i = 0; i < boxes.length; i++) {
+    const c = colorOf(boxes[i].c), cr = c.r, cg = c.g, cb = c.b;
+    const blo = lo[i], bhi = hi[i];
+    for (const f of FACE6) {
+      const { a, u, v } = f, plane = f.hi ? bhi[a] : blo[a];
+      // faces of neighbouring boxes that abut (and so hide) this one
+      const covers: Rect[] = [];
+      for (let j = 0; j < boxes.length; j++) {
+        if (j === i) continue;
+        if ((f.hi ? lo[j][a] : hi[j][a]) !== plane) continue; // not abutting
+        const u0 = Math.max(lo[j][u], blo[u]), u1 = Math.min(hi[j][u], bhi[u]);
+        const v0 = Math.max(lo[j][v], blo[v]), v1 = Math.min(hi[j][v], bhi[v]);
+        if (u0 < u1 && v0 < v1) covers.push([u0, v0, u1, v1]);
       }
-      for (const i of TRI) {
-        const w = f.v[i], b = bri[i];
-        pos.push(d.x + w[0], d.y + w[1], d.z + w[2]);
-        nor.push(dx, dy, dz);
-        colr.push(cr * b, cg * b, cb * b);
+      // face rectangle minus the covered rectangles -> exposed sub-rectangles
+      let pieces: Rect[] = [[blo[u], blo[v], bhi[u], bhi[v]]];
+      for (const cv of covers) {
+        const next: Rect[] = [];
+        for (const p of pieces) {
+          const iu0 = Math.max(p[0], cv[0]),
+            iv0 = Math.max(p[1], cv[1]),
+            iu1 = Math.min(p[2], cv[2]),
+            iv1 = Math.min(p[3], cv[3]);
+          if (iu0 >= iu1 || iv0 >= iv1) {
+            next.push(p);
+            continue;
+          }
+          if (p[0] < iu0) next.push([p[0], p[1], iu0, p[3]]);
+          if (iu1 < p[2]) next.push([iu1, p[1], p[2], p[3]]);
+          if (p[1] < iv0) next.push([iu0, p[1], iu1, iv0]);
+          if (iv1 < p[3]) next.push([iu0, iv1, iu1, p[3]]);
+        }
+        pieces = next;
+        if (!pieces.length) break;
+      }
+      const corner = (uu: number, vv: number): [number, number, number] => {
+        const o: [number, number, number] = [0, 0, 0];
+        o[a] = plane;
+        o[u] = uu;
+        o[v] = vv;
+        return o;
+      };
+      for (const p of pieces) {
+        const A = corner(p[0], p[1]),
+          B = corner(p[2], p[1]),
+          C = corner(p[2], p[3]),
+          D = corner(p[0], p[3]);
+        for (const q of [A, B, C, A, C, D]) {
+          pos.push(q[0], q[1], q[2]);
+          nor.push(f.n[0], f.n[1], f.n[2]);
+          colr.push(cr, cg, cb);
+        }
       }
     }
   }
@@ -149,21 +155,18 @@ function surfaceGeo(
   return g;
 }
 
-// Mesh one solid (a world box list) as a surface. Opaque surfaces bake edge AO
-// into the vertex colours; transparent ones read as glass.
+// Mesh one solid (a world box list) as a surface; transparent ones read as glass.
 function meshSurface(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
-  { transparent = false, ao = false, pick = false, childId = null }: {
+  { transparent = false, pick = false, childId = null }: {
     transparent?: boolean;
-    ao?: boolean;
     pick?: boolean;
     childId?: string | null;
   } = {},
 ): THREE.Mesh | null {
   if (!boxes.length) return null;
-  const has = buildIndex(boxes);
-  const g = surfaceGeo(boundaryCells(boxes, has), has, colorOf, ao);
+  const g = boxFaceGeo(boxes, colorOf);
   if (!g) return null;
   const m = new THREE.Mesh(g, transparent ? matGlass : matSurf);
   m.castShadow = true;
@@ -246,9 +249,7 @@ export function buildEditMesh(): void {
     const i = S.meshes.indexOf(S.editMesh);
     if (i >= 0) S.meshes.splice(i, 1);
   }
-  const boxes = S.editObject!.boxes;
-  const has = buildIndex(boxes);
-  const g = surfaceGeo(boundaryCells(boxes, has), has, col, true);
+  const g = boxFaceGeo(S.editObject!.boxes, col);
   S.editMesh = g ? new THREE.Mesh(g, matSurf) : null;
   if (S.editMesh) {
     S.editMesh.castShadow = S.editMesh.receiveShadow = true;
@@ -327,12 +328,12 @@ export function rebuild(): void {
         growBounds(wb, S.childBox[owner] || (S.childBox[owner] = emptyBox()));
       } else (tr ? ctxT : ctxE).push(...wb);
     });
-    meshSurface(ctxE, (c) => dimCol(c), { ao: true });
+    meshSurface(ctxE, (c) => dimCol(c));
     meshSurface(ctxT, (c) => dimCol(c), { transparent: true });
     for (const id of new Set([...gE.keys(), ...gT.keys()])) {
       const e = gE.get(id);
       if (e) {
-        meshSurface(e, (c) => col(c), { ao: true, pick: true, childId: id });
+        meshSurface(e, (c) => col(c), { pick: true, childId: id });
       }
       const t = gT.get(id);
       if (t) meshSurface(t, (c) => col(c), { transparent: true }); // not pickable
