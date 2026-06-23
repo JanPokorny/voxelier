@@ -34,15 +34,8 @@ dir.castShadow = true;
 dir.shadow.mapSize.set(2048, 2048);
 dir.shadow.normalBias = 0.6;
 dir.shadow.bias = -0.0002;
-{
-  const s = dir.shadow.camera;
-  s.left = -70;
-  s.right = 70;
-  s.top = 70;
-  s.bottom = -70;
-  s.near = 1;
-  s.far = 400;
-}
+// the shadow frustum + light position are fitted to the scene bounds on each
+// rebuild (see render.ts), so shadows are stable as the camera pans/orbits
 scene.add(dir);
 scene.add(dir.target);
 const dir2 = new THREE.DirectionalLight(0xffffff, 0.16);

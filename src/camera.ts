@@ -1,17 +1,9 @@
 // Camera control: pan/orbit toward a smoothed goal, framing helpers, and the
-// per-frame interpolation that also tracks the key light onto the target.
+// per-frame camera interpolation. The key light is scene-anchored (set in
+// render's rebuild), so it stays put as the camera moves.
 import * as THREE from "three";
 import { S } from "./state.ts";
-import {
-  _up,
-  _upN,
-  cam,
-  CAM_DIST,
-  camera,
-  canvas,
-  dir,
-  goal,
-} from "./scene-env.ts";
+import { _up, _upN, cam, CAM_DIST, camera, canvas, goal } from "./scene-env.ts";
 import { emptyBox, nodeBox, worldXform } from "./model.ts";
 import type { Box, Node } from "./types.ts";
 
@@ -103,9 +95,6 @@ export function updateCamera(): void {
   if (_up.lengthSq() < 1e-6) _up.copy(_upN);
   camera.up.copy(_up.normalize());
   camera.lookAt(cam.target);
-  dir.position.set(cam.target.x + 50, 110, cam.target.z + 38);
-  dir.target.position.set(cam.target.x, 0, cam.target.z);
-  dir.target.updateMatrixWorld();
   const r = canvas.getBoundingClientRect(),
     a = r.width / r.height,
     h = cam.zoom,

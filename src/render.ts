@@ -9,6 +9,7 @@ import {
   boxGeo,
   col,
   dimCol,
+  dir,
   editGroup,
   FACE,
   matGlass,
@@ -18,9 +19,44 @@ import {
   scene,
   wake,
 } from "./scene-env.ts";
-import { contextXform, emptyBox, growBox, VIS } from "./model.ts";
+import { contextXform, emptyBox, growBox, nodeBox, VIS } from "./model.ts";
 import { invalidateField } from "./measure.ts";
-import type { Node, Rot, Vec, VoxelSink } from "./types.ts";
+import type { Box, Node, Rot, Vec, VoxelSink } from "./types.ts";
+
+// Fixed key-light direction (the original +50,+110,+38 offset, normalised). The
+// light + its shadow camera are anchored to the scene's world bounds — not the
+// view — so shadows don't shift when the camera pans or orbits.
+const LIGHT_DIR = new THREE.Vector3(50, 110, 38).normalize();
+function fitShadow(box: Box): void {
+  if (box.max.x < box.min.x) return; // empty scene: keep the prior frustum
+  const cx = (box.min.x + box.max.x) / 2,
+    cy = (box.min.y + box.max.y) / 2,
+    cz = (box.min.z + box.max.z) / 2;
+  // half the box diagonal covers the scene from any light angle
+  const R = 0.5 *
+      Math.hypot(
+        box.max.x - box.min.x,
+        box.max.y - box.min.y,
+        box.max.z - box.min.z,
+      ) +
+    8;
+  const d = R + 130; // set the light back far enough that the box stays in front
+  dir.position.set(
+    cx + LIGHT_DIR.x * d,
+    cy + LIGHT_DIR.y * d,
+    cz + LIGHT_DIR.z * d,
+  );
+  dir.target.position.set(cx, cy, cz);
+  dir.target.updateMatrixWorld();
+  const sc = dir.shadow.camera;
+  sc.left = -R;
+  sc.right = R;
+  sc.top = R;
+  sc.bottom = -R;
+  sc.near = Math.max(1, d - R - 20);
+  sc.far = d + R + 20;
+  sc.updateProjectionMatrix();
+}
 
 export function disposeMeshes(): void {
   for (const m of S.meshes) {
@@ -308,6 +344,7 @@ export function rebuild(): void {
   S.voxVer++;
   invalidateField();
   const O = { x: 0, y: 0, z: 0 };
+  const sceneBox = emptyBox(); // world bounds of all geometry, for shadow fitting
 
   if (S.editObject) {
     S.editXform = xcompose(contextXform(), {
@@ -315,9 +352,13 @@ export function rebuild(): void {
       rot: S.editObject.rot,
     });
     const all: Cell[] = [];
-    walk(S.root, O, 0, null, 0, (x, y, z, c) => all.push({ x, y, z, c }));
+    walk(S.root, O, 0, null, 0, (x, y, z, c) => {
+      all.push({ x, y, z, c });
+      growBox(sceneBox, x, y, z);
+    });
     addSurface(all, (c) => col(c), { transparent: true }); // everything else: transparent
     buildEditMesh(); // edited object: opaque, in 3D
+    nodeBox(S.editObject, S.editXform.off, S.editXform.rot, sceneBox); // walk skips it
   } else {
     // owner -> current context's children; otherwise dimmed (descended past).
     const gE: Record<string, Cell[]> = {},
@@ -325,6 +366,7 @@ export function rebuild(): void {
       ctxE: Cell[] = [],
       ctxT: Cell[] = [];
     walk(S.root, O, 0, null, 0, (x, y, z, c, owner, tr) => {
+      growBox(sceneBox, x, y, z);
       if (owner) {
         (tr ? (gT[owner] || (gT[owner] = [])) : (gE[owner] || (gE[owner] = [])))
           .push({ x, y, z, c });
@@ -344,6 +386,7 @@ export function rebuild(): void {
       if (gT[id]) addSurface(gT[id], (c) => col(c), { transparent: true }); // transparent: not pickable
     }
   }
+  fitShadow(sceneBox); // anchor the light/shadow frustum to the scene, not the view
   refreshOverlay();
   wake(); // the scene changed — make sure it gets drawn
 }
