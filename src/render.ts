@@ -442,6 +442,8 @@ export function refreshOverlay(): void {
   if (S.editObject) return;
   for (const id of S.selection) {
     const b = S.childBox[id];
-    if (b) overlay.add(boxLines(b.min, b.max, 0xf0e6d2));
+    // skip the empty-box sentinel (a selected object with no voxels) — its
+    // min>max would build a degenerate scene-spanning wireframe
+    if (b && b.max.x >= b.min.x) overlay.add(boxLines(b.min, b.max, 0xf0e6d2));
   }
 }
