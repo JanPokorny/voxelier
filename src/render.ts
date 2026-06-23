@@ -110,6 +110,7 @@ function boxFaceGeo(
   const lo = boxes.map((b) => [b.x0, b.y0, b.z0]);
   const hi = boxes.map((b) => [b.x1, b.y1, b.z1]);
   const has = ao ? buildIndex(boxes) : null; // for AO occluder sampling
+  const aoCell = [0, 0, 0]; // reused occluder-sample scratch (see occAt)
   for (let i = 0; i < boxes.length; i++) {
     const c = colorOf(boxes[i].c), cr = c.r, cg = c.g, cb = c.b;
     const blo = lo[i], bhi = hi[i];
@@ -151,7 +152,7 @@ function boxFaceGeo(
       // convex edges read identically on both sides — no stray light/dark lines.
       const occAt = (cu: number, cv: number): number => {
         let n = 0;
-        const cell = [0, 0, 0];
+        const cell = aoCell; // {a,u,v} is a permutation of 0..2, so all 3 slots are rewritten below
         cell[a] = wo;
         for (let du = -1; du <= 0; du++) {
           for (let dv = -1; dv <= 0; dv++) {
