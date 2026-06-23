@@ -63,6 +63,9 @@ function fitShadow(box: Box): void {
   sc.near = Math.max(1, d - R - 20);
   sc.far = d + R + 20;
   sc.updateProjectionMatrix();
+  // bias ~1 shadow texel (texel = 2R / mapSize) so the shadow meets the contact
+  // edge without peter-panning, regardless of how big the fitted frustum is
+  dir.shadow.normalBias = (2 * R) / dir.shadow.mapSize.x;
 }
 
 export function disposeMeshes(): void {
