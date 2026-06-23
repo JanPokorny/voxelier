@@ -3,7 +3,7 @@
 // global keyboard shortcuts. Attaches its window/tree listeners on import.
 import { S } from "./state.ts";
 import { addv, hex, rotY } from "./math.ts";
-import { boundaryCells, buildIndex, cellCount, colorCounts } from "./boxes.ts";
+import { colorCounts, worldBox } from "./boxes.ts";
 import { hoverVox } from "./scene-env.ts";
 import { clearMeasure, measureActive } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
@@ -31,7 +31,7 @@ import {
 import { save } from "./persistence.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
-import type { Node, Rot, SceneNode, Tool, Vec } from "./types.ts";
+import type { Box3, Node, Rot, SceneNode, Tool, Vec } from "./types.ts";
 
 // Terse element factory: create <tag>, assign the given properties (className,
 // innerHTML, textContent, onclick, title, draggable…), append any children.
@@ -238,36 +238,34 @@ function closePalette(): boolean {
 }
 
 // ---- object/scene tree ----
-// collect a node's surface cells in local space (for the thumbnail)
-type ThumbVox = { x: number; y: number; z: number; c: number };
-function localVoxels(
-  node: Node,
-  off: Vec,
-  rot: Rot,
-  out: ThumbVox[],
-): ThumbVox[] {
+// collect a node's boxes in local space (for the thumbnail)
+function localBoxes(node: Node, off: Vec, rot: Rot, out: Box3[]): Box3[] {
   if (node.type === "object") {
-    // cap: a huge object has millions of surface cells; a sample is plenty here
-    for (
-      const cell of boundaryCells(node.boxes, buildIndex(node.boxes), 8000)
-    ) {
-      const w = addv(rotY(cell, rot), off);
-      out.push({ x: w.x, y: w.y, z: w.z, c: cell.c });
-    }
+    for (const b of node.boxes) out.push(worldBox(b, rot, off));
   } else {for (const ch of node.children) {
-      localVoxels(ch, addv(off, rotY(ch.pos, rot)), (rot + ch.rot) & 3, out);
+      localBoxes(ch, addv(off, rotY(ch.pos, rot)), (rot + ch.rot) & 3, out);
     }}
   return out;
 }
+const shade = (c: number, f: number): string => {
+  const r = Math.min(255, ((c >> 16) & 255) * f) | 0,
+    g = Math.min(255, ((c >> 8) & 255) * f) | 0,
+    b = Math.min(255, (c & 255) * f) | 0;
+  return `rgb(${r},${g},${b})`;
+};
 const thumbCache = new Map<string, { sig: string; cv: HTMLCanvasElement }>();
 function thumbSig(node: Node): string {
   return node.type === "object"
-    ? "o" + node.boxes.length + ":" + cellCount(node.boxes)
+    ? "o" +
+      node.boxes.map((b) =>
+        `${b.x0},${b.y0},${b.z0},${b.x1},${b.y1},${b.z1},${b.c}`
+      ).join(";")
     : "s" + node.children.map((c) => c.id + thumbSig(c)).join();
 }
+// draw the boxes as little isometric cuboids (three shaded faces), painter-sorted
 function thumbFor(node: Node): HTMLCanvasElement {
   const hit = thumbCache.get(node.id);
-  if (node === S.editObject && hit) return hit.cv; // don't re-rasterise the object being actively edited
+  if (node === S.editObject && hit) return hit.cv; // don't re-rasterise the active object
   const sig = thumbSig(node);
   if (hit && hit.sig === sig) return hit.cv;
   const cv = document.createElement("canvas");
@@ -276,30 +274,56 @@ function thumbFor(node: Node): HTMLCanvasElement {
   const g = cv.getContext("2d")!;
   g.fillStyle = "#0f1115";
   g.fillRect(0, 0, 52, 52);
-  let vox = localVoxels(node, { x: 0, y: 0, z: 0 }, 0, []);
-  if (vox.length) {
+  const boxes = localBoxes(node, { x: 0, y: 0, z: 0 }, 0, []);
+  if (boxes.length) {
     let mnx = 1e9, mny = 1e9, mnz = 1e9, mxx = -1e9, mxy = -1e9, mxz = -1e9;
-    for (const v of vox) {
-      mnx = Math.min(mnx, v.x);
-      mny = Math.min(mny, v.y);
-      mnz = Math.min(mnz, v.z);
-      mxx = Math.max(mxx, v.x);
-      mxy = Math.max(mxy, v.y);
-      mxz = Math.max(mxz, v.z);
+    for (const b of boxes) {
+      mnx = Math.min(mnx, b.x0),
+        mny = Math.min(mny, b.y0),
+        mnz = Math.min(mnz, b.z0);
+      mxx = Math.max(mxx, b.x1),
+        mxy = Math.max(mxy, b.y1),
+        mxz = Math.max(mxz, b.z1);
     }
-    const span = Math.max(mxx - mnx, mxy - mny, mxz - mnz, 1) + 1,
-      s = Math.min(7, 44 / span);
-    const stride = Math.ceil(vox.length / 1400);
-    if (stride > 1) vox = vox.filter((_, i) => i % stride === 0);
-    vox.sort((a, b) => (a.x + a.z - a.y) - (b.x + b.z - b.y));
-    const cxp = 26 - ((mnx + mxx) / 2 - (mnz + mxz) / 2) * s * 0.5,
-      cyp = 30 + ((mny + mxy) / 2) * s * 0.6 -
+    const s = 40 / Math.max(mxx - mnx, mxy - mny, mxz - mnz, 1);
+    const cx = 26 - ((mnx + mxx) / 2 - (mnz + mxz) / 2) * s * 0.5,
+      cy = 28 + ((mny + mxy) / 2) * s * 0.6 -
         ((mnx + mxx) / 2 + (mnz + mxz) / 2) * s * 0.28;
-    for (const v of vox) {
-      const px = cxp + (v.x - v.z) * s * 0.5,
-        py = cyp - v.y * s * 0.6 + (v.x + v.z) * s * 0.28;
-      g.fillStyle = hex(v.c);
-      g.fillRect(px - s * 0.5, py - s * 0.5, s + 0.5, s + 0.5);
+    const P = (x: number, y: number, z: number): [number, number] => [
+      cx + (x - z) * s * 0.5,
+      cy - y * s * 0.6 + (x + z) * s * 0.28,
+    ];
+    const quad = (col: string, p: [number, number][]) => {
+      g.fillStyle = col;
+      g.beginPath();
+      g.moveTo(p[0][0], p[0][1]);
+      for (let i = 1; i < p.length; i++) g.lineTo(p[i][0], p[i][1]);
+      g.closePath();
+      g.fill();
+    };
+    boxes.sort((a, b) =>
+      (a.x0 + a.x1 + a.y0 + a.y1 + a.z0 + a.z1) -
+      (b.x0 + b.x1 + b.y0 + b.y1 + b.z0 + b.z1)
+    ); // back-to-front
+    for (const b of boxes) {
+      quad(shade(b.c, 0.78), [ // +x (right) face
+        P(b.x1, b.y0, b.z0),
+        P(b.x1, b.y1, b.z0),
+        P(b.x1, b.y1, b.z1),
+        P(b.x1, b.y0, b.z1),
+      ]);
+      quad(shade(b.c, 0.6), [ // +z (front) face
+        P(b.x0, b.y0, b.z1),
+        P(b.x1, b.y0, b.z1),
+        P(b.x1, b.y1, b.z1),
+        P(b.x0, b.y1, b.z1),
+      ]);
+      quad(shade(b.c, 1), [ // +y (top) face
+        P(b.x0, b.y1, b.z0),
+        P(b.x1, b.y1, b.z0),
+        P(b.x1, b.y1, b.z1),
+        P(b.x0, b.y1, b.z1),
+      ]);
     }
   }
   thumbCache.set(node.id, { sig, cv });
