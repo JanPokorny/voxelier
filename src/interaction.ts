@@ -51,6 +51,18 @@ import type { Box3, Drag, Seg, Vec } from "./types.ts";
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
 
+// World-Y units per pixel of vertical pointer travel, for Shift height edits.
+// One screen pixel is `perPx` world units along the screen's vertical axis; world
+// +Y projects onto that axis by the camera up-vector's world-y (= cos elevation),
+// so dividing by it makes the dragged height track the pointer exactly instead of
+// lagging it in the foreshortened isometric view.
+function worldYPerPixel(): number {
+  const perPx = (camera.top - camera.bottom) /
+    canvas.getBoundingClientRect().height;
+  const upY = Math.abs(camera.matrixWorldInverse.elements[5]);
+  return perPx / Math.max(upY, 0.15); // clamp: near top-down, Y barely projects
+}
+
 // Pan/orbit the camera for a drag delta; returns true if it handled the mode.
 function dragPanOrbit(e: PointerEvent): boolean {
   const d = S.drag;
@@ -90,9 +102,8 @@ function moveDragTo(e: PointerEvent): void {
       d.shiftAnchorY = e.clientY;
       d.dyBase = d.dy;
     }
-    const perPx = (camera.top - camera.bottom) /
-      canvas.getBoundingClientRect().height;
-    dy = d.dyBase! + Math.round((d.shiftAnchorY - e.clientY) * perPx);
+    dy = d.dyBase! +
+      Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
   } else { // horizontal: move on the floor plane
     d.shiftAnchorY = null;
     const g = groundCell(0);
@@ -186,26 +197,44 @@ function startBox(
     shiftAnchorY: null,
     hyBase: 0,
     box: { x0: s.x, y0: s.y, z0: s.z, x1: s.x, z1: s.z, hy: 0 },
+    // add collides with the object's own solids; snapshot them (immutable during
+    // the drag) so the box can't be dragged to overlap a filled cell (Alt: ignore)
+    occ: S.tool === "add" ? S.editObject!.boxes.slice() : undefined,
   };
   hoverVox.visible = false;
   renderBox();
 }
 function boxDragTo(e: PointerEvent): void {
   const d = S.drag!, b = d.box!;
+  // would the box with this corner/height clear every solid? (Alt ignores them)
+  const collide = S.tool === "add" && !e.altKey;
+  const clear = (x1: number, z1: number, hy: number): boolean => {
+    if (!collide) return true;
+    const r: Box3 = {
+      x0: Math.min(b.x0, x1),
+      y0: Math.min(b.y0, b.y0 + hy),
+      z0: Math.min(b.z0, z1),
+      x1: Math.max(b.x0, x1) + 1,
+      y1: Math.max(b.y0, b.y0 + hy) + 1,
+      z1: Math.max(b.z0, z1) + 1,
+      c: 0,
+    };
+    return !boxesOverlap([r], d.occ ?? [], 0, 0, 0);
+  };
   if (e.shiftKey) { // vertical extrude (like moving objects with Shift)
-    const perPx = (camera.top - camera.bottom) /
-      canvas.getBoundingClientRect().height;
     if (d.shiftAnchorY === null) {
       d.shiftAnchorY = e.clientY;
       d.hyBase = b.hy;
     }
-    b.hy = d.hyBase! + Math.round((d.shiftAnchorY! - e.clientY) * perPx);
+    const hy = d.hyBase! +
+      Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel());
+    if (clear(b.x1, b.z1, hy)) b.hy = hy; // else stop at the last clear height
   } else { // horizontal footprint
     d.shiftAnchorY = null;
     const c = localGroundCell(b.y0);
-    if (c) {
-      b.x1 = c.x;
-      b.z1 = c.z;
+    if (c) { // advance each axis only where it stays clear (slides along solids)
+      if (clear(c.x, b.z1, b.hy)) b.x1 = c.x;
+      if (clear(b.x1, c.z, b.hy)) b.z1 = c.z;
     }
   }
   renderBox();

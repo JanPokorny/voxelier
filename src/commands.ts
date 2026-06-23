@@ -161,9 +161,10 @@ export function deleteNode(node: Node): void {
 }
 export function addObjectIn(group: SceneNode): void { // new empty object inside a group (enter it)
   const o = newObject();
+  o.pos = { x: Math.round(goal.target.x), y: 0, z: Math.round(goal.target.z) };
   group.children.push(o);
   S.collapsed.delete(group.id);
-  enterNode(o, true);
+  enterNode(o); // no fit: it's empty, so leave the viewport where it is
   save();
 }
 export function addGroupIn(group: SceneNode): void { // new empty group inside a group

@@ -99,7 +99,7 @@ export type Drag = {
     z1: number;
     hy: number;
   };
-  occ?: Box3[]; // obstacle boxes (world), for move collision
+  occ?: Box3[]; // obstacles: move = other objects (world); box add = own solids (local)
   sel?: Box3[]; // moving selection boxes (world)
 };
 
