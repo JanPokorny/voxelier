@@ -10,7 +10,24 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 export const scene = new THREE.Scene();
-scene.background = new THREE.Color("#0f1115");
+// sky: a vertical gradient (deep blue overhead -> pale haze at the horizon),
+// painted into a tiny canvas and used as the screen-space background.
+function skyTexture(): THREE.CanvasTexture {
+  const cv = document.createElement("canvas");
+  cv.width = 2;
+  cv.height = 256;
+  const g = cv.getContext("2d")!;
+  const grd = g.createLinearGradient(0, 0, 0, 256);
+  grd.addColorStop(0, "#3a6ea5"); // overhead
+  grd.addColorStop(0.6, "#7ba3cc");
+  grd.addColorStop(1, "#cfe0ee"); // horizon haze
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 2, 256);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+scene.background = skyTexture();
 
 export const ISO_ELEV = Math.atan(1 / Math.SQRT2);
 export const cam = {
@@ -122,14 +139,10 @@ export const FACE = [
 ];
 export const AO = [0.5, 0.74, 0.88, 1]; // brightness by exposure (0 = corner most occluded)
 
-// floor: a semi-transparent black plane (always shown), also catches shadows
+// ground: a dark-green plane (always shown), also catches shadows
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(4000, 4000),
-  new THREE.MeshLambertMaterial({
-    color: 0x000000,
-    transparent: true,
-    opacity: 0.32,
-  }),
+  new THREE.MeshLambertMaterial({ color: 0x3f5e3a }),
 );
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = 0;
