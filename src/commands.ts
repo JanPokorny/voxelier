@@ -209,7 +209,8 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
 }
 export function rotateSelection(): void {
   if (S.selection.size) {
-    rotateSelectionBy(1);
+    rotateSelectionBy(1); // already re-meshes; refresh chrome so tree thumbnails track the new pose
+    updateChrome();
     save();
   }
 }
@@ -218,8 +219,5 @@ export function nudgeY(d: number): void {
     const c = childById(id);
     if (c) c.pos.y += d;
   }
-  if (S.selection.size) {
-    rebuild();
-    save();
-  }
+  if (S.selection.size) commit(); // rebuild + updateChrome + save
 }
