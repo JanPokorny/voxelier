@@ -254,7 +254,6 @@ function meshSurface(
   }
   if (pick) {
     m.userData.childId = childId;
-    m.userData.emph = !transparent;
     S.pickMeshes.push(m);
     (S.childMeshes[childId!] || (S.childMeshes[childId!] = [])).push(m);
   }
