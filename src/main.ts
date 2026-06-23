@@ -49,8 +49,14 @@ function resize(): void {
   const w = Math.max(1, Math.round(r.width)),
     h = Math.max(1, Math.round(r.height)),
     pr = Math.min(devicePixelRatio, 2);
+  // DPR can change after load (browser zoom, moving to a hi-DPI monitor) but
+  // setPixelRatio was only called once — re-apply it so the backing store stays
+  // sharp. The gate must match three's Math.floor backing-store sizing exactly:
+  // a Math.round mismatch on a fractional DPR (e.g. 1.5) is never reconciled, so
+  // every frame re-ran setSize + wake() and pinned the on-demand loop on.
+  if (renderer.getPixelRatio() !== pr) renderer.setPixelRatio(pr);
   if (
-    canvas.width !== Math.round(w * pr) || canvas.height !== Math.round(h * pr)
+    canvas.width !== Math.floor(w * pr) || canvas.height !== Math.floor(h * pr)
   ) {
     renderer.setSize(w, h, false);
     wake();
