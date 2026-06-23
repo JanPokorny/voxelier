@@ -442,6 +442,14 @@ function buildTree(): void {
     }
   };
   row(S.root, 0);
+  // evict thumbnails for nodes no longer in the document (deletes, imports,
+  // undo/redo) so the cache can't grow without bound over a long session
+  const live = new Set<string>();
+  (function collect(n: Node) {
+    live.add(n.id);
+    if (n.type === "scene") n.children.forEach(collect);
+  })(S.root);
+  for (const id of thumbCache.keys()) if (!live.has(id)) thumbCache.delete(id);
 }
 
 // ---- tree right-click context menu ----
