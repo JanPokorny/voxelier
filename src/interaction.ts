@@ -433,6 +433,22 @@ canvas.addEventListener("pointerup", (e) => {
   }
   S.drag = null;
 });
+// the browser can cancel a captured pointer (OS gesture, lost capture) without
+// a pointerup. Tear down so the gesture state can't wedge (which the mid-gesture
+// guard in pointerdown would otherwise make unrecoverable) and resync visuals.
+canvas.addEventListener("pointercancel", () => {
+  if (!S.drag && !S.painting) return;
+  const painted = S.painting;
+  S.drag = null;
+  S.painting = false;
+  S.liveMeas = null; // drop any in-progress box-brush / measure wireframe
+  renderMeasure();
+  rebuild(); // revert an uncommitted move/box to the model (resets mesh + overlay)
+  if (painted) { // paint mutates per-move, so persist what was already drawn
+    updateChrome();
+    save();
+  }
+});
 canvas.addEventListener("pointerleave", () => {
   hoverVox.visible = false;
 });
