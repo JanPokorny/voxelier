@@ -5,7 +5,7 @@ import { peekUid, seedUid } from "./math.ts";
 import { record } from "./history.ts";
 import type { Node, ObjectNode, SceneNode, Vis } from "./types.ts";
 
-const LS = "voxelier-v8"; // voxels now serialise as packed-int keys
+const LS = "voxelier-v10"; // v10: furnished M.03 room (separate floor/walls)
 
 // The on-disk / localStorage shape (compact field names), distinct from `Node`.
 type SerBase = {
@@ -49,12 +49,10 @@ export function de(d: SerNode): Node {
 export function flush(): void {
   clearTimeout(S.saveT ?? undefined);
   S.saveT = null;
-  record(); // undo snapshot (no-op during restore)
+  const rootJSON = JSON.stringify(ser(S.root)); // serialise once, share with record()
+  record(rootJSON); // undo snapshot (no-op during restore)
   try {
-    localStorage.setItem(
-      LS,
-      JSON.stringify({ uid: peekUid(), root: ser(S.root) }),
-    );
+    localStorage.setItem(LS, `{"uid":${peekUid()},"root":${rootJSON}}`);
   } catch (_) { /* quota / private mode */ }
 }
 export function save(): void {

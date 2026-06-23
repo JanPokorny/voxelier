@@ -4,7 +4,7 @@
 // collapsed groups). Ctrl-Z walks back through the snapshots, Ctrl-Shift-Z /
 // Ctrl-Y walk forward; making a fresh edit after undoing drops the redo tail.
 import { S } from "./state.ts";
-import { de, flush, save, ser } from "./persistence.ts";
+import { de, flush, save } from "./persistence.ts";
 import type { SerNode } from "./persistence.ts";
 import { peekUid, seedUid } from "./math.ts";
 import { findById } from "./model.ts";
@@ -26,8 +26,8 @@ const stack: Snap[] = [];
 let index = -1; // position of the current state within stack
 let restoring = false; // true while applying a snapshot, so save() won't re-record
 
-const snapshot = (): Snap => ({
-  rootJSON: JSON.stringify(ser(S.root)),
+const snapshot = (rootJSON: string): Snap => ({
+  rootJSON,
   uid: peekUid(),
   pathIds: S.path.map((n) => n.id),
   selection: [...S.selection],
@@ -35,12 +35,14 @@ const snapshot = (): Snap => ({
   collapsed: [...S.collapsed],
 });
 
-// Capture the current document state as a new history entry. No-op while a
-// restore is in flight, and skipped when the document is unchanged (so saves
-// that only touch navigation/selection don't pile up dead undo steps).
-export function record(): void {
+// Capture the current document state as a new history entry. The caller passes
+// the already-serialised root (shared with the localStorage write) so the tree
+// is serialised once per save. No-op while a restore is in flight, and skipped
+// when the document is unchanged (so saves that only touch navigation/selection
+// don't pile up dead undo steps).
+export function record(rootJSON: string): void {
   if (restoring) return;
-  const snap = snapshot();
+  const snap = snapshot(rootJSON);
   const prev = stack[index];
   if (prev && prev.rootJSON === snap.rootJSON && prev.editId === snap.editId) {
     return;

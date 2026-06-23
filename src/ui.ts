@@ -2,7 +2,7 @@
 // object/scene tree (thumbnails, row clicks, context menu, drag & drop) and the
 // global keyboard shortcuts. Attaches its window/tree listeners on import.
 import { S } from "./state.ts";
-import { addv, hex, parseKey, rotY } from "./math.ts";
+import { addv, hex, keyToWorld, rotY } from "./math.ts";
 import { hoverVox } from "./scene-env.ts";
 import { clearMeasure, measureActive } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
@@ -32,43 +32,62 @@ import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
 import type { Node, Rot, SceneNode, Tool, Vec } from "./types.ts";
 
+// Terse element factory: create <tag>, assign the given properties (className,
+// innerHTML, textContent, onclick, title, draggable…), append any children.
+function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  props: Partial<HTMLElementTagNameMap[K]> = {},
+  ...kids: (globalThis.Node | string)[]
+): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  Object.assign(e, props);
+  if (kids.length) e.append(...kids);
+  return e;
+}
+
 const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
   { id: "add", ic: "＋", label: "Add" },
   { id: "erase", ic: "－", label: "Erase" },
   { id: "paint", ic: "❖", label: "Paint" },
   { id: "measure", ic: "📏", label: "Measure" },
 ];
+// tree visibility-toggle glyphs, by current vis state
+const VIS_GLYPH: Record<string, string> = {
+  visible: "◉",
+  transparent: "◐",
+  invisible: "⦰",
+};
 
 export function updateChrome(): void {
   const tw = document.getElementById("tools")!;
   tw.innerHTML = "";
   if (S.editObject) {
     for (const t of VOX_TOOLS) {
-      const el = document.createElement("button");
-      el.className = "tool" + (S.tool === t.id ? " active" : "");
-      el.innerHTML = `<span class="ic">${t.ic}</span>${t.label}`;
-      el.onclick = () => {
-        S.tool = t.id;
-        clearMeasure();
-        hoverVox.visible = false;
-        updateChrome();
-      };
-      tw.appendChild(el);
+      tw.appendChild(el("button", {
+        className: "tool" + (S.tool === t.id ? " active" : ""),
+        innerHTML: `<span class="ic">${t.ic}</span>${t.label}`,
+        onclick: () => {
+          S.tool = t.id;
+          clearMeasure();
+          hoverVox.visible = false;
+          updateChrome();
+        },
+      }));
     }
   } else {
     // scene actions live in the tree's right-click menu; only Measure is a sidebar tool
-    const mb = document.createElement("button");
-    mb.className = "tool" + (S.measMode ? " active" : "");
-    mb.innerHTML = '<span class="ic">📏</span>Measure';
-    mb.onclick = () => {
-      S.measMode = !S.measMode;
-      if (!S.measMode) clearMeasure();
-      updateChrome();
-    };
-    tw.appendChild(mb);
+    tw.appendChild(el("button", {
+      className: "tool" + (S.measMode ? " active" : ""),
+      innerHTML: '<span class="ic">📏</span>Measure',
+      onclick: () => {
+        S.measMode = !S.measMode;
+        if (!S.measMode) clearMeasure();
+        updateChrome();
+      },
+    }));
   }
   // import / export pinned to the bottom of the tool rail
-  const spacer = document.createElement("div");
+  const spacer = el("div");
   spacer.style.flex = "1";
   tw.appendChild(spacer);
   for (
@@ -78,11 +97,11 @@ export function updateChrome(): void {
       exportScene,
     ]] as [string, string, () => void][]
   ) {
-    const el = document.createElement("button");
-    el.className = "tool";
-    el.innerHTML = `<span class="ic">${ic}</span>${label}`;
-    el.onclick = fn;
-    tw.appendChild(el);
+    tw.appendChild(el("button", {
+      className: "tool",
+      innerHTML: `<span class="ic">${ic}</span>${label}`,
+      onclick: fn,
+    }));
   }
   buildTree();
   buildSwatches();
@@ -122,47 +141,45 @@ export function buildSwatches(): void {
   const cols = sceneColors().slice(); // copy: we may unshift the selected colour
   if (!cols.includes(S.selColor)) cols.unshift(S.selColor); // selected colour is always shown, at #1 if unused
   const swatch = (c: number) => {
-    const s = document.createElement("div");
-    s.className = "sw" + (c === S.selColor ? " active" : "");
+    const s = el("div", {
+      className: "sw" + (c === S.selColor ? " active" : ""),
+      title: hex(c),
+      onclick: () => {
+        S.selColor = c;
+        buildSwatches();
+      },
+    });
     s.style.background = hex(c);
-    s.title = hex(c);
-    s.onclick = () => {
-      S.selColor = c;
-      buildSwatches();
-    };
     return s;
   };
   if (cols.length > 15) { // 14 colours + "…" all-colours menu
     for (let i = 0; i < 14; i++) w.appendChild(swatch(cols[i]));
-    const more = document.createElement("div");
-    more.className = "sw more";
-    more.textContent = "…";
-    more.title = "All used colours";
-    more.onclick = openPalette;
-    w.appendChild(more);
+    w.appendChild(el("div", {
+      className: "sw more",
+      textContent: "…",
+      title: "All used colours",
+      onclick: openPalette,
+    }));
   } else { // up to 15 colours, padded with empties
     for (let i = 0; i < 15; i++) {
-      if (i < cols.length) w.appendChild(swatch(cols[i]));
-      else {
-        const e = document.createElement("div");
-        e.className = "sw empty";
-        w.appendChild(e);
-      }
+      w.appendChild(
+        i < cols.length
+          ? swatch(cols[i])
+          : el("div", { className: "sw empty" }),
+      );
     }
   }
   // position 16: always the colour picker
-  const pick = document.createElement("div");
-  pick.className = "sw more";
-  pick.textContent = "🎨";
-  pick.title = "Use colour picker";
-  pick.onclick = openColorPicker;
-  w.appendChild(pick);
+  w.appendChild(el("div", {
+    className: "sw more",
+    textContent: "🎨",
+    title: "Use colour picker",
+    onclick: openColorPicker,
+  }));
 }
 // the colour picker: pick any RGB; the chosen colour becomes selected
 function openColorPicker(): void {
-  const inp = document.createElement("input");
-  inp.type = "color";
-  inp.value = hex(S.selColor);
+  const inp = el("input", { type: "color", value: hex(S.selColor) });
   inp.style.cssText = "position:fixed;left:-9999px;top:0";
   const apply = () => {
     S.selColor = parseInt(inp.value.slice(1), 16);
@@ -179,36 +196,32 @@ function openColorPicker(): void {
 // the "…" menu: every colour currently used in the scene
 function openPalette(): void {
   closePalette();
-  const back = document.createElement("div");
-  back.id = "palback";
+  const back = el("div", { id: "palback" });
   back.onclick = (e) => {
     if (e.target === back) closePalette();
   };
-  const pop = document.createElement("div");
-  pop.id = "palpop";
-  const h = document.createElement("div");
-  h.className = "pophead";
-  h.textContent = "Used colours";
-  pop.appendChild(h);
-  const grid = document.createElement("div");
-  grid.className = "popgrid";
+  const pop = el("div", { id: "palpop" });
+  pop.appendChild(
+    el("div", { className: "pophead", textContent: "Used colours" }),
+  );
+  const grid = el("div", { className: "popgrid" });
   const cols = sceneColors();
   if (!cols.length) {
-    const e = document.createElement("div");
+    const e = el("div", { textContent: "No colours yet." });
     e.style.cssText = "color:var(--ink-dim);font-size:12px";
-    e.textContent = "No colours yet.";
     grid.appendChild(e);
   }
   for (const c of cols) {
-    const s = document.createElement("div");
-    s.className = "sw" + (c === S.selColor ? " active" : "");
+    const s = el("div", {
+      className: "sw" + (c === S.selColor ? " active" : ""),
+      title: hex(c),
+      onclick: () => {
+        S.selColor = c;
+        buildSwatches();
+        closePalette();
+      },
+    });
     s.style.background = hex(c);
-    s.title = hex(c);
-    s.onclick = () => {
-      S.selColor = c;
-      buildSwatches();
-      closePalette();
-    };
     grid.appendChild(s);
   }
   pop.appendChild(grid);
@@ -235,7 +248,7 @@ function localVoxels(
 ): ThumbVox[] {
   if (node.type === "object") {
     for (const [k, c] of node.voxels) {
-      const w = addv(rotY(parseKey(k), rot), off);
+      const w = keyToWorld(k, rot, off);
       out.push({ x: w.x, y: w.y, z: w.z, c });
     }
   } else {for (const ch of node.children) {
@@ -319,14 +332,15 @@ function buildTree(): void {
   w.innerHTML = "";
   const row = (node: Node, depth: number) => {
     const isRoot = node === S.root;
-    const r = document.createElement("div");
     const isSel = !isRoot && S.context.children.includes(node) &&
       S.selection.has(node.id);
     const v = node.vis || "visible";
-    r.className = "trow" + (isRoot ? " root" : "") + (isSel ? " sel" : "") +
-      (node === S.context && !S.editObject ? " ctx" : "") +
-      (node === S.editObject ? " edit" : "") +
-      (!isRoot && v !== "visible" ? " dim" : "");
+    const r = el("div", {
+      className: "trow" + (isRoot ? " root" : "") + (isSel ? " sel" : "") +
+        (node === S.context && !S.editObject ? " ctx" : "") +
+        (node === S.editObject ? " edit" : "") +
+        (!isRoot && v !== "visible" ? " dim" : ""),
+    });
     r.style.paddingLeft = (4 + depth * 13) + "px";
     const th = thumbFor(node);
     th.className = "thumb";
@@ -344,28 +358,22 @@ function buildTree(): void {
         buildTree();
       };
     }
-    const nm = document.createElement("span");
-    nm.className = "nm";
+    const nm = el("span", { className: "nm" });
     if (isRoot) nm.textContent = node.name || "Project";
     else if (node.name) nm.textContent = node.name;
     else {nm.innerHTML = '<span class="ph">' +
         (node.type === "scene" ? "group" : "object") + "</span>";}
     r.append(th, nm);
     if (!isRoot) {
-      const VI: Record<string, string> = {
-        visible: "◉",
-        transparent: "◐",
-        invisible: "⦰",
-      };
-      const vb = document.createElement("button");
-      vb.className = "tb" + (v === "visible" ? " on" : "");
-      vb.textContent = VI[v];
-      vb.title = "visible → transparent → invisible";
-      vb.onclick = (e) => {
-        e.stopPropagation();
-        cycleVis(node);
-      };
-      r.append(vb);
+      r.append(el("button", {
+        className: "tb" + (v === "visible" ? " on" : ""),
+        textContent: VIS_GLYPH[v],
+        title: "visible → transparent → invisible",
+        onclick: (e) => {
+          e.stopPropagation();
+          cycleVis(node);
+        },
+      }));
     }
     r.onclick = () => rowClick(node);
     r.oncontextmenu = (e) => {
@@ -426,23 +434,17 @@ function ctxMenuOutside(e: PointerEvent): void {
 }
 function showItemMenu(node: Node, x: number, y: number): void {
   closeItemMenu();
-  const m = document.createElement("div");
-  m.className = "ctxmenu";
-  const add = (label: string, fn: () => void, cls?: string) => {
-    const it = document.createElement("div");
-    it.className = "ctxitem" + (cls ? " " + cls : "");
-    it.textContent = label;
-    it.onclick = () => {
-      closeItemMenu();
-      fn();
-    };
-    m.appendChild(it);
-  };
-  const div = () => {
-    const d = document.createElement("div");
-    d.className = "ctxdiv";
-    m.appendChild(d);
-  };
+  const m = el("div", { className: "ctxmenu" });
+  const add = (label: string, fn: () => void, cls?: string) =>
+    m.appendChild(el("div", {
+      className: "ctxitem" + (cls ? " " + cls : ""),
+      textContent: label,
+      onclick: () => {
+        closeItemMenu();
+        fn();
+      },
+    }));
+  const div = () => m.appendChild(el("div", { className: "ctxdiv" }));
   add("Rename", () => renameNode(node));
   add("Fit", () => fitNode(node));
   div();

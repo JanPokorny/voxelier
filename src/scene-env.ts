@@ -26,6 +26,7 @@ export const goal = {
   target: cam.target.clone(),
 };
 export const CAM_DIST = 900;
+export const ZOOM_MAX = 2000; // max orthographic view height (zoom-out limit)
 export const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.62));
@@ -34,25 +35,23 @@ dir.castShadow = true;
 dir.shadow.mapSize.set(2048, 2048);
 dir.shadow.normalBias = 0.6;
 dir.shadow.bias = -0.0002;
-{
-  const s = dir.shadow.camera;
-  s.left = -70;
-  s.right = 70;
-  s.top = 70;
-  s.bottom = -70;
-  s.near = 1;
-  s.far = 400;
-}
+// the shadow frustum + light position are fitted to the scene bounds on each
+// rebuild (see render.ts), so shadows are stable as the camera pans/orbits
 scene.add(dir);
 scene.add(dir.target);
 const dir2 = new THREE.DirectionalLight(0xffffff, 0.16);
 dir2.position.set(-6, 5, -7);
 scene.add(dir2);
 
+// On-demand rendering (driven in main.ts): wake() requests a short burst of
+// frames. Called on input and whenever the GL scene mutates (rebuild / remesh).
+export const frame = { tail: 60 };
+export const wake = (): void => {
+  frame.tail = 30;
+};
+
 export const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-export const _m = new THREE.Matrix4(),
-  _up = new THREE.Vector3(),
-  _upN = new THREE.Vector3();
+export const _up = new THREE.Vector3(), _upN = new THREE.Vector3();
 const bg = new THREE.Color("#0f1115");
 // Voxels store a 0xRRGGBB int; resolve to a (cached) THREE.Color, full or dimmed.
 const _palCache = new Map<number, THREE.Color>(),

@@ -6,11 +6,19 @@
 import type * as THREE from "three";
 import { S } from "./state.ts";
 import { addv, key, rotY } from "./math.ts";
-import { camera, canvas, goal, hoverVox, overlay } from "./scene-env.ts";
+import {
+  camera,
+  canvas,
+  goal,
+  hoverVox,
+  overlay,
+  ZOOM_MAX,
+} from "./scene-env.ts";
 import {
   groundCell,
   localGroundCell,
   locToW,
+  type Pick,
   pickChild,
   pickVoxel,
   setNdc,
@@ -43,19 +51,28 @@ import type { Drag, Seg, Vec, Voxel } from "./types.ts";
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
 
+// Pan/orbit the camera for a drag delta; returns true if it handled the mode.
+function dragPanOrbit(e: PointerEvent): boolean {
+  const d = S.drag;
+  if (!d || (d.mode !== "pan" && d.mode !== "orbit")) return false;
+  const dx = e.clientX - d.x, dy = e.clientY - d.y;
+  d.x = e.clientX;
+  d.y = e.clientY;
+  (d.mode === "pan" ? panCamera : orbitView)(dx, dy);
+  return true;
+}
+
 // Collision avoidance for moves. Snapshot (once per drag) every solid cell in
 // the scene — every visible/transparent voxel except the moving selection's own
 // — plus the selection's voxels, all in world space. Invisible objects are
 // absent from walk(), so they never block. A candidate offset is blocked if any
 // moved voxel would land on an occupied cell.
 function moveCollision(): { occ: Set<number>; sel: Voxel[] } {
-  const all: Voxel[] = [];
-  walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, all);
   const occ = new Set<number>(), sel: Voxel[] = [];
-  for (const v of all) {
-    if (v.owner && S.selection.has(v.owner)) sel.push(v);
-    else occ.add(key(v.x, v.y, v.z));
-  }
+  walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (x, y, z, c, owner, tr) => {
+    if (owner && S.selection.has(owner)) sel.push({ x, y, z, c, owner, tr });
+    else occ.add(key(x, y, z));
+  });
   return { occ, sel };
 }
 const moveBlocked = (
@@ -66,45 +83,46 @@ const moveBlocked = (
 ) => (d.sel ?? []).some((v) => d.occ!.has(key(v.x + dx, v.y + dy, v.z + dz)));
 
 function moveDragTo(e: PointerEvent): void {
-  let dx = S.drag!.dx!, dy = S.drag!.dy!, dz = S.drag!.dz!;
+  const d = S.drag!;
+  let dx = d.dx!, dy = d.dy!, dz = d.dz!;
   if (e.shiftKey) { // Shift: adjust height from where it was dragged to
-    if (S.drag!.shiftAnchorY == null) {
-      S.drag!.shiftAnchorY = e.clientY;
-      S.drag!.dyBase = S.drag!.dy;
+    if (d.shiftAnchorY == null) {
+      d.shiftAnchorY = e.clientY;
+      d.dyBase = d.dy;
     }
     const perPx = (camera.top - camera.bottom) /
       canvas.getBoundingClientRect().height;
-    dy = S.drag!.dyBase! +
-      Math.round((S.drag!.shiftAnchorY - e.clientY) * perPx);
+    dy = d.dyBase! + Math.round((d.shiftAnchorY - e.clientY) * perPx);
   } else { // horizontal: move on the floor plane
-    S.drag!.shiftAnchorY = null;
+    d.shiftAnchorY = null;
     const g = groundCell(0);
-    if (g && S.drag!.start) {
-      dx = g.x - S.drag!.start.x;
-      dz = g.z - S.drag!.start.z;
+    if (g && d.start) {
+      dx = g.x - d.start.x;
+      dz = g.z - d.start.z;
     }
   }
   // advance each axis toward the cursor only where it wouldn't intersect another
   // object (so the piece slides along obstacles); Alt ignores collisions.
   const free = (x: number, y: number, z: number) =>
-    e.altKey || !moveBlocked(S.drag!, x, y, z);
-  if (free(dx, S.drag!.dy!, S.drag!.dz!)) S.drag!.dx = dx;
-  if (free(S.drag!.dx!, dy, S.drag!.dz!)) S.drag!.dy = dy;
-  if (free(S.drag!.dx!, S.drag!.dy!, dz)) S.drag!.dz = dz;
+    e.altKey || !moveBlocked(d, x, y, z);
+  if (free(dx, d.dy!, d.dz!)) d.dx = dx;
+  if (free(d.dx!, dy, d.dz!)) d.dy = dy;
+  if (free(d.dx!, d.dy!, dz)) d.dz = dz;
   for (const id of S.selection) {
     for (const m of (S.childMeshes[id] || [])) {
-      m.position.set(S.drag!.dx!, S.drag!.dy!, S.drag!.dz!);
+      m.position.set(d.dx!, d.dy!, d.dz!);
     }
   }
-  overlay.position.set(S.drag!.dx!, S.drag!.dy!, S.drag!.dz!);
+  overlay.position.set(d.dx!, d.dy!, d.dz!);
 }
 function commitMove(): void {
-  const x = contextXform(),
+  const d = S.drag!,
+    x = contextXform(),
     dL = rotY(
-      { x: Math.round(S.drag!.dx!), y: 0, z: Math.round(S.drag!.dz!) },
+      { x: Math.round(d.dx!), y: 0, z: Math.round(d.dz!) },
       (4 - x.rot) & 3,
     ),
-    dy = Math.round(S.drag!.dy!);
+    dy = Math.round(d.dy!);
   for (const id of S.selection) {
     const c = childById(id);
     if (c) {
@@ -126,7 +144,8 @@ function rotDragTo(e: PointerEvent): void {
 }
 
 function applyVoxel(): void {
-  const c = voxelTarget();
+  const t = pickVoxel();
+  const c = voxelTarget(t);
   if (!c) return;
   const k = key(c.x, c.y, c.z);
   if (S.tool === "add") {
@@ -137,12 +156,11 @@ function applyVoxel(): void {
     if (S.editObject!.voxels.has(k)) editSet(c.x, c.y, c.z, S.selColor);
   }
   S.lastVox = k;
-  updateVoxHover();
+  updateVoxHover(t);
 }
-function updateVoxHover(): void {
-  const t = pickVoxel();
+function updateVoxHover(t: Pick = pickVoxel()): void {
   let cell: Vec | null = null;
-  if (S.tool === "add") cell = t ? t.addCell : voxelTarget();
+  if (S.tool === "add") cell = t ? t.addCell : voxelTarget(t);
   else cell = t ? t.cell : null;
   if (!cell) {
     hoverVox.visible = false;
@@ -174,18 +192,17 @@ function startBox(
   renderBox();
 }
 function boxDragTo(e: PointerEvent): void {
-  const b = S.drag!.box!;
+  const d = S.drag!, b = d.box!;
   if (e.shiftKey) { // vertical extrude (like moving objects with Shift)
     const perPx = (camera.top - camera.bottom) /
       canvas.getBoundingClientRect().height;
-    if (S.drag!.shiftAnchorY === null) {
-      S.drag!.shiftAnchorY = e.clientY;
-      S.drag!.hyBase = b.hy;
+    if (d.shiftAnchorY === null) {
+      d.shiftAnchorY = e.clientY;
+      d.hyBase = b.hy;
     }
-    b.hy = S.drag!.hyBase! +
-      Math.round((S.drag!.shiftAnchorY! - e.clientY) * perPx);
+    b.hy = d.hyBase! + Math.round((d.shiftAnchorY! - e.clientY) * perPx);
   } else { // horizontal footprint
-    S.drag!.shiftAnchorY = null;
+    d.shiftAnchorY = null;
     const c = localGroundCell(b.y0);
     if (c) {
       b.x1 = c.x;
@@ -323,18 +340,7 @@ canvas.addEventListener("pointerdown", (e) => {
 canvas.addEventListener("pointermove", (e) => {
   setNdc(e.clientX, e.clientY);
   if (measureActive()) {
-    if (S.drag) {
-      const dx = e.clientX - S.drag.x, dy = e.clientY - S.drag.y;
-      if (S.drag.mode === "pan") {
-        S.drag.x = e.clientX;
-        S.drag.y = e.clientY;
-        panCamera(dx, dy);
-      } else if (S.drag.mode === "orbit") {
-        S.drag.x = e.clientX;
-        S.drag.y = e.clientY;
-        orbitView(dx, dy);
-      }
-    }
+    dragPanOrbit(e);
     pointerMeasure();
     return;
   }
@@ -347,16 +353,8 @@ canvas.addEventListener("pointermove", (e) => {
     else hoverVox.visible = false;
     return;
   }
-  const dx = e.clientX - S.drag.x, dy = e.clientY - S.drag.y;
-  if (S.drag.mode === "pan") {
-    S.drag.x = e.clientX;
-    S.drag.y = e.clientY;
-    panCamera(dx, dy);
-  } else if (S.drag.mode === "orbit") {
-    S.drag.x = e.clientX;
-    S.drag.y = e.clientY;
-    orbitView(dx, dy);
-  } else if (S.drag.mode === "move") moveDragTo(e);
+  if (dragPanOrbit(e)) return;
+  if (S.drag.mode === "move") moveDragTo(e);
   else if (S.drag.mode === "rotobj") rotDragTo(e);
   else if (S.drag.mode === "box") boxDragTo(e);
 });
@@ -404,7 +402,7 @@ canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   goal.zoom *= e.deltaY > 0 ? 1 / 0.95 : 0.95;
-  goal.zoom = Math.max(6, Math.min(400, goal.zoom));
+  goal.zoom = Math.max(6, Math.min(ZOOM_MAX, goal.zoom));
 }, { passive: false });
 
 canvas.addEventListener("dblclick", (e) => {

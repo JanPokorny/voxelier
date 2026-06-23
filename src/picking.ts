@@ -6,6 +6,10 @@ import { rotY } from "./math.ts";
 import { _hit, camera, canvas, ndc, raycaster } from "./scene-env.ts";
 import type { Vec } from "./types.ts";
 
+// a hovered voxel resolved to its own cell plus the empty cell adjacent to the
+// hit face (where an "add" would place), or null when nothing is under the cursor
+export type Pick = { cell: Vec; addCell: Vec } | null;
+
 export function setNdc(cx: number, cy: number): void {
   const r = canvas.getBoundingClientRect();
   ndc.x = ((cx - r.left) / r.width) * 2 - 1;
@@ -13,29 +17,19 @@ export function setNdc(cx: number, cy: number): void {
 }
 export function pickChild(): string | null { // only opaque surfaces are pickable (transparent ones are not interactable)
   raycaster.setFromCamera(ndc, camera);
-  let best: string | null = null, bd = Infinity;
-  for (const m of S.pickMeshes) {
-    const h = raycaster.intersectObject(m, false);
-    if (h.length && h[0].distance < bd) {
-      bd = h[0].distance;
-      best = m.userData.childId;
-    }
-  }
-  return best;
+  const h = raycaster.intersectObjects(S.pickMeshes, false); // sorted nearest-first
+  return h.length ? (h[0].object.userData.childId ?? null) : null;
 }
+const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // y-up, constant set per call
 export function groundCell(yWorld: number): Vec | null {
   raycaster.setFromCamera(ndc, camera);
-  if (
-    raycaster.ray.intersectPlane(
-      new THREE.Plane(new THREE.Vector3(0, 1, 0), -yWorld),
-      _hit,
-    )
-  ) {
+  _plane.constant = -yWorld;
+  if (raycaster.ray.intersectPlane(_plane, _hit)) {
     return { x: Math.floor(_hit.x), y: yWorld, z: Math.floor(_hit.z) };
   }
   return null;
 }
-export function pickVoxel(): { cell: Vec; addCell: Vec } | null { // -> {cell, addCell} in object-local space, or null
+export function pickVoxel(): Pick { // -> {cell, addCell} in object-local space, or null
   if (!S.pickMeshes.length) return null;
   raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObjects(S.pickMeshes, false);
@@ -82,8 +76,7 @@ export const locToW = (x: number, y: number, z: number): THREE.Vector3 => {
     r.z + S.editXform.off.z,
   );
 };
-export function voxelTarget(): Vec | null { // local cell for the active voxel tool
-  const t = pickVoxel();
+export function voxelTarget(t: Pick = pickVoxel()): Vec | null { // local cell for the active voxel tool
   if (S.tool === "add") return t ? t.addCell : localGroundCell(0);
   return t ? t.cell : null;
 }

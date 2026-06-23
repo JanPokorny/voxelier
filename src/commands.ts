@@ -22,11 +22,16 @@ import { enterNode, selectNode } from "./navigation.ts";
 import { save } from "./persistence.ts";
 import type { Node, SceneNode } from "./types.ts";
 
-export function cycleVis(node: Node): void {
-  node.vis = VIS_CYCLE[node.vis || "visible"];
+// re-mesh the scene, refresh the chrome and persist — the tail of most edits
+const commit = (): void => {
   rebuild();
   updateChrome();
   save();
+};
+
+export function cycleVis(node: Node): void {
+  node.vis = VIS_CYCLE[node.vis || "visible"];
+  commit();
 }
 export function renameNode(node: Node): void {
   const n = prompt("Name", node.name || "");
@@ -36,6 +41,16 @@ export function renameNode(node: Node): void {
     save();
   }
 }
+
+// selected context children, resolved to live nodes (dropping stale ids)
+const selectedNodes = (): Node[] =>
+  [...S.selection].map((id) => childById(id)).filter((n): n is Node => !!n);
+// a clone nudged +5 on x/z, so a duplicate/paste lands visibly offset
+const cloneShift = (n: Node): Node => {
+  const d = clone(n);
+  d.pos = { x: n.pos.x + 5, y: n.pos.y, z: n.pos.z + 5 };
+  return d;
+};
 
 export function createObject(): void {
   const o = newObject();
@@ -48,33 +63,17 @@ export function deleteSelection(): void {
   if (!S.selection.size) return;
   S.context.children = S.context.children.filter((c) => !S.selection.has(c.id));
   S.selection.clear();
-  rebuild();
-  updateChrome();
-  save();
+  commit();
 }
 export function duplicateSelection(): void {
-  const dups = [...S.selection].map((id) => childById(id)).filter((
-    n,
-  ): n is Node => Boolean(n)).map(
-    (n) => {
-      const d = clone(n);
-      d.pos = { x: n.pos.x + 5, y: n.pos.y, z: n.pos.z + 5 };
-      return d;
-    },
-  );
+  const dups = selectedNodes().map(cloneShift);
   if (!dups.length) return;
   S.context.children.push(...dups);
   S.selection = new Set(dups.map((d) => d.id));
-  rebuild();
-  updateChrome();
-  save();
+  commit();
 }
 export function copySelection(): void {
-  S.clipboard = [...S.selection].map((id) => childById(id)).filter((
-    n,
-  ): n is Node => Boolean(n)).map(
-    clone,
-  );
+  S.clipboard = selectedNodes().map(clone);
 }
 export function cutSelection(): void {
   copySelection();
@@ -82,16 +81,10 @@ export function cutSelection(): void {
 }
 export function pasteClipboard(): void {
   if (!S.clipboard.length) return;
-  const ns = S.clipboard.map((n) => {
-    const d = clone(n);
-    d.pos = { x: n.pos.x + 5, y: n.pos.y, z: n.pos.z + 5 };
-    return d;
-  });
+  const ns = S.clipboard.map(cloneShift);
   S.context.children.push(...ns);
   S.selection = new Set(ns.map((d) => d.id));
-  rebuild();
-  updateChrome();
-  save();
+  commit();
 }
 
 // ---- tree reparenting (drag & drop) ----
@@ -145,9 +138,7 @@ export function wrapInGroup(target: Node, dragged: Node): boolean {
   reparentNode(dragged, g, g.children.length); // bring the dragged piece in, world pose preserved
   S.collapsed.delete(g.id);
   S.selection = new Set([g.id]);
-  rebuild();
-  updateChrome();
-  save();
+  commit();
   return true;
 }
 
@@ -155,8 +146,7 @@ export function wrapInGroup(target: Node, dragged: Node): boolean {
 export function duplicateNode(node: Node): void {
   const par = parentOf(node) as SceneNode | null;
   if (!par) return;
-  const d = clone(node);
-  d.pos = { x: node.pos.x + 5, y: node.pos.y, z: node.pos.z + 5 };
+  const d = cloneShift(node);
   par.children.splice(par.children.indexOf(node) + 1, 0, d);
   selectNode(d);
   save();
@@ -167,9 +157,7 @@ export function deleteNode(node: Node): void {
   par.children = par.children.filter((c) => c !== node);
   S.selection.delete(node.id);
   if (S.editObject === node) S.editObject = null;
-  rebuild();
-  updateChrome();
-  save();
+  commit();
 }
 export function addObjectIn(group: SceneNode): void { // new empty object inside a group (enter it)
   const o = newObject();
@@ -190,22 +178,20 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
   const dir = steps < 0 ? -1 : 1;
   for (let n = 0; n < Math.abs(steps); n++) {
     const x = contextXform();
+    // world AABB of a context child under the current context transform
+    const worldBox = (ch: Node) =>
+      nodeBox(
+        ch,
+        addv(x.off, rotY(ch.pos, x.rot)),
+        (x.rot + ch.rot) & 3,
+        emptyBox(),
+      );
     for (const id of S.selection) {
       const ch = childById(id);
       if (!ch) continue;
-      const before = nodeBox(
-        ch,
-        addv(x.off, rotY(ch.pos, x.rot)),
-        (x.rot + ch.rot) & 3,
-        emptyBox(),
-      );
+      const before = worldBox(ch);
       ch.rot = (ch.rot + dir) & 3;
-      const after = nodeBox(
-        ch,
-        addv(x.off, rotY(ch.pos, x.rot)),
-        (x.rot + ch.rot) & 3,
-        emptyBox(),
-      );
+      const after = worldBox(ch);
       const dW = {
         x: (before.min.x + before.max.x) / 2 - (after.min.x + after.max.x) / 2,
         z: (before.min.z + before.max.z) / 2 - (after.min.z + after.max.z) / 2,

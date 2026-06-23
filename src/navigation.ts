@@ -9,6 +9,13 @@ import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
 import type { Node, SceneNode } from "./types.ts";
 
+// re-mesh + refresh the chrome after a navigation change (no persistence:
+// moving the cursor doesn't alter the document)
+const refresh = (): void => {
+  rebuild();
+  updateChrome();
+};
+
 export function ascend(): void {
   if (S.path.length > 1) {
     const c = S.path.pop()!;
@@ -16,8 +23,7 @@ export function ascend(): void {
     S.selection = new Set([c.id]);
     S.editObject = null;
     clearMeasure();
-    rebuild();
-    updateChrome();
+    refresh();
   }
 }
 export function exitObject(): void {
@@ -25,8 +31,7 @@ export function exitObject(): void {
   S.editObject = null;
   S.selection = new Set([o.id]);
   clearMeasure();
-  rebuild();
-  updateChrome();
+  refresh();
 }
 export function escapeUp(): void {
   if (S.editObject) exitObject();
@@ -40,8 +45,7 @@ export function selectNode(node: Node): void { // select a node from the tree (e
   S.context = S.path[S.path.length - 1] as SceneNode;
   S.selection = new Set([node.id]);
   S.editObject = null;
-  rebuild();
-  updateChrome();
+  refresh();
 }
 export function isEntered(node: Node): boolean { // is this node the one currently being edited/descended into?
   return node.type === "object"
@@ -65,7 +69,6 @@ export function enterNode(node: Node, fit?: boolean): void { // click in tree / 
     S.tool = "add";
   }
   clearMeasure();
-  rebuild();
-  updateChrome();
+  refresh();
   if (fit) frameView();
 }

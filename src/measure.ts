@@ -6,7 +6,7 @@ import { key, parseKey } from "./math.ts";
 import { _mv, camera, canvas, measLines, ndc, raycaster } from "./scene-env.ts";
 import { walk } from "./render.ts";
 import { groundCell, localGroundCell, locToW, pickVoxel } from "./picking.ts";
-import type { MeasField, Seg, Vec, Voxel } from "./types.ts";
+import type { MeasField, Seg, Vec } from "./types.ts";
 
 const M_FILL = new THREE.Color(0xa7c4bc), M_EMPTY = new THREE.Color(0x5c677d);
 export const measureActive = (): boolean =>
@@ -43,9 +43,9 @@ export function measureField(): MeasField {
     }
     toW = locToW; // edit-mode local -> world (same as the box brush)
   } else {
-    const all: Voxel[] = [];
-    walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, all);
-    for (const v of all) if (v.owner) acc(v.x, v.y, v.z);
+    walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (x, y, z, _c, owner) => {
+      if (owner) acc(x, y, z);
+    });
     toW = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   }
   S.measFieldCache = { set, mn, mx, toW, empty: set.size === 0 };

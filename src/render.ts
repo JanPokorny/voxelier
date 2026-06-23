@@ -3,12 +3,13 @@
 // object is partitioned into chunks so edits re-mesh only what changed.
 import * as THREE from "three";
 import { S } from "./state.ts";
-import { addv, key, parseKey, rotY, xcompose } from "./math.ts";
+import { addv, key, keyToWorld, parseKey, rotY, xcompose } from "./math.ts";
 import {
   AO,
   boxGeo,
   col,
   dimCol,
+  dir,
   editGroup,
   FACE,
   matGlass,
@@ -16,16 +17,51 @@ import {
   matSurf,
   overlay,
   scene,
+  wake,
 } from "./scene-env.ts";
-import { contextXform, emptyBox, growBox, VIS } from "./model.ts";
+import { contextXform, emptyBox, growBox, nodeBox, VIS } from "./model.ts";
 import { invalidateField } from "./measure.ts";
-import type { Node, Rot, Vec, Voxel } from "./types.ts";
+import type { Box, Node, Rot, Vec, VoxelSink } from "./types.ts";
+
+// Fixed key-light direction (the original +50,+110,+38 offset, normalised). The
+// light + its shadow camera are anchored to the scene's world bounds — not the
+// view — so shadows don't shift when the camera pans or orbits.
+const LIGHT_DIR = new THREE.Vector3(50, 110, 38).normalize();
+function fitShadow(box: Box): void {
+  if (box.max.x < box.min.x) return; // empty scene: keep the prior frustum
+  const cx = (box.min.x + box.max.x) / 2,
+    cy = (box.min.y + box.max.y) / 2,
+    cz = (box.min.z + box.max.z) / 2;
+  // half the box diagonal covers the scene from any light angle
+  const R = 0.5 *
+      Math.hypot(
+        box.max.x - box.min.x,
+        box.max.y - box.min.y,
+        box.max.z - box.min.z,
+      ) +
+    8;
+  const d = R + 130; // set the light back far enough that the box stays in front
+  dir.position.set(
+    cx + LIGHT_DIR.x * d,
+    cy + LIGHT_DIR.y * d,
+    cz + LIGHT_DIR.z * d,
+  );
+  dir.target.position.set(cx, cy, cz);
+  dir.target.updateMatrixWorld();
+  const sc = dir.shadow.camera;
+  sc.left = -R;
+  sc.right = R;
+  sc.top = R;
+  sc.bottom = -R;
+  sc.near = Math.max(1, d - R - 20);
+  sc.far = d + R + 20;
+  sc.updateProjectionMatrix();
+}
 
 export function disposeMeshes(): void {
   for (const m of S.meshes) {
     scene.remove(m);
     if (m.geometry && m.geometry !== boxGeo) m.geometry.dispose();
-    (m as THREE.Mesh & { dispose?: () => void }).dispose?.();
   }
   S.meshes = [];
   editGroup.clear();
@@ -43,6 +79,19 @@ export function disposeMeshes(): void {
 // field via `has(x,y,z)` — which may see voxels outside `arr` (e.g. the cells of
 // a neighbouring chunk), so seams between chunks shade identically to one mesh.
 type Cell = { x: number; y: number; z: number; c: number };
+// Per face, per corner: the three AO probe offsets (relative to the empty
+// neighbour cell). Precomputed once so the inner mesher does pure has() lookups
+// and zero per-vertex allocation.
+const FACE_AO = FACE.map((f) =>
+  f.v.map((w) => {
+    const sa = w[f.a] ? 1 : -1, sb = w[f.b] ? 1 : -1;
+    const ax = [0, 0, 0], bx = [0, 0, 0];
+    ax[f.a] = sa;
+    bx[f.b] = sb;
+    return [ax, bx, [ax[0] + bx[0], ax[1] + bx[1], ax[2] + bx[2]]];
+  })
+);
+const TRI = [0, 1, 2, 0, 2, 3];
 function surfaceGeo(
   arr: Cell[],
   has: (x: number, y: number, z: number) => boolean,
@@ -50,43 +99,29 @@ function surfaceGeo(
   ao: boolean,
 ): THREE.BufferGeometry | null {
   const pos: number[] = [], nor: number[] = [], colr: number[] = [];
+  const bri = [1, 1, 1, 1];
   for (const d of arr) {
-    const c = colorOf(d.c);
-    for (const f of FACE) {
-      const nx = d.x + f.d[0], ny = d.y + f.d[1], nz = d.z + f.d[2];
+    const c = colorOf(d.c), cr = c.r, cg = c.g, cb = c.b;
+    for (let fi = 0; fi < 6; fi++) {
+      const f = FACE[fi], dx = f.d[0], dy = f.d[1], dz = f.d[2];
+      const nx = d.x + dx, ny = d.y + dy, nz = d.z + dz;
       if (has(nx, ny, nz)) continue; // hidden internal face
-      const na = f.a, nb = f.b; // the two in-plane axes
-      const vert: number[][] = [];
-      for (const w of f.v) {
-        let b = 1;
-        if (ao) {
-          const sa = w[na] ? 1 : -1, sb = w[nb] ? 1 : -1;
-          const pa = [nx, ny, nz];
-          pa[na] += sa;
-          const pb = [nx, ny, nz];
-          pb[nb] += sb;
-          const pc = [nx, ny, nz];
-          pc[na] += sa;
-          pc[nb] += sb;
-          const A = has(pa[0], pa[1], pa[2]),
-            B = has(pb[0], pb[1], pb[2]),
-            C = has(pc[0], pc[1], pc[2]);
-          b = AO[(A && B) ? 0 : 3 - ((A ? 1 : 0) + (B ? 1 : 0) + (C ? 1 : 0))];
+      if (ao) {
+        const fa = FACE_AO[fi];
+        for (let i = 0; i < 4; i++) {
+          const [oa, ob, oc] = fa[i];
+          const A = has(nx + oa[0], ny + oa[1], nz + oa[2]),
+            B = has(nx + ob[0], ny + ob[1], nz + ob[2]),
+            C = has(nx + oc[0], ny + oc[1], nz + oc[2]);
+          bri[i] =
+            AO[(A && B) ? 0 : 3 - ((A ? 1 : 0) + (B ? 1 : 0) + (C ? 1 : 0))];
         }
-        vert.push([
-          d.x + w[0],
-          d.y + w[1],
-          d.z + w[2],
-          c.r * b,
-          c.g * b,
-          c.b * b,
-        ]);
       }
-      for (const i of [0, 1, 2, 0, 2, 3]) {
-        const v = vert[i];
-        pos.push(v[0], v[1], v[2]);
-        nor.push(f.d[0], f.d[1], f.d[2]);
-        colr.push(v[3], v[4], v[5]);
+      for (const i of TRI) {
+        const w = f.v[i], b = bri[i];
+        pos.push(d.x + w[0], d.y + w[1], d.z + w[2]);
+        nor.push(dx, dy, dz);
+        colr.push(cr * b, cg * b, cb * b);
       }
     }
   }
@@ -139,7 +174,7 @@ export function addSurface(
   return m;
 }
 
-// gather every world voxel (skipping the object being edited).
+// report every world voxel (skipping the object being edited) to `emit`.
 //   tr    = effectively transparent (this node or an ancestor is transparent)
 //   owner = id of the current context's direct child this voxel belongs to
 export function walk(
@@ -148,15 +183,15 @@ export function walk(
   rot: Rot,
   owner: string | null,
   vis: number,
-  out: Voxel[],
+  emit: VoxelSink,
 ): void {
   const ev = Math.max(vis, VIS[node.vis || "visible"]);
   if (node === S.editObject || ev >= 2) return; // invisible -> skip
   const tr = ev === 1;
   if (node.type === "object") {
     for (const [k, c] of node.voxels) {
-      const w = addv(rotY(parseKey(k), rot), off);
-      out.push({ x: w.x, y: w.y, z: w.z, c, owner, tr });
+      const w = keyToWorld(k, rot, off);
+      emit(w.x, w.y, w.z, c, owner, tr);
     }
   } else {for (const ch of node.children) {
       walk(
@@ -165,7 +200,7 @@ export function walk(
         (rot + ch.rot) & 3,
         (node === S.context) ? ch.id : owner,
         ev,
-        out,
+        emit,
       );
     }}
 }
@@ -214,6 +249,7 @@ function scheduleRemesh(): void {
     S.editRemesh = 0;
     for (const ck of S.editDirty) remeshChunk(ck);
     S.editDirty.clear();
+    wake(); // newly meshed chunks need a frame
   });
 }
 function markDirty(x: number, y: number, z: number): void {
@@ -307,35 +343,36 @@ export function rebuild(): void {
   S.childBox = {};
   S.voxVer++;
   invalidateField();
-  const all: Voxel[] = [];
-  walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, all);
+  const O = { x: 0, y: 0, z: 0 };
+  const sceneBox = emptyBox(); // world bounds of all geometry, for shadow fitting
 
   if (S.editObject) {
     S.editXform = xcompose(contextXform(), {
       off: S.editObject.pos,
       rot: S.editObject.rot,
     });
+    const all: Cell[] = [];
+    walk(S.root, O, 0, null, 0, (x, y, z, c) => {
+      all.push({ x, y, z, c });
+      growBox(sceneBox, x, y, z);
+    });
     addSurface(all, (c) => col(c), { transparent: true }); // everything else: transparent
     buildEditMesh(); // edited object: opaque, in 3D
+    nodeBox(S.editObject, S.editXform.off, S.editXform.rot, sceneBox); // walk skips it
   } else {
     // owner -> current context's children; otherwise dimmed (descended past).
-    const gE: Record<string, Voxel[]> = {},
-      gT: Record<string, Voxel[]> = {},
-      ctxE: Voxel[] = [],
-      ctxT: Voxel[] = [];
-    for (const v of all) {
-      if (v.owner) {
-        (v.tr
-          ? (gT[v.owner] || (gT[v.owner] = []))
-          : (gE[v.owner] || (gE[v.owner] = []))).push(v);
-        growBox(
-          S.childBox[v.owner] || (S.childBox[v.owner] = emptyBox()),
-          v.x,
-          v.y,
-          v.z,
-        );
-      } else (v.tr ? ctxT : ctxE).push(v);
-    }
+    const gE: Record<string, Cell[]> = {},
+      gT: Record<string, Cell[]> = {},
+      ctxE: Cell[] = [],
+      ctxT: Cell[] = [];
+    walk(S.root, O, 0, null, 0, (x, y, z, c, owner, tr) => {
+      growBox(sceneBox, x, y, z);
+      if (owner) {
+        (tr ? (gT[owner] || (gT[owner] = [])) : (gE[owner] || (gE[owner] = [])))
+          .push({ x, y, z, c });
+        growBox(S.childBox[owner] || (S.childBox[owner] = emptyBox()), x, y, z);
+      } else (tr ? ctxT : ctxE).push({ x, y, z, c });
+    });
     addSurface(ctxE, (c) => dimCol(c), { ao: true });
     addSurface(ctxT, (c) => dimCol(c), { transparent: true });
     for (const id of new Set([...Object.keys(gE), ...Object.keys(gT)])) {
@@ -349,7 +386,9 @@ export function rebuild(): void {
       if (gT[id]) addSurface(gT[id], (c) => col(c), { transparent: true }); // transparent: not pickable
     }
   }
+  fitShadow(sceneBox); // anchor the light/shadow frustum to the scene, not the view
   refreshOverlay();
+  wake(); // the scene changed — make sure it gets drawn
 }
 
 // ---- overlay outlines ----
