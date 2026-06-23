@@ -31,10 +31,12 @@ import { contextXform, emptyBox, nodeBox, VIS } from "./model.ts";
 import { invalidateField } from "./measure.ts";
 import type { Box, Box3, Node, ObjectNode, Region, Rot, Vec } from "./types.ts";
 
-// Fixed key-light direction (the original +50,+110,+38 offset, normalised). The
-// light + its shadow camera are anchored to the scene's world bounds — not the
-// view — so shadows don't shift when the camera pans or orbits.
-const LIGHT_DIR = new THREE.Vector3(50, 110, 38).normalize();
+// Fixed key-light direction. Steeper than a "golden-hour" sun (elev ~72°, not
+// ~60°) so that objects raised off the floor — e.g. a houseplant's foliage on a
+// thin stem — drop their shadow close underneath instead of flinging it a body-
+// width away, where it reads as a detached floating blob. The horizontal bias is
+// kept (same azimuth) so cube faces still shade with clear light/dark sides.
+const LIGHT_DIR = new THREE.Vector3(40, 150, 30).normalize();
 function fitShadow(box: Box): void {
   if (box.max.x < box.min.x) return; // empty scene: keep the prior frustum
   const cx = (box.min.x + box.max.x) / 2,
