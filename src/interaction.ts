@@ -51,6 +51,18 @@ import type { Box3, Drag, Seg, Vec } from "./types.ts";
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
 
+// World-Y units per pixel of vertical pointer travel, for Shift height edits.
+// One screen pixel is `perPx` world units along the screen's vertical axis; world
+// +Y projects onto that axis by the camera up-vector's world-y (= cos elevation),
+// so dividing by it makes the dragged height track the pointer exactly instead of
+// lagging it in the foreshortened isometric view.
+function worldYPerPixel(): number {
+  const perPx = (camera.top - camera.bottom) /
+    canvas.getBoundingClientRect().height;
+  const upY = Math.abs(camera.matrixWorldInverse.elements[5]);
+  return perPx / Math.max(upY, 0.15); // clamp: near top-down, Y barely projects
+}
+
 // Pan/orbit the camera for a drag delta; returns true if it handled the mode.
 function dragPanOrbit(e: PointerEvent): boolean {
   const d = S.drag;
@@ -90,9 +102,8 @@ function moveDragTo(e: PointerEvent): void {
       d.shiftAnchorY = e.clientY;
       d.dyBase = d.dy;
     }
-    const perPx = (camera.top - camera.bottom) /
-      canvas.getBoundingClientRect().height;
-    dy = d.dyBase! + Math.round((d.shiftAnchorY - e.clientY) * perPx);
+    dy = d.dyBase! +
+      Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
   } else { // horizontal: move on the floor plane
     d.shiftAnchorY = null;
     const g = groundCell(0);
@@ -193,13 +204,12 @@ function startBox(
 function boxDragTo(e: PointerEvent): void {
   const d = S.drag!, b = d.box!;
   if (e.shiftKey) { // vertical extrude (like moving objects with Shift)
-    const perPx = (camera.top - camera.bottom) /
-      canvas.getBoundingClientRect().height;
     if (d.shiftAnchorY === null) {
       d.shiftAnchorY = e.clientY;
       d.hyBase = b.hy;
     }
-    b.hy = d.hyBase! + Math.round((d.shiftAnchorY! - e.clientY) * perPx);
+    b.hy = d.hyBase! +
+      Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel());
   } else { // horizontal footprint
     d.shiftAnchorY = null;
     const c = localGroundCell(b.y0);
@@ -221,7 +231,7 @@ function boxExtent() {
     y1: Math.max(b.y0, b.y0 + b.hy),
   };
 }
-function commitBox(): void {
+function commitBox(alt: boolean): void {
   const x = boxExtent();
   // boxExtent is inclusive; box regions are half-open
   const r = {
@@ -232,7 +242,8 @@ function commitBox(): void {
     y1: x.y1 + 1,
     z1: x.z1 + 1,
   };
-  if (S.tool === "add") editAdd(r, S.selColor);
+  // add collides with existing solids (fills only empty cells); Alt overwrites
+  if (S.tool === "add") editAdd(r, S.selColor, !alt);
   else editErase(r);
   S.liveMeas = null;
   renderMeasure();
@@ -377,7 +388,7 @@ canvas.addEventListener("pointerup", (e) => {
       S.painting = false;
       updateChrome();
       save();
-    } else if (S.drag && S.drag.mode === "box") commitBox();
+    } else if (S.drag && S.drag.mode === "box") commitBox(e.altKey);
     S.drag = null;
     return;
   }

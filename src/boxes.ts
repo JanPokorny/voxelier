@@ -58,6 +58,21 @@ export function addBox(boxes: Box3[], r: Region, c: number): Box3[] {
   out.push({ ...r, c });
   return out;
 }
+// Add `r` with colour `c` but only into cells that are currently empty — every
+// existing solid blocks it, so the add "collides" instead of tunnelling through
+// (or recolouring) what's already there. The fragments of `r` left after removing
+// every box are disjoint from the existing set and from each other, so a plain
+// concat keeps the list disjoint.
+export function addBoxOnto(boxes: Box3[], r: Region, c: number): Box3[] {
+  let frags: Box3[] = [{ ...r, c }];
+  for (const b of boxes) {
+    if (!frags.length) break;
+    const next: Box3[] = [];
+    for (const f of frags) subtract(f, b, next); // f minus the existing box b
+    frags = next;
+  }
+  return frags.length ? boxes.concat(frags) : boxes.slice();
+}
 export function eraseBox(boxes: Box3[], r: Region): Box3[] {
   const out: Box3[] = [];
   for (const b of boxes) overlaps(b, r) ? subtract(b, r, out) : out.push(b);
