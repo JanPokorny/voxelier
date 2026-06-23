@@ -131,7 +131,7 @@ function commitMove(): void {
     x = contextXform(),
     dL = rotY(
       { x: Math.round(d.dx!), y: 0, z: Math.round(d.dz!) },
-      (4 - x.rot) & 3,
+      -x.rot, // world delta -> context-local (inverse rotation)
     ),
     dy = Math.round(d.dy!);
   for (const id of S.selection) {

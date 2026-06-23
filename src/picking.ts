@@ -37,12 +37,12 @@ export function pickVoxel(): Pick { // -> {cell, addCell} in object-local space,
   const h = hits[0];
   // chunk geometry is built in object-local space (editGroup carries the pose), so
   // the face normal is already local; convert the world hit point back to local.
-  const off = S.editXform.off, r = (4 - S.editXform.rot) & 3;
+  const off = S.editXform.off;
   const lp = rotY({
     x: h.point.x - off.x,
     y: h.point.y - off.y,
     z: h.point.z - off.z,
-  }, r);
+  }, -S.editXform.rot); // inverse rotation (rotY normalises the negative count)
   const n = h.face ? h.face.normal : { x: 0, y: 1, z: 0 };
   const sx = Math.floor(lp.x - n.x * 0.5),
     sy = Math.floor(lp.y - n.y * 0.5),
@@ -64,7 +64,7 @@ export function localGroundCell(localY: number): Vec | null {
     x: g.x - S.editXform.off.x,
     y: 0,
     z: g.z - S.editXform.off.z,
-  }, (4 - S.editXform.rot) & 3);
+  }, -S.editXform.rot);
   return { x: Math.round(l.x), y: localY, z: Math.round(l.z) };
 }
 // object-local -> world point (edit mode); shared by the box brush and measure

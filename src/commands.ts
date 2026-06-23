@@ -199,7 +199,7 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
       };
       const dL = rotY(
         { x: Math.round(dW.x), y: 0, z: Math.round(dW.z) },
-        (4 - x.rot) & 3,
+        -x.rot, // world recentre delta -> context-local (inverse rotation)
       );
       ch.pos.x += dL.x;
       ch.pos.z += dL.z;
