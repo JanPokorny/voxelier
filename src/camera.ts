@@ -146,7 +146,5 @@ export function updateCamera(): void {
   camera.updateProjectionMatrix();
   // invisible shadow catcher tracks the view
   ground.position.set(cam.target.x, 0, cam.target.z);
-  // refresh the sky shader's camera basis (its horizon = world y=0)
-  camera.updateMatrixWorld();
-  updateSky();
+  updateSky(); // green backdrop looking down, blue looking up
 }
