@@ -14,8 +14,26 @@ export type Box = { min: Vec; max: Vec };
 
 // ---- the document model ----
 export type Vis = "visible" | "transparent" | "invisible";
-// voxel field: packed-int cell key -> 0xRRGGBB colour
-export type VoxelMap = Map<number, number>;
+// An axis-aligned box of cells, half-open [x0,x1) x [y0,y1) x [z0,z1), with a
+// single 0xRRGGBB colour. An object's shape is a set of disjoint such boxes.
+export type Box3 = {
+  x0: number;
+  y0: number;
+  z0: number;
+  x1: number;
+  y1: number;
+  z1: number;
+  c: number;
+};
+// A box region without colour — an add/erase/paint target.
+export type Region = {
+  x0: number;
+  y0: number;
+  z0: number;
+  x1: number;
+  y1: number;
+  z1: number;
+};
 
 type NodeBase = {
   id: string;
@@ -24,33 +42,15 @@ type NodeBase = {
   rot: Rot;
   vis: Vis;
 };
-export type ObjectNode = NodeBase & { type: "object"; voxels: VoxelMap };
+export type ObjectNode = NodeBase & { type: "object"; boxes: Box3[] };
 export type SceneNode = NodeBase & { type: "scene"; children: Node[] };
 export type Node = ObjectNode | SceneNode;
 
 // ---- editor tools ----
 export type Tool = "add" | "erase" | "paint" | "measure";
 
-// A world (or object-local) voxel produced by walk(): position, colour, the
-// context child it belongs to (owner) and whether it renders as glass (tr).
-export type Voxel = {
-  x: number;
-  y: number;
-  z: number;
-  c: number;
-  owner?: string | null;
-  tr?: boolean;
-};
-// walk() reports each world voxel to this sink instead of allocating an array,
-// so callers bucket/test cells without a throwaway intermediate list.
-export type VoxelSink = (
-  x: number,
-  y: number,
-  z: number,
-  c: number,
-  owner: string | null,
-  tr: boolean,
-) => void;
+// A surface cell produced by box meshing: position + colour.
+export type Cell = { x: number; y: number; z: number; c: number };
 
 // ---- measurement ----
 // One labelled dimension segment between two world points.
@@ -64,7 +64,7 @@ export type Seg = {
 };
 export type MeasLabel = { el: HTMLElement; w: THREE.Vector3 };
 export type MeasField = {
-  set: Set<number>;
+  has: (x: number, y: number, z: number) => boolean;
   mn: Vec;
   mx: Vec;
   toW: (x: number, y: number, z: number) => THREE.Vector3;
@@ -99,8 +99,8 @@ export type Drag = {
     z1: number;
     hy: number;
   };
-  occ?: Set<number>;
-  sel?: Voxel[];
+  occ?: Box3[]; // obstacle boxes (world), for move collision
+  sel?: Box3[]; // moving selection boxes (world)
 };
 
 // Pending drop target while dragging a tree row.

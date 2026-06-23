@@ -2,11 +2,12 @@
 // three axes through a voxel; left-click freezes a reading, right-click clears.
 import * as THREE from "three";
 import { S } from "./state.ts";
-import { key, parseKey } from "./math.ts";
 import { _mv, camera, canvas, measLines, ndc, raycaster } from "./scene-env.ts";
-import { walk } from "./render.ts";
+import { eachObject } from "./render.ts";
+import { boxesHas, buildIndex, growBounds, worldBox } from "./boxes.ts";
 import { groundCell, localGroundCell, locToW, pickVoxel } from "./picking.ts";
-import type { MeasField, Seg, Vec } from "./types.ts";
+import { emptyBox } from "./model.ts";
+import type { Box3, MeasField, Seg, Vec } from "./types.ts";
 
 const M_FILL = new THREE.Color(0xa7c4bc), M_EMPTY = new THREE.Color(0x5c677d);
 export const measureActive = (): boolean =>
@@ -20,35 +21,41 @@ export function clearMeasure(): void {
   renderMeasure();
 }
 
-// the voxel field being measured: edited object (local) or current scene context (world)
+// the field being measured: edited object (local) or current scene context (world)
 export function measureField(): MeasField {
   if (S.measFieldCache) return S.measFieldCache;
-  const set = new Set<number>(),
-    mn = { x: 1e9, y: 1e9, z: 1e9 },
-    mx = { x: -1e9, y: -1e9, z: -1e9 };
-  const acc = (x: number, y: number, z: number) => {
-    set.add(key(x, y, z));
-    mn.x = Math.min(mn.x, x);
-    mn.y = Math.min(mn.y, y);
-    mn.z = Math.min(mn.z, z);
-    mx.x = Math.max(mx.x, x);
-    mx.y = Math.max(mx.y, y);
-    mx.z = Math.max(mx.z, z);
-  };
+  const boxes: Box3[] = [];
   let toW: (x: number, y: number, z: number) => THREE.Vector3;
   if (S.editObject) {
-    for (const [k] of S.editObject.voxels) {
-      const v = parseKey(k);
-      acc(v.x, v.y, v.z);
-    }
+    boxes.push(...S.editObject.boxes);
     toW = locToW; // edit-mode local -> world (same as the box brush)
   } else {
-    walk(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (x, y, z, _c, owner) => {
-      if (owner) acc(x, y, z);
-    });
+    eachObject(
+      S.root,
+      { x: 0, y: 0, z: 0 },
+      0,
+      null,
+      0,
+      (n, off, rot, owner) => {
+        if (owner) {
+          for (const b of n.boxes) {
+            boxes.push(worldBox(b, rot, off));
+          }
+        }
+      },
+    );
     toW = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
   }
-  S.measFieldCache = { set, mn, mx, toW, empty: set.size === 0 };
+  const bb = emptyBox();
+  growBounds(boxes, bb);
+  const empty = boxes.length === 0;
+  // bounds are inclusive cell indices; box maxima are exclusive
+  const mn = { x: bb.min.x, y: bb.min.y, z: bb.min.z };
+  const mx = { x: bb.max.x - 1, y: bb.max.y - 1, z: bb.max.z - 1 };
+  const has = boxes.length > 64
+    ? buildIndex(boxes)
+    : (x: number, y: number, z: number) => boxesHas(boxes, x, y, z);
+  S.measFieldCache = { has, mn, mx, toW, empty };
   return S.measFieldCache;
 }
 export function measureRef(): Vec | null { // voxel cell under the pointer, clamped into the field
@@ -92,7 +99,7 @@ export function measureAt(cell: Vec): Seg[] { // segments along all 3 axes throu
     const c = [cell.x, cell.y, cell.z],
       at = (v: number) => {
         c[d] = v;
-        return f.set.has(key(c[0], c[1], c[2]));
+        return f.has(c[0], c[1], c[2]);
       };
     let i = lo;
     while (i <= hi) {
