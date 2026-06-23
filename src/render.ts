@@ -71,9 +71,16 @@ function fitShadow(box: Box): void {
 }
 
 export function disposeMeshes(): void {
+  // a glass surface and its depth-prepass sibling share one geometry, so track
+  // what's been freed to dispose each BufferGeometry exactly once
+  const freed = new Set<THREE.BufferGeometry>();
   for (const m of S.meshes) {
     scene.remove(m);
-    if (m.geometry && m.geometry !== boxGeo) m.geometry.dispose();
+    const g = m.geometry;
+    if (g && g !== boxGeo && !freed.has(g)) {
+      g.dispose();
+      freed.add(g);
+    }
   }
   S.meshes = [];
   editGroup.clear();
