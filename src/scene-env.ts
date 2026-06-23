@@ -126,33 +126,6 @@ export const matGlassDepth = new THREE.MeshBasicMaterial({
   side: THREE.FrontSide,
 });
 
-// exterior cube faces, wound CCW for an outward normal
-// d=outward normal, a/b=the two in-plane axes (for AO), v=CCW corners
-export const FACE = [
-  { d: [1, 0, 0], a: 1, b: 2, v: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]] },
-  {
-    d: [-1, 0, 0],
-    a: 1,
-    b: 2,
-    v: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]],
-  },
-  { d: [0, 1, 0], a: 0, b: 2, v: [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]] },
-  {
-    d: [0, -1, 0],
-    a: 0,
-    b: 2,
-    v: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]],
-  },
-  { d: [0, 0, 1], a: 0, b: 1, v: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
-  {
-    d: [0, 0, -1],
-    a: 0,
-    b: 1,
-    v: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]],
-  },
-];
-export const AO = [0.5, 0.74, 0.88, 1]; // brightness by exposure (0 = corner most occluded)
-
 // ground: an invisible shadow catcher at y=0 (no visible plane/edges — the
 // "ground" is the green lower half of the backdrop). Follows the camera target
 // (see updateCamera) so shadows stay under the view at any pan.

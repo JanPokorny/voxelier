@@ -85,13 +85,6 @@ export function paintBox(boxes: Box3[], r: Region, c: number): Box3[] {
   return out;
 }
 
-export const cellCount = (boxes: Box3[]): number => {
-  let n = 0;
-  for (const b of boxes) {
-    n += (b.x1 - b.x0) * (b.y1 - b.y0) * (b.z1 - b.z0);
-  }
-  return n;
-};
 export function colorCounts(boxes: Box3[], into: Map<number, number>): void {
   for (const b of boxes) {
     const v = (b.x1 - b.x0) * (b.y1 - b.y0) * (b.z1 - b.z0);
