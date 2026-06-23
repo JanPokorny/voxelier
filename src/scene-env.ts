@@ -10,32 +10,7 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 export const scene = new THREE.Scene();
-// Backdrop: a screen-space vertical gradient — blue sky on top, green below the
-// horizon. Orthographic can't make a real horizon, so it lives here; setHorizon()
-// slides the blue->green transition to the screen fraction (0 top .. 1 bottom)
-// where the camera projects ground level, so it tracks orbit/pan.
-const skyCv = document.createElement("canvas");
-skyCv.width = 2;
-skyCv.height = 256;
-const skyCtx = skyCv.getContext("2d")!;
-const skyTex = new THREE.CanvasTexture(skyCv);
-skyTex.colorSpace = THREE.SRGBColorSpace;
-let _horizon = -1;
-export function setHorizon(frac: number): void {
-  const f = Math.max(0.08, Math.min(0.96, frac));
-  if (Math.abs(f - _horizon) < 0.004) return; // unchanged enough to skip the redraw
-  _horizon = f;
-  const grd = skyCtx.createLinearGradient(0, 0, 0, 256);
-  grd.addColorStop(0, "#3a6ea5"); // sky overhead
-  grd.addColorStop(f - 0.06, "#9bb6d4"); // pale band just above the horizon
-  grd.addColorStop(f, "#5d7a4a"); // ground starts
-  grd.addColorStop(1, "#46613a"); // distant ground
-  skyCtx.fillStyle = grd;
-  skyCtx.fillRect(0, 0, 2, 256);
-  skyTex.needsUpdate = true;
-}
-setHorizon(0.55);
-scene.background = skyTex;
+scene.background = new THREE.Color("#7aa0c4"); // fallback; the sky quad covers it
 
 export const ISO_ELEV = Math.atan(1 / Math.SQRT2);
 export const cam = {
@@ -53,6 +28,55 @@ export const goal = {
 export const CAM_DIST = 900;
 export const ZOOM_MAX = 2000; // max orthographic view height (zoom-out limit)
 export const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
+
+// Sky: a full-screen quad whose fragment shader reconstructs a *perspective* view
+// ray per pixel (faked, since the scene is orthographic) and colours it by the
+// ray's elevation — blue above the world horizon (y=0), green below. The result
+// is equivalent to standing inside a huge sphere whose lower half is green; the
+// horizon tilts and curves correctly as the camera orbits. updateSky() feeds the
+// camera basis + pseudo-FOV each frame.
+const SKY_VFOV = 1.0; // pseudo vertical field of view (radians) — wider = more curve
+const skyU = {
+  uF: { value: new THREE.Vector3() }, // camera forward (world)
+  uR: { value: new THREE.Vector3() }, // camera right
+  uU: { value: new THREE.Vector3() }, // camera up
+  uTanX: { value: 1 },
+  uTanY: { value: 1 },
+};
+const sky = new THREE.Mesh(
+  new THREE.PlaneGeometry(2, 2),
+  new THREE.ShaderMaterial({
+    uniforms: skyU,
+    depthWrite: false,
+    depthTest: false,
+    vertexShader:
+      `varying vec2 vN; void main(){ vN = position.xy; gl_Position = vec4(position.xy, 1.0, 1.0); }`,
+    fragmentShader: `precision highp float;
+      varying vec2 vN; uniform vec3 uF, uR, uU; uniform float uTanX, uTanY;
+      void main(){
+        vec3 d = normalize(uF + vN.x * uTanX * uR + vN.y * uTanY * uU);
+        float h = d.y; // ray elevation: >0 sky, <0 ground
+        vec3 skyTop = vec3(0.227, 0.431, 0.647), skyHaze = vec3(0.62, 0.72, 0.84);
+        vec3 gNear = vec3(0.36, 0.47, 0.29), gFar = vec3(0.20, 0.30, 0.17);
+        vec3 c = h >= 0.0
+          ? mix(skyHaze, skyTop, smoothstep(0.0, 0.55, h))
+          : mix(gNear, gFar, smoothstep(0.0, 0.5, -h));
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  }),
+);
+sky.frustumCulled = false;
+sky.renderOrder = -1e9; // draw before everything
+scene.add(sky);
+export function updateSky(): void {
+  const e = camera.matrixWorld.elements; // column-major basis
+  skyU.uR.value.set(e[0], e[1], e[2]);
+  skyU.uU.value.set(e[4], e[5], e[6]);
+  skyU.uF.value.set(-e[8], -e[9], -e[10]); // camera looks down -z
+  const r = canvas.getBoundingClientRect();
+  skyU.uTanY.value = Math.tan(SKY_VFOV / 2);
+  skyU.uTanX.value = skyU.uTanY.value * (r.width / Math.max(1, r.height));
+}
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.62));
 export const dir = new THREE.DirectionalLight(0xffffff, 0.78);
