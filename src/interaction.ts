@@ -267,9 +267,10 @@ function renderBox(): void {
     nolabel: !label,
   });
   const o: Seg[] = [];
-  o.push(seg(X0, Y0, Z0, X1, Y0, Z0, nx, true)); // X dimension
-  o.push(seg(X0, Y0, Z0, X0, Y0, Z1, nz, true)); // Z dimension
-  o.push(seg(X0, Y0, Z0, X0, Y1, Z0, ny, true)); // Y dimension
+  // label a dimension only when it's >= 2: a "1" is crammed and self-evident
+  o.push(seg(X0, Y0, Z0, X1, Y0, Z0, nx, nx >= 2)); // X dimension
+  o.push(seg(X0, Y0, Z0, X0, Y0, Z1, nz, nz >= 2)); // Z dimension
+  o.push(seg(X0, Y0, Z0, X0, Y1, Z0, ny, ny >= 2)); // Y dimension
   o.push(
     seg(X1, Y0, Z0, X1, Y0, Z1, 0, false),
     seg(X0, Y0, Z1, X1, Y0, Z1, 0, false),
