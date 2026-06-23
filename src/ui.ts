@@ -3,12 +3,12 @@
 // global keyboard shortcuts. Attaches its window/tree listeners on import.
 import { S } from "./state.ts";
 import { addv, hex, rotY } from "./math.ts";
-import { colorCounts, worldBox } from "./boxes.ts";
+import { colorCounts, growBounds, worldBox } from "./boxes.ts";
 import { hoverVox } from "./scene-env.ts";
 import { clearMeasure, measureActive } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
 import { enterNode, escapeUp, isEntered, selectNode } from "./navigation.ts";
-import { findById, isDescendant, parentOf } from "./model.ts";
+import { emptyBox, findById, isDescendant, parentOf } from "./model.ts";
 import {
   addGroupIn,
   addObjectIn,
@@ -276,15 +276,10 @@ function thumbFor(node: Node): HTMLCanvasElement {
   g.fillRect(0, 0, 52, 52);
   const boxes = localBoxes(node, { x: 0, y: 0, z: 0 }, 0, []);
   if (boxes.length) {
-    let mnx = 1e9, mny = 1e9, mnz = 1e9, mxx = -1e9, mxy = -1e9, mxz = -1e9;
-    for (const b of boxes) {
-      mnx = Math.min(mnx, b.x0),
-        mny = Math.min(mny, b.y0),
-        mnz = Math.min(mnz, b.z0);
-      mxx = Math.max(mxx, b.x1),
-        mxy = Math.max(mxy, b.y1),
-        mxz = Math.max(mxz, b.z1);
-    }
+    const bb = emptyBox();
+    growBounds(boxes, bb);
+    const { x: mnx, y: mny, z: mnz } = bb.min,
+      { x: mxx, y: mxy, z: mxz } = bb.max;
     const s = 40 / Math.max(mxx - mnx, mxy - mny, mxz - mnz, 1);
     const cx = 26 - ((mnx + mxx) / 2 - (mnz + mxz) / 2) * s * 0.5,
       cy = 28 + ((mny + mxy) / 2) * s * 0.6 -
