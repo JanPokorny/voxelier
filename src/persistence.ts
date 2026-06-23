@@ -5,7 +5,7 @@ import { peekUid, seedUid } from "./math.ts";
 import { record } from "./history.ts";
 import type { Node, ObjectNode, SceneNode, Vis } from "./types.ts";
 
-const LS = "voxelier-v8"; // voxels now serialise as packed-int keys
+const LS = "voxelier-v9"; // v9: new default seed (M.03 room at 10mm/voxel)
 
 // The on-disk / localStorage shape (compact field names), distinct from `Node`.
 type SerBase = {
