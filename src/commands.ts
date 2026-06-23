@@ -28,6 +28,10 @@ const commit = (): void => {
   updateChrome();
   save();
 };
+// round half away from zero (symmetric). Math.round rounds half toward +∞, so
+// rotation re-centring of an even×odd footprint (half-integer centre delta)
+// wouldn't cancel over a full turn — the object would creep across the scene.
+const rndSym = (v: number): number => (v < 0 ? -Math.round(-v) : Math.round(v));
 
 export function cycleVis(node: Node): void {
   node.vis = VIS_CYCLE[node.vis || "visible"];
@@ -198,7 +202,7 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
         z: (before.min.z + before.max.z) / 2 - (after.min.z + after.max.z) / 2,
       };
       const dL = rotY(
-        { x: Math.round(dW.x), y: 0, z: Math.round(dW.z) },
+        { x: rndSym(dW.x), y: 0, z: rndSym(dW.z) },
         -x.rot, // world recentre delta -> context-local (inverse rotation)
       );
       ch.pos.x += dL.x;

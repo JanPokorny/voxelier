@@ -151,7 +151,7 @@ function rotDragTo(e: PointerEvent): void {
   if (steps !== S.drag!.steps) {
     rotateSelectionBy(steps - S.drag!.steps!);
     S.drag!.steps = steps;
-    S.drag!.dirty = true; // re-centering rounds per step, so a net-zero drag can still move pos
+    S.drag!.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
   }
 }
 
