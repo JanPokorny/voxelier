@@ -10,17 +10,20 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 export const scene = new THREE.Scene();
-// sky: a vertical gradient (deep blue overhead -> pale haze at the horizon),
-// painted into a tiny canvas and used as the screen-space background.
+// Backdrop: a screen-space vertical gradient — blue sky on top, green below the
+// horizon. In an orthographic view a ground plane can't make a horizon (it's
+// either a finite slab or fills the screen), so the horizon lives here; the
+// ground plane just blends into the green lower half and catches shadows.
 function skyTexture(): THREE.CanvasTexture {
   const cv = document.createElement("canvas");
   cv.width = 2;
   cv.height = 256;
   const g = cv.getContext("2d")!;
   const grd = g.createLinearGradient(0, 0, 0, 256);
-  grd.addColorStop(0, "#3a6ea5"); // overhead
-  grd.addColorStop(0.6, "#7ba3cc");
-  grd.addColorStop(1, "#cfe0ee"); // horizon haze
+  grd.addColorStop(0, "#3a6ea5"); // sky overhead
+  grd.addColorStop(0.46, "#9bb6d4"); // pale band just above the horizon
+  grd.addColorStop(0.52, "#5d7a4a"); // ground starts
+  grd.addColorStop(1, "#46613a"); // ground (matches the ground plane)
   g.fillStyle = grd;
   g.fillRect(0, 0, 2, 256);
   const tex = new THREE.CanvasTexture(cv);
