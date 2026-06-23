@@ -34,6 +34,7 @@ export type State = {
   pickMeshes: THREE.Mesh[]; // meshes raycast for picking
   childMeshes: Record<string, THREE.Mesh[]>; // childId -> [meshes] (scene mode)
   childBox: Record<string, Box>; // childId -> {min,max}
+  sceneBox: Box | null; // world AABB of all geometry (for camera depth + shadows)
   editXform: Xform;
 
   // ---- edited object: surface mesh (rebuilt on edit, rAF-debounced) ----
@@ -79,6 +80,7 @@ export const S: State = {
   pickMeshes: [],
   childMeshes: {},
   childBox: {},
+  sceneBox: null,
   editXform: { off: { x: 0, y: 0, z: 0 }, rot: 0 },
 
   editMesh: null,

@@ -339,6 +339,7 @@ export function rebuild(): void {
       if (t) meshSurface(t, (c) => col(c), { transparent: true }); // not pickable
     }
   }
+  S.sceneBox = sceneBox; // camera depth range reads this (see updateCamera)
   fitShadow(sceneBox); // anchor the light/shadow frustum to the scene, not the view
   refreshOverlay();
   wake(); // the scene changed — make sure it gets drawn

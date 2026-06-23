@@ -112,8 +112,34 @@ export function updateCamera(): void {
   camera.right = w / 2;
   camera.top = h / 2;
   camera.bottom = -h / 2;
-  camera.near = 0.1;
-  camera.far = 4000;
+  // Depth range = the scene's (and ground's) extent along the view axis, so an
+  // arbitrarily large model never clips against a fixed far plane. Orthographic
+  // tolerates a negative near, so the camera may even sit inside the model.
+  const p = camera.position; // _dv points target->camera, so (p-pt)·_dv is depth in front
+  let near = Infinity, far = -Infinity;
+  const consider = (x: number, y: number, z: number) => {
+    const d = (p.x - x) * _dv.x + (p.y - y) * _dv.y + (p.z - z) * _dv.z;
+    if (d < near) near = d;
+    if (d > far) far = d;
+  };
+  const b = S.sceneBox;
+  if (b && b.max.x >= b.min.x) {
+    for (const cx of [b.min.x, b.max.x]) {
+      for (const cy of [b.min.y, b.max.y]) {
+        for (const cz of [b.min.z, b.max.z]) consider(cx, cy, cz);
+      }
+    }
+  }
+  const gx = cam.target.x, gz = cam.target.z, gr = 4000; // ground plane (at y=0)
+  for (const sx of [-gr, gr]) {
+    for (const sz of [-gr, gr]) consider(gx + sx, 0, gz + sz);
+  }
+  if (near > far) { // empty scene
+    near = 0.1;
+    far = 4000;
+  }
+  camera.near = near - 10;
+  camera.far = far + 10;
   camera.zoom = 1;
   camera.updateProjectionMatrix();
 }
