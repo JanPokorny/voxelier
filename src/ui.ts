@@ -586,33 +586,16 @@ window.addEventListener("keydown", (e) => {
       redo();
       return;
     }
-    if (k === "c") {
-      if (!S.editObject) {
-        copySelection();
-        e.preventDefault();
-      }
-      return;
-    }
-    if (k === "x") {
-      if (!S.editObject) {
-        cutSelection();
-        e.preventDefault();
-      }
-      return;
-    }
-    if (k === "v") {
-      if (!S.editObject) {
-        pasteClipboard();
-        e.preventDefault();
-      }
-      return;
-    }
-    if (k === "d") {
-      if (!S.editObject) {
-        duplicateSelection();
-        e.preventDefault();
-      }
-      return;
+    // clipboard / duplicate — only outside voxel-edit mode
+    const clip = {
+      c: copySelection,
+      x: cutSelection,
+      v: pasteClipboard,
+      d: duplicateSelection,
+    }[k];
+    if (clip && !S.editObject) {
+      clip();
+      e.preventDefault();
     }
     return;
   }
