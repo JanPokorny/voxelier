@@ -26,6 +26,7 @@ export const goal = {
   target: cam.target.clone(),
 };
 export const CAM_DIST = 900;
+export const ZOOM_MAX = 2000; // max orthographic view height (zoom-out limit)
 export const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.62));

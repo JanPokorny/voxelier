@@ -3,7 +3,16 @@
 // render's rebuild), so it stays put as the camera moves.
 import * as THREE from "three";
 import { S } from "./state.ts";
-import { _up, _upN, cam, CAM_DIST, camera, canvas, goal } from "./scene-env.ts";
+import {
+  _up,
+  _upN,
+  cam,
+  CAM_DIST,
+  camera,
+  canvas,
+  goal,
+  ZOOM_MAX,
+} from "./scene-env.ts";
 import { emptyBox, nodeBox, worldXform } from "./model.ts";
 import type { Box, Node } from "./types.ts";
 
@@ -37,7 +46,7 @@ export function frameBox(b: Box): void {
   goal.zoom = Math.max(
     8,
     Math.min(
-      400,
+      ZOOM_MAX,
       Math.max(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z) * 1.5 +
         8,
     ),

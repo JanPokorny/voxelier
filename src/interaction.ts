@@ -6,7 +6,14 @@
 import type * as THREE from "three";
 import { S } from "./state.ts";
 import { addv, key, rotY } from "./math.ts";
-import { camera, canvas, goal, hoverVox, overlay } from "./scene-env.ts";
+import {
+  camera,
+  canvas,
+  goal,
+  hoverVox,
+  overlay,
+  ZOOM_MAX,
+} from "./scene-env.ts";
 import {
   groundCell,
   localGroundCell,
@@ -395,7 +402,7 @@ canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   goal.zoom *= e.deltaY > 0 ? 1 / 0.95 : 0.95;
-  goal.zoom = Math.max(6, Math.min(400, goal.zoom));
+  goal.zoom = Math.max(6, Math.min(ZOOM_MAX, goal.zoom));
 }, { passive: false });
 
 canvas.addEventListener("dblclick", (e) => {
