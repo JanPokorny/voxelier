@@ -71,7 +71,7 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.62));
 export const dir = new THREE.DirectionalLight(0xffffff, 0.78);
 dir.castShadow = true;
 dir.shadow.mapSize.set(4096, 4096);
-dir.shadow.normalBias = 0.15; // refined per-frame in fitShadow() to ~1 shadow texel
+dir.shadow.normalBias = 0.15; // refined per-rebuild in fitShadow() to ~2 shadow texels
 dir.shadow.bias = -0.0002;
 // the shadow frustum + light position are fitted to the scene bounds on each
 // rebuild (see render.ts), so shadows are stable as the camera pans/orbits
