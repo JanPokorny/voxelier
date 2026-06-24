@@ -21,7 +21,7 @@ export function exportScene(): void {
   const d = new Date(); // local-time stamp: "YYYY-MM-DD HHhMMmSSs"
   const [date, time] = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
     .toISOString().slice(0, 19).split("T");
-  const stamp = `${date} ${time.replace(/:/, "h").replace(/:/, "m")}s`;
+  const stamp = `${date} ${time.replace(":", "h").replace(":", "m")}s`;
   const a = document.createElement("a");
   a.href = url;
   a.download = `${name} -- ${stamp}.voxelier.json`;
