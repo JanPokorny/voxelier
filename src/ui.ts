@@ -328,6 +328,54 @@ function rowClick(node: Node): void {
     arm();
   } // not entered: enter now; a quick second click still fits
 }
+// the row's cached thumbnail; for a non-empty non-root group it doubles as the
+// collapse toggle (a stacked look = collapsed)
+function rowThumb(node: Node): HTMLCanvasElement {
+  const th = thumbFor(node);
+  th.className = "thumb";
+  th.onclick = null;
+  th.title = ""; // (canvas is cached/reused)
+  if (node !== S.root && node.type === "scene" && node.children.length) {
+    const col = S.collapsed.has(node.id);
+    th.classList.add("group");
+    if (col) th.classList.add("collapsed");
+    th.title = col ? "Expand group" : "Collapse group";
+    th.onclick = (e) => {
+      e.stopPropagation();
+      col ? S.collapsed.delete(node.id) : S.collapsed.add(node.id);
+      buildTree();
+    };
+  }
+  return th;
+}
+// wire tree drag&drop reparenting (VSCode-style) onto a row: the root can't be
+// dragged but accepts drops
+function wireRowDnd(r: HTMLElement, node: Node): void {
+  r.draggable = node !== S.root;
+  if (node !== S.root) {
+    r.addEventListener("dragstart", (ev) => {
+      ev.stopPropagation();
+      dragId = node.id;
+      if (ev.dataTransfer) {
+        ev.dataTransfer.effectAllowed = "move";
+        try {
+          ev.dataTransfer.setData("text/plain", node.id);
+        } catch (_) { /* some browsers */ }
+      }
+    });
+  }
+  r.addEventListener("dragend", clearDropInd);
+  r.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    dropOver(ev, node, r);
+  });
+  r.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    doDrop();
+  });
+}
 function buildTree(): void {
   const w = document.getElementById("tree")!;
   w.innerHTML = "";
@@ -343,22 +391,7 @@ function buildTree(): void {
         (!isRoot && v !== "visible" ? " dim" : ""),
     });
     r.style.paddingLeft = (4 + depth * 13) + "px";
-    const th = thumbFor(node);
-    th.className = "thumb";
-    th.onclick = null;
-    th.title = ""; // (canvas is cached/reused)
-    // a non-root group's icon doubles as its collapse toggle (stacked look = collapsed)
-    if (!isRoot && node.type === "scene" && node.children.length) {
-      const col = S.collapsed.has(node.id);
-      th.classList.add("group");
-      if (col) th.classList.add("collapsed");
-      th.title = col ? "Expand group" : "Collapse group";
-      th.onclick = (e) => {
-        e.stopPropagation();
-        col ? S.collapsed.delete(node.id) : S.collapsed.add(node.id);
-        buildTree();
-      };
-    }
+    const th = rowThumb(node);
     const nm = el("span", { className: "nm" });
     if (isRoot) nm.textContent = node.name || "Project";
     else if (node.name) nm.textContent = node.name;
@@ -385,31 +418,7 @@ function buildTree(): void {
       if (!isRoot) selectNode(node);
       showItemMenu(node, e.clientX, e.clientY);
     };
-    // drag & drop reparenting (VSCode-style); the root can't be dragged but accepts drops
-    r.draggable = !isRoot;
-    if (!isRoot) {
-      r.addEventListener("dragstart", (ev) => {
-        ev.stopPropagation();
-        dragId = node.id;
-        if (ev.dataTransfer) {
-          ev.dataTransfer.effectAllowed = "move";
-          try {
-            ev.dataTransfer.setData("text/plain", node.id);
-          } catch (_) { /* some browsers */ }
-        }
-      });
-    }
-    r.addEventListener("dragend", clearDropInd);
-    r.addEventListener("dragover", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      dropOver(ev, node, r);
-    });
-    r.addEventListener("drop", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      doDrop();
-    });
+    wireRowDnd(r, node);
     w.appendChild(r);
     if (node.type === "scene" && (isRoot || !S.collapsed.has(node.id))) {
       for (const ch of node.children) {
