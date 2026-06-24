@@ -10,36 +10,11 @@ import type { Node, Rot, Vec, Xform } from "./types.ts";
 const VBIAS = 1 << 16, VSTRIDE = 1 << 17;
 export const key = (x: number, y: number, z: number): number =>
   (x + VBIAS) + (y + VBIAS) * VSTRIDE + (z + VBIAS) * VSTRIDE * VSTRIDE;
-export const parseKey = (k: number): Vec => {
-  const xb = k % VSTRIDE;
-  k = (k - xb) / VSTRIDE;
-  const yb = k % VSTRIDE;
-  k = (k - yb) / VSTRIDE;
-  return { x: xb - VBIAS, y: yb - VBIAS, z: k - VBIAS };
-};
 export const addv = (a: Vec, b: Vec): Vec => ({
   x: a.x + b.x,
   y: a.y + b.y,
   z: a.z + b.z,
 });
-// Fused parseKey -> rotY -> +off: world coords of a packed voxel key under a
-// transform, in a single allocation (the gather loops run this per voxel).
-export const keyToWorld = (k: number, rot: Rot, off: Vec): Vec => {
-  const xb = k % VSTRIDE;
-  k = (k - xb) / VSTRIDE;
-  const yb = k % VSTRIDE;
-  const x = xb - VBIAS, y = off.y + yb - VBIAS, z = (k - yb) / VSTRIDE - VBIAS;
-  switch (rot & 3) {
-    case 1:
-      return { x: off.x - z, y, z: off.z + x };
-    case 2:
-      return { x: off.x - x, y, z: off.z - z };
-    case 3:
-      return { x: off.x + z, y, z: off.z - x };
-    default:
-      return { x: off.x + x, y, z: off.z + z };
-  }
-};
 export function rotY(v: Vec, r: Rot): Vec {
   const { x, y, z } = v;
   switch (r & 3) { // r & 3 normalises negatives too (-1 & 3 === 3)

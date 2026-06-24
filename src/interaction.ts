@@ -28,7 +28,7 @@ import {
   eachObject,
   editAdd,
   editErase,
-  editPaint,
+  editFill,
   rebuild,
   refreshOverlay,
 } from "./render.ts";
@@ -78,21 +78,30 @@ function dragPanOrbit(e: PointerEvent): boolean {
 // world boxes — split into the moving selection's own boxes and everyone else's
 // (the obstacles). Invisible objects are absent from eachObject(), so they never
 // block. A candidate offset is blocked if a shifted selection box overlaps an
-// obstacle box.
-function moveCollision(): { occ: Box3[]; sel: Box3[] } {
+// obstacle box, or if it would push the selection's lowest voxel below the
+// ground (world y=0). minY is that lowest world y0 at drag start.
+function moveCollision(): { occ: Box3[]; sel: Box3[]; minY: number } {
   const occ: Box3[] = [], sel: Box3[] = [];
   eachObject(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (n, off, rot, owner) => {
     const tgt = owner && S.selection.has(owner) ? sel : occ;
     for (const b of n.boxes) tgt.push(worldBox(b, rot, off));
   });
-  return { occ, sel };
+  let minY = Infinity;
+  for (const b of sel) if (b.y0 < minY) minY = b.y0;
+  return { occ, sel, minY };
 }
 const moveBlocked = (
   d: Drag,
   dx: number,
   dy: number,
   dz: number,
-) => boxesOverlap(d.sel ?? [], d.occ ?? [], dx, dy, dz);
+): boolean => {
+  if (boxesOverlap(d.sel ?? [], d.occ ?? [], dx, dy, dz)) return true;
+  const minY = d.minY ?? Infinity;
+  // resist pushing the lowest voxel below the ground; floor at min(0, start) so
+  // an object already below ground isn't yanked up, only stopped from sinking
+  return minY + dy < Math.min(0, minY);
+};
 
 function moveDragTo(e: PointerEvent): void {
   const d = S.drag!;
@@ -131,7 +140,7 @@ function commitMove(): void {
     x = contextXform(),
     dL = rotY(
       { x: Math.round(d.dx!), y: 0, z: Math.round(d.dz!) },
-      (4 - x.rot) & 3,
+      -x.rot, // world delta -> context-local (inverse rotation)
     ),
     dy = Math.round(d.dy!);
   for (const id of S.selection) {
@@ -151,19 +160,17 @@ function rotDragTo(e: PointerEvent): void {
   if (steps !== S.drag!.steps) {
     rotateSelectionBy(steps - S.drag!.steps!);
     S.drag!.steps = steps;
+    S.drag!.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
   }
 }
 
-function applyVoxel(): void { // paint: recolour the filled cell under the cursor
+function applyVoxel(): void { // bucket: flood-fill the connected same-colour region under the cursor
   const t = pickVoxel();
   const c = voxelTarget(t);
   if (!c) return;
   const k = key(c.x, c.y, c.z);
   if (k !== S.lastVox) {
-    editPaint(
-      { x0: c.x, y0: c.y, z0: c.z, x1: c.x + 1, y1: c.y + 1, z1: c.z + 1 },
-      S.selColor,
-    ); // paintBox only touches already-filled cells
+    editFill(c, S.selColor); // recolours the whole face-connected same-colour run
     S.lastVox = k;
   }
   updateVoxHover(t);
@@ -320,6 +327,10 @@ function renderBox(): void {
 }
 
 canvas.addEventListener("pointerdown", (e) => {
+  // a gesture is single-button: ignore extra buttons pressed while one is held
+  // (mouse buttons share a pointerId). Replacing S.drag/ignoring S.painting here
+  // would orphan an in-progress move/box/paint that only its pointerup finalises.
+  if (S.drag || S.painting) return;
   canvas.setPointerCapture(e.pointerId);
   setNdc(e.clientX, e.clientY);
   const base = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY };
@@ -421,9 +432,28 @@ canvas.addEventListener("pointerup", (e) => {
       refreshOverlay();
       updateChrome();
     } else if (S.drag.mode === "move") commitMove();
-    else if (S.drag.mode === "rotobj" && S.drag.steps) save();
+    else if (S.drag.mode === "rotobj" && S.drag.dirty) {
+      updateChrome(); // tree thumbnails track the new pose
+      save();
+    }
   }
   S.drag = null;
+});
+// the browser can cancel a captured pointer (OS gesture, lost capture) without
+// a pointerup. Tear down so the gesture state can't wedge (which the mid-gesture
+// guard in pointerdown would otherwise make unrecoverable) and resync visuals.
+canvas.addEventListener("pointercancel", () => {
+  if (!S.drag && !S.painting) return;
+  const painted = S.painting;
+  S.drag = null;
+  S.painting = false;
+  S.liveMeas = null; // drop any in-progress box-brush / measure wireframe
+  renderMeasure();
+  rebuild(); // revert an uncommitted move/box to the model (resets mesh + overlay)
+  if (painted) { // paint mutates per-move, so persist what was already drawn
+    updateChrome();
+    save();
+  }
 });
 canvas.addEventListener("pointerleave", () => {
   hoverVox.visible = false;

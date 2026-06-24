@@ -63,35 +63,54 @@ export function eraseBox(boxes: Box3[], r: Region): Box3[] {
   for (const b of boxes) overlaps(b, r) ? subtract(b, r, out) : out.push(b);
   return out;
 }
-// Recolour only the already-filled cells inside `r`.
-export function paintBox(boxes: Box3[], r: Region, c: number): Box3[] {
-  const out: Box3[] = [];
-  for (const b of boxes) {
-    if (!overlaps(b, r)) {
-      out.push(b);
-      continue;
+// Flood-fill: recolour the connected (face-adjacent) run of same-colour cells
+// containing (x,y,z) to colour `c`. Every box is a solid single-colour cuboid,
+// so a box is wholly inside or outside the region — we flood at the box level
+// (same-colour boxes that share a face). Returns a fresh box list, or null when
+// nothing changes: an empty seed cell, or a region already colour `c`.
+export function fillBox(
+  boxes: Box3[],
+  x: number,
+  y: number,
+  z: number,
+  c: number,
+): Box3[] | null {
+  let start = -1;
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i];
+    if (
+      x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1
+    ) {
+      start = i;
+      break;
     }
-    subtract(b, r, out); // surviving parts keep their colour
-    out.push({ // the intersection, recoloured
-      x0: Math.max(b.x0, r.x0),
-      y0: Math.max(b.y0, r.y0),
-      z0: Math.max(b.z0, r.z0),
-      x1: Math.min(b.x1, r.x1),
-      y1: Math.min(b.y1, r.y1),
-      z1: Math.min(b.z1, r.z1),
-      c,
-    });
   }
-  return out;
+  if (start === -1) return null; // seed cell is empty
+  const orig = boxes[start].c;
+  if (orig === c) return null; // region already this colour
+  // two boxes share a face iff they overlap (open) on two axes and touch on the third
+  const touch = (a: Box3, b: Box3): boolean => {
+    const ox = a.x0 < b.x1 && b.x0 < a.x1,
+      oy = a.y0 < b.y1 && b.y0 < a.y1,
+      oz = a.z0 < b.z1 && b.z0 < a.z1;
+    return (oy && oz && (a.x1 === b.x0 || b.x1 === a.x0)) ||
+      (ox && oz && (a.y1 === b.y0 || b.y1 === a.y0)) ||
+      (ox && oy && (a.z1 === b.z0 || b.z1 === a.z0));
+  };
+  const region = new Set<number>([start]);
+  const stack = [start];
+  while (stack.length) {
+    const a = boxes[stack.pop()!];
+    for (let j = 0; j < boxes.length; j++) {
+      if (!region.has(j) && boxes[j].c === orig && touch(a, boxes[j])) {
+        region.add(j);
+        stack.push(j);
+      }
+    }
+  }
+  return boxes.map((b, i) => region.has(i) ? { ...b, c } : b);
 }
 
-export const cellCount = (boxes: Box3[]): number => {
-  let n = 0;
-  for (const b of boxes) {
-    n += (b.x1 - b.x0) * (b.y1 - b.y0) * (b.z1 - b.z0);
-  }
-  return n;
-};
 export function colorCounts(boxes: Box3[], into: Map<number, number>): void {
   for (const b of boxes) {
     const v = (b.x1 - b.x0) * (b.y1 - b.y0) * (b.z1 - b.z0);

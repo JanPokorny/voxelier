@@ -34,7 +34,7 @@ export const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
 // short blend across the side-on angle avoids a hard pop. (No true horizon —
 // that doesn't survive an orthographic projection.)
 const skyU = { uGround: { value: 1 } }; // 1 = green (above), 0 = blue (below)
-const sky = new THREE.Mesh(
+export const sky = new THREE.Mesh(
   new THREE.PlaneGeometry(2, 2),
   new THREE.ShaderMaterial({
     uniforms: skyU,
@@ -44,11 +44,18 @@ const sky = new THREE.Mesh(
       `varying vec2 vN; void main(){ vN = position.xy; gl_Position = vec4(position.xy, 1.0, 1.0); }`,
     fragmentShader: `precision highp float;
       varying vec2 vN; uniform float uGround;
+      // The GTAO composer's OutputPass applies the linear->sRGB encode to the
+      // whole frame, but this raw shader's colours are authored as final display
+      // (sRGB) values — so convert sRGB->linear here and OutputPass restores the
+      // intended (deeper) shades instead of brightening them.
+      vec3 toLin(vec3 c){
+        return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+      }
       void main(){
         float t = (vN.y + 1.0) * 0.5; // 0 bottom .. 1 top
         vec3 grn = mix(vec3(0.24, 0.33, 0.19), vec3(0.42, 0.55, 0.34), t);
         vec3 blu = mix(vec3(0.62, 0.74, 0.86), vec3(0.20, 0.40, 0.62), t);
-        gl_FragColor = vec4(mix(blu, grn, uGround), 1.0);
+        gl_FragColor = vec4(toLin(mix(blu, grn, uGround)), 1.0);
       }`,
   }),
 );
@@ -107,7 +114,7 @@ export function dimCol(v: number): THREE.Color {
 export const matSurf = new THREE.MeshLambertMaterial({
   vertexColors: true,
   side: THREE.FrontSide,
-}); // opaque surfaces (baked edge AO)
+}); // opaque surfaces (soft corner AO is added in screen space — see the GTAO pass)
 // Transparent voxels render as a surface of only the exterior faces, back-face
 // culled — depth-correct yet reading as one glass pane.
 export const TRANSP_OPACITY = 0.42;
@@ -126,33 +133,6 @@ export const matGlassDepth = new THREE.MeshBasicMaterial({
   side: THREE.FrontSide,
 });
 
-// exterior cube faces, wound CCW for an outward normal
-// d=outward normal, a/b=the two in-plane axes (for AO), v=CCW corners
-export const FACE = [
-  { d: [1, 0, 0], a: 1, b: 2, v: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]] },
-  {
-    d: [-1, 0, 0],
-    a: 1,
-    b: 2,
-    v: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 0]],
-  },
-  { d: [0, 1, 0], a: 0, b: 2, v: [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]] },
-  {
-    d: [0, -1, 0],
-    a: 0,
-    b: 2,
-    v: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]],
-  },
-  { d: [0, 0, 1], a: 0, b: 1, v: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]] },
-  {
-    d: [0, 0, -1],
-    a: 0,
-    b: 1,
-    v: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]],
-  },
-];
-export const AO = [0.5, 0.74, 0.88, 1]; // brightness by exposure (0 = corner most occluded)
-
 // ground: an invisible shadow catcher at y=0 (no visible plane/edges — the
 // "ground" is the green lower half of the backdrop). Follows the camera target
 // (see updateCamera) so shadows stay under the view at any pan.
@@ -161,7 +141,8 @@ export const ground = new THREE.Mesh(
   new THREE.ShadowMaterial({ opacity: 0.32 }),
 );
 ground.rotation.x = -Math.PI / 2;
-ground.position.y = 0;
+ground.position.y = -0.1; // just below y=0 so faces flush with the ground don't
+// z-fight the catcher (updateCamera keeps this y while tracking the view in x/z)
 ground.receiveShadow = true;
 ground.renderOrder = -1;
 scene.add(ground);

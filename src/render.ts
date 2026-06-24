@@ -2,18 +2,12 @@
 // space and greedily mesh them (boxFaceGeo) — one merged quad per exposed face
 // rectangle, so cost is O(boxes), not O(surface cells). The edited object is
 // meshed on its own in object-local space, rebuilt (rAF-debounced) as boxes
-// change. (Trade-off: no baked per-cell edge AO; shading is directional + shadows.)
+// change. Shading is directional light + shadows + a screen-space GTAO pass
+// (see main.ts) for soft corner/contact ambient occlusion.
 import * as THREE from "three";
 import { S } from "./state.ts";
 import { addv, rotY, xcompose } from "./math.ts";
-import {
-  addBox,
-  buildIndex,
-  eraseBox,
-  growBounds,
-  paintBox,
-  worldBox,
-} from "./boxes.ts";
+import { addBox, eraseBox, fillBox, growBounds, worldBox } from "./boxes.ts";
 import {
   boxGeo,
   col,
@@ -65,15 +59,24 @@ function fitShadow(box: Box): void {
   sc.near = Math.max(1, d - R - 20);
   sc.far = d + R + 20;
   sc.updateProjectionMatrix();
-  // bias ~half a shadow texel (texel = 2R / mapSize): enough to avoid acne but
-  // small enough that the shadow still meets contact edges (no light rim)
-  dir.shadow.normalBias = R / dir.shadow.mapSize.x;
+  // normalBias ~2 shadow texels (texel = 2R/mapSize). Offsetting the receiver
+  // along its normal kills self-shadow acne on large near-horizontal faces lit
+  // head-on — most visibly the 1-tall floor, which a half-texel bias left
+  // speckled — while staying small enough that contact shadows don't peter-pan.
+  dir.shadow.normalBias = 4 * R / dir.shadow.mapSize.x;
 }
 
 export function disposeMeshes(): void {
+  // a glass surface and its depth-prepass sibling share one geometry, so track
+  // what's been freed to dispose each BufferGeometry exactly once
+  const freed = new Set<THREE.BufferGeometry>();
   for (const m of S.meshes) {
     scene.remove(m);
-    if (m.geometry && m.geometry !== boxGeo) m.geometry.dispose();
+    const g = m.geometry;
+    if (g && g !== boxGeo && !freed.has(g)) {
+      g.dispose();
+      freed.add(g);
+    }
   }
   S.meshes = [];
   editGroup.clear();
@@ -97,25 +100,56 @@ const FACE6 = [
   { a: 2, hi: false, u: 1, v: 0, n: [0, 0, -1] },
 ] as const;
 type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
-// brightness by number of occluding outside-layer cells around a face vertex
-// (0 = open -> full bright, 3 = deep concave corner -> darkest), matching the old
-// baked edge AO ramp.
-const AO4 = [1.0, 0.88, 0.74, 0.5];
+// Merge axis-aligned rects that share a full edge (matching perpendicular span,
+// touching) into larger rects, repeating until stable. A flat surface split
+// across several flush boxes thus meshes as one quad — no internal seam for the
+// screen-space AO to crease. Rects in a group are disjoint, so merges stay valid.
+function mergeRects(rects: Rect[]): void {
+  for (let merged = true; merged;) {
+    merged = false;
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        const a = rects[i], b = rects[j];
+        let m: Rect | null = null;
+        if (
+          a[1] === b[1] && a[3] === b[3] && (a[2] === b[0] || b[2] === a[0])
+        ) {
+          m = [Math.min(a[0], b[0]), a[1], Math.max(a[2], b[2]), a[3]]; // along u
+        } else if (
+          a[0] === b[0] && a[2] === b[2] && (a[3] === b[1] || b[3] === a[1])
+        ) {
+          m = [a[0], Math.min(a[1], b[1]), a[2], Math.max(a[3], b[3])]; // along v
+        }
+        if (m) {
+          rects[i] = m;
+          rects.splice(j, 1);
+          merged = true;
+          j--;
+        }
+      }
+    }
+  }
+}
+// Soft corner shading is done in screen space (GTAO post-process), so the mesher
+// emits flat quads. Exposed face rects are grouped by face/plane/colour and
+// merged across boxes first, so a flat surface the box model split into several
+// boxes meshes as one continuous quad (no internal seam for AO to crease).
 function boxFaceGeo(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
-  ao: boolean,
 ): THREE.BufferGeometry | null {
   const pos: number[] = [], nor: number[] = [], colr: number[] = [];
   const lo = boxes.map((b) => [b.x0, b.y0, b.z0]);
   const hi = boxes.map((b) => [b.x1, b.y1, b.z1]);
-  const has = ao ? buildIndex(boxes) : null; // for AO occluder sampling
+  // key "faceIndex:plane:colour" -> coplanar same-colour exposed rectangles
+  const groups = new Map<
+    string,
+    { fi: number; plane: number; c: number; rects: Rect[] }
+  >();
   for (let i = 0; i < boxes.length; i++) {
-    const c = colorOf(boxes[i].c), cr = c.r, cg = c.g, cb = c.b;
-    const blo = lo[i], bhi = hi[i];
-    for (const f of FACE6) {
-      const { a, u, v } = f, plane = f.hi ? bhi[a] : blo[a];
-      const wo = f.hi ? plane : plane - 1; // outside cell layer, for AO sampling
+    const cval = boxes[i].c, blo = lo[i], bhi = hi[i];
+    for (let fi = 0; fi < 6; fi++) {
+      const f = FACE6[fi], { a, u, v } = f, plane = f.hi ? bhi[a] : blo[a];
       // faces of neighbouring boxes that abut (and so hide) this one
       const covers: Rect[] = [];
       for (let j = 0; j < boxes.length; j++) {
@@ -146,71 +180,33 @@ function boxFaceGeo(
         pieces = next;
         if (!pieces.length) break;
       }
-      // Flat per-cell AO on a 1-cell border ring (interior stays one bright
-      // quad). Flat shading -> no cross-cell interpolation, so split seams and
-      // convex edges read identically on both sides — no stray light/dark lines.
-      const occAt = (cu: number, cv: number): number => {
-        let n = 0;
-        const cell = [0, 0, 0];
-        cell[a] = wo;
-        for (let du = -1; du <= 0; du++) {
-          for (let dv = -1; dv <= 0; dv++) {
-            cell[u] = cu + du;
-            cell[v] = cv + dv;
-            if (has!(cell[0], cell[1], cell[2])) n++;
-          }
-        }
-        return n;
-      };
-      const cellBright = (cu: number, cv: number): number =>
-        (AO4[Math.min(occAt(cu, cv), 3)] +
-          AO4[Math.min(occAt(cu + 1, cv), 3)] +
-          AO4[Math.min(occAt(cu + 1, cv + 1), 3)] +
-          AO4[Math.min(occAt(cu, cv + 1), 3)]) / 4;
-      const quad = (
-        qu0: number,
-        qv0: number,
-        qu1: number,
-        qv1: number,
-        br: number,
-      ) => {
-        const o = [0, 0, 0];
-        const P = (uu: number, vv: number): [number, number, number] => {
-          o[a] = plane;
-          o[u] = uu;
-          o[v] = vv;
-          return [o[0], o[1], o[2]];
-        };
-        const A = P(qu0, qv0),
-          B = P(qu1, qv0),
-          C = P(qu1, qv1),
-          D = P(qu0, qv1);
-        const R = cr * br, G = cg * br, Bl = cb * br;
-        for (const q of [A, B, C, A, C, D]) {
-          pos.push(q[0], q[1], q[2]);
-          nor.push(f.n[0], f.n[1], f.n[2]);
-          colr.push(R, G, Bl);
-        }
-      };
-      for (const p of pieces) {
-        const [pu0, pv0, pu1, pv1] = p;
-        if (!has) { // glass: no AO, one quad
-          quad(pu0, pv0, pu1, pv1, 1);
-          continue;
-        }
-        const cell = (cu: number, cv: number) =>
-          quad(cu, cv, cu + 1, cv + 1, cellBright(cu, cv));
-        for (let cu = pu0; cu < pu1; cu++) { // bottom & top rows of the ring
-          cell(cu, pv0);
-          if (pv1 - 1 > pv0) cell(cu, pv1 - 1);
-        }
-        for (let cv = pv0 + 1; cv < pv1 - 1; cv++) { // left & right columns
-          cell(pu0, cv);
-          if (pu1 - 1 > pu0) cell(pu1 - 1, cv);
-        }
-        if (pu0 + 1 < pu1 - 1 && pv0 + 1 < pv1 - 1) {
-          quad(pu0 + 1, pv0 + 1, pu1 - 1, pv1 - 1, 1); // bright interior
-        }
+      if (!pieces.length) continue;
+      const key = fi + ":" + plane + ":" + cval;
+      const grp = groups.get(key);
+      if (grp) { for (const p of pieces) grp.rects.push(p); }
+      else groups.set(key, { fi, plane, c: cval, rects: pieces });
+    }
+  }
+  for (const grp of groups.values()) {
+    mergeRects(grp.rects);
+    const f = FACE6[grp.fi], { a, u, v } = f, plane = grp.plane;
+    const c = colorOf(grp.c), cr = c.r, cg = c.g, cb = c.b;
+    const o = [0, 0, 0];
+    const P = (uu: number, vv: number): [number, number, number] => {
+      o[a] = plane;
+      o[u] = uu;
+      o[v] = vv;
+      return [o[0], o[1], o[2]];
+    };
+    for (const p of grp.rects) {
+      const A = P(p[0], p[1]),
+        B = P(p[2], p[1]),
+        C = P(p[2], p[3]),
+        D = P(p[0], p[3]);
+      for (const q of [A, B, C, A, C, D]) {
+        pos.push(q[0], q[1], q[2]);
+        nor.push(f.n[0], f.n[1], f.n[2]);
+        colr.push(cr, cg, cb);
       }
     }
   }
@@ -222,8 +218,7 @@ function boxFaceGeo(
   return g;
 }
 
-// Mesh one solid (a world box list) as a surface; transparent ones read as glass
-// (and skip AO).
+// Mesh one solid (a world box list) as a surface; transparent ones read as glass.
 function meshSurface(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
@@ -234,7 +229,7 @@ function meshSurface(
   } = {},
 ): THREE.Mesh | null {
   if (!boxes.length) return null;
-  const g = boxFaceGeo(boxes, colorOf, !transparent);
+  const g = boxFaceGeo(boxes, colorOf);
   if (!g) return null;
   const m = new THREE.Mesh(g, transparent ? matGlass : matSurf);
   m.castShadow = true;
@@ -253,7 +248,6 @@ function meshSurface(
   }
   if (pick) {
     m.userData.childId = childId;
-    m.userData.emph = !transparent;
     S.pickMeshes.push(m);
     (S.childMeshes[childId!] || (S.childMeshes[childId!] = [])).push(m);
   }
@@ -317,7 +311,7 @@ export function buildEditMesh(): void {
     const i = S.meshes.indexOf(S.editMesh);
     if (i >= 0) S.meshes.splice(i, 1);
   }
-  const g = boxFaceGeo(S.editObject!.boxes, col, true);
+  const g = boxFaceGeo(S.editObject!.boxes, col);
   S.editMesh = g ? new THREE.Mesh(g, matSurf) : null;
   if (S.editMesh) {
     S.editMesh.castShadow = S.editMesh.receiveShadow = true;
@@ -340,7 +334,7 @@ function afterEdit(): void {
   scheduleEditRemesh();
 }
 // Edited-object box ops (region is half-open [x0,x1)×…). add lays colour `c`,
-// erase carves, paint recolours only already-filled cells.
+// erase carves; fill (below) flood-fills a connected same-colour region.
 export function editAdd(r: Region, c: number): void {
   S.editObject!.boxes = addBox(S.editObject!.boxes, r, c);
   afterEdit();
@@ -349,8 +343,11 @@ export function editErase(r: Region): void {
   S.editObject!.boxes = eraseBox(S.editObject!.boxes, r);
   afterEdit();
 }
-export function editPaint(r: Region, c: number): void {
-  S.editObject!.boxes = paintBox(S.editObject!.boxes, r, c);
+// Flood-fill the connected same-colour region containing `cell` with colour `c`.
+export function editFill(cell: Vec, c: number): void {
+  const next = fillBox(S.editObject!.boxes, cell.x, cell.y, cell.z, c);
+  if (!next) return; // empty seed cell or already that colour — nothing to do
+  S.editObject!.boxes = next;
   afterEdit();
 }
 
@@ -435,6 +432,8 @@ export function refreshOverlay(): void {
   if (S.editObject) return;
   for (const id of S.selection) {
     const b = S.childBox[id];
-    if (b) overlay.add(boxLines(b.min, b.max, 0xf0e6d2));
+    // skip the empty-box sentinel (a selected object with no voxels) — its
+    // min>max would build a degenerate scene-spanning wireframe
+    if (b && b.max.x >= b.min.x) overlay.add(boxLines(b.min, b.max, 0xf0e6d2));
   }
 }

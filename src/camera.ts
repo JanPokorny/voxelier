@@ -144,7 +144,10 @@ export function updateCamera(): void {
   camera.far = far + 10;
   camera.zoom = 1;
   camera.updateProjectionMatrix();
-  // invisible shadow catcher tracks the view
-  ground.position.set(cam.target.x, 0, cam.target.z);
+  // invisible shadow catcher tracks the view. Sits a hair below y=0 (not exactly
+  // on it) so a voxel face flush with the ground isn't coplanar with the catcher:
+  // coplanar surfaces z-fight, flickering between the catcher's shadow shade and
+  // the face's, in GPU-tiled blocks. 0.1 cell is well below visible.
+  ground.position.set(cam.target.x, -0.1, cam.target.z);
   updateSky(); // green backdrop looking down, blue looking up
 }

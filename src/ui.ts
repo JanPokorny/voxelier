@@ -3,12 +3,12 @@
 // global keyboard shortcuts. Attaches its window/tree listeners on import.
 import { S } from "./state.ts";
 import { addv, hex, rotY } from "./math.ts";
-import { colorCounts, worldBox } from "./boxes.ts";
+import { colorCounts, growBounds, worldBox } from "./boxes.ts";
 import { hoverVox } from "./scene-env.ts";
 import { clearMeasure, measureActive } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
 import { enterNode, escapeUp, isEntered, selectNode } from "./navigation.ts";
-import { findById, isDescendant, parentOf } from "./model.ts";
+import { emptyBox, findById, isDescendant, parentOf } from "./model.ts";
 import {
   addGroupIn,
   addObjectIn,
@@ -49,7 +49,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
   { id: "add", ic: "＋", label: "Add" },
   { id: "erase", ic: "－", label: "Erase" },
-  { id: "paint", ic: "❖", label: "Paint" },
+  { id: "paint", ic: "🪣", label: "Fill" },
   { id: "measure", ic: "📏", label: "Measure" },
 ];
 // tree visibility-toggle glyphs, by current vis state
@@ -110,7 +110,7 @@ export function updateChrome(): void {
     ? "Measure — hover to read voxel/gap runs on all 3 axes · left-click freezes · right-click clears"
     : S.editObject
     ? (S.tool === "paint"
-      ? "Paint — click/drag to recolour voxels · right-drag orbits · middle-drag pans · Esc to finish"
+      ? "Fill — click a voxel to flood-fill its connected same-colour region · right-drag orbits · middle-drag pans · Esc to finish"
       : `${
         S.tool === "add" ? "Add" : "Erase"
       } — drag a box in the floor plane (Shift = height) · right-drag orbits · middle-drag pans · Esc to finish`)
@@ -185,11 +185,15 @@ function openColorPicker(): void {
     S.selColor = parseInt(inp.value.slice(1), 16);
     buildSwatches();
   };
+  // change fires when the dialog commits; a cancel fires no change but returns
+  // focus to the page, so remove the hidden input on that too (else it leaks)
+  const close = () => inp.remove();
   inp.addEventListener("input", apply);
   inp.addEventListener("change", () => {
     apply();
-    inp.remove();
+    close();
   });
+  window.addEventListener("focus", close, { once: true });
   document.body.appendChild(inp);
   inp.click();
 }
@@ -260,7 +264,12 @@ function thumbSig(node: Node): string {
       node.boxes.map((b) =>
         `${b.x0},${b.y0},${b.z0},${b.x1},${b.y1},${b.z1},${b.c}`
       ).join(";")
-    : "s" + node.children.map((c) => c.id + thumbSig(c)).join();
+    // include each child's pose: the thumbnail lays children out by pos/rot,
+    // so moving/rotating one must invalidate the parent group's cached image
+    : "s" +
+      node.children.map((c) =>
+        `${c.id}@${c.pos.x},${c.pos.y},${c.pos.z}/${c.rot};${thumbSig(c)}`
+      ).join();
 }
 // draw the boxes as little isometric cuboids (three shaded faces), painter-sorted
 function thumbFor(node: Node): HTMLCanvasElement {
@@ -276,15 +285,10 @@ function thumbFor(node: Node): HTMLCanvasElement {
   g.fillRect(0, 0, 52, 52);
   const boxes = localBoxes(node, { x: 0, y: 0, z: 0 }, 0, []);
   if (boxes.length) {
-    let mnx = 1e9, mny = 1e9, mnz = 1e9, mxx = -1e9, mxy = -1e9, mxz = -1e9;
-    for (const b of boxes) {
-      mnx = Math.min(mnx, b.x0),
-        mny = Math.min(mny, b.y0),
-        mnz = Math.min(mnz, b.z0);
-      mxx = Math.max(mxx, b.x1),
-        mxy = Math.max(mxy, b.y1),
-        mxz = Math.max(mxz, b.z1);
-    }
+    const bb = emptyBox();
+    growBounds(boxes, bb);
+    const { x: mnx, y: mny, z: mnz } = bb.min,
+      { x: mxx, y: mxy, z: mxz } = bb.max;
     const s = 40 / Math.max(mxx - mnx, mxy - mny, mxz - mnz, 1);
     const cx = 26 - ((mnx + mxx) / 2 - (mnz + mxz) / 2) * s * 0.5,
       cy = 28 + ((mny + mxy) / 2) * s * 0.6 -
@@ -442,6 +446,14 @@ function buildTree(): void {
     }
   };
   row(S.root, 0);
+  // evict thumbnails for nodes no longer in the document (deletes, imports,
+  // undo/redo) so the cache can't grow without bound over a long session
+  const live = new Set<string>();
+  (function collect(n: Node) {
+    live.add(n.id);
+    if (n.type === "scene") n.children.forEach(collect);
+  })(S.root);
+  for (const id of thumbCache.keys()) if (!live.has(id)) thumbCache.delete(id);
 }
 
 // ---- tree right-click context menu ----
@@ -591,33 +603,16 @@ window.addEventListener("keydown", (e) => {
       redo();
       return;
     }
-    if (k === "c") {
-      if (!S.editObject) {
-        copySelection();
-        e.preventDefault();
-      }
-      return;
-    }
-    if (k === "x") {
-      if (!S.editObject) {
-        cutSelection();
-        e.preventDefault();
-      }
-      return;
-    }
-    if (k === "v") {
-      if (!S.editObject) {
-        pasteClipboard();
-        e.preventDefault();
-      }
-      return;
-    }
-    if (k === "d") {
-      if (!S.editObject) {
-        duplicateSelection();
-        e.preventDefault();
-      }
-      return;
+    // clipboard / duplicate — only outside voxel-edit mode
+    const clip = {
+      c: copySelection,
+      x: cutSelection,
+      v: pasteClipboard,
+      d: duplicateSelection,
+    }[k];
+    if (clip && !S.editObject) {
+      clip();
+      e.preventDefault();
     }
     return;
   }

@@ -28,6 +28,10 @@ const commit = (): void => {
   updateChrome();
   save();
 };
+// round half away from zero (symmetric). Math.round rounds half toward +∞, so
+// rotation re-centring of an even×odd footprint (half-integer centre delta)
+// wouldn't cancel over a full turn — the object would creep across the scene.
+const rndSym = (v: number): number => (v < 0 ? -Math.round(-v) : Math.round(v));
 
 export function cycleVis(node: Node): void {
   node.vis = VIS_CYCLE[node.vis || "visible"];
@@ -198,8 +202,8 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
         z: (before.min.z + before.max.z) / 2 - (after.min.z + after.max.z) / 2,
       };
       const dL = rotY(
-        { x: Math.round(dW.x), y: 0, z: Math.round(dW.z) },
-        (4 - x.rot) & 3,
+        { x: rndSym(dW.x), y: 0, z: rndSym(dW.z) },
+        -x.rot, // world recentre delta -> context-local (inverse rotation)
       );
       ch.pos.x += dL.x;
       ch.pos.z += dL.z;
@@ -209,7 +213,8 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
 }
 export function rotateSelection(): void {
   if (S.selection.size) {
-    rotateSelectionBy(1);
+    rotateSelectionBy(1); // already re-meshes; refresh chrome so tree thumbnails track the new pose
+    updateChrome();
     save();
   }
 }
@@ -218,8 +223,5 @@ export function nudgeY(d: number): void {
     const c = childById(id);
     if (c) c.pos.y += d;
   }
-  if (S.selection.size) {
-    rebuild();
-    save();
-  }
+  if (S.selection.size) commit(); // rebuild + updateChrome + save
 }

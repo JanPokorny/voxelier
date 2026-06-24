@@ -89,6 +89,7 @@ export type Drag = {
   shiftAnchorY?: number | null;
   start?: Vec | null;
   steps?: number;
+  dirty?: boolean; // rotobj: a rotation was applied during the drag (commit even if net steps == 0)
   clickId?: string | null;
   meas?: "freeze" | "clear";
   box?: {
@@ -101,6 +102,7 @@ export type Drag = {
   };
   occ?: Box3[]; // obstacles: move = other objects (world); box add = own solids (local)
   sel?: Box3[]; // moving selection boxes (world)
+  minY?: number; // move: lowest world y0 of the selection at drag start (ground clamp)
 };
 
 // Pending drop target while dragging a tree row.

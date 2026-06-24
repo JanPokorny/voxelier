@@ -125,15 +125,6 @@ export const emptyBox = (): Box => ({
   min: { x: 1e9, y: 1e9, z: 1e9 },
   max: { x: -1e9, y: -1e9, z: -1e9 },
 });
-// grow an AABB to contain the unit voxel at (x,y,z)
-export const growBox = (b: Box, x: number, y: number, z: number): void => {
-  b.min.x = Math.min(b.min.x, x);
-  b.min.y = Math.min(b.min.y, y);
-  b.min.z = Math.min(b.min.z, z);
-  b.max.x = Math.max(b.max.x, x + 1);
-  b.max.y = Math.max(b.max.y, y + 1);
-  b.max.z = Math.max(b.max.z, z + 1);
-};
 // world AABB of a node given an accumulated transform
 export function nodeBox(node: Node, off: Vec, rot: Rot, box: Box): Box {
   if (node.type === "object") {
