@@ -337,18 +337,19 @@ canvas.addEventListener("pointerdown", (e) => {
   if (measureActive()) { // left-click freezes, right-click clears; drags still navigate
     if (e.button === 0) S.drag = { ...base, mode: "pan", meas: "freeze" };
     else if (e.button === 2) S.drag = { ...base, mode: "orbit", meas: "clear" };
+    // middle = pan; sx sentinel keeps moved() true so it's never read as a click
     else if (e.button === 1) S.drag = { ...base, mode: "pan", sx: -1e9 };
     return;
   }
   if (S.editObject) {
     if (e.button === 0) {
+      // add/erase drag out a box footprint; paint floods the cell under the cursor
       if (S.tool === "add" || S.tool === "erase") startBox(e, base);
-      // box select in the horizontal plane
       else {
         S.painting = true;
         S.lastVox = null;
         applyVoxel();
-      } // paint
+      }
     } else if (e.button === 2) S.drag = { ...base, mode: "orbit" };
     else if (e.button === 1) S.drag = { ...base, mode: "pan" };
     return;
@@ -373,8 +374,9 @@ canvas.addEventListener("pointerdown", (e) => {
     if (onSel) S.drag = { ...base, mode: "rotobj", steps: 0 };
     else S.drag = { ...base, mode: "orbit" };
   } else if (e.button === 1) {
+    // middle = pan only; sx sentinel keeps moved() true so it's never a click
     S.drag = { ...base, mode: "pan", clickId: null, sx: -1e9 };
-  } // middle = pan only
+  }
 });
 
 canvas.addEventListener("pointermove", (e) => {
