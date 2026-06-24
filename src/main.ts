@@ -45,20 +45,30 @@ const cameraSettled = (): boolean =>
   Math.abs(goal.zoom - cam.zoom) < 1e-3 &&
   cam.target.distanceToSquared(goal.target) < 1e-6;
 
-function resize(): void {
+// Read the canvas rect into the shared viewport cache. Only the "resize" event
+// (and boot) call this: the canvas fills a viewport-fixed grid track, so its CSS
+// size/origin change only when the window does. Per-frame readers (camera,
+// measure, pointer->NDC) and the per-frame reconcile() then run off the cache
+// with no synchronous layout reflow.
+function measure(): void {
   const r = canvas.getBoundingClientRect();
-  viewport.w = r.width; // cache for per-frame/per-drag/per-move readers (camera,
-  viewport.h = r.height; // measure, pointer->NDC) — no reflow off this rect read
+  viewport.w = r.width;
+  viewport.h = r.height;
   viewport.x = r.left;
   viewport.y = r.top;
-  const w = Math.max(1, Math.round(r.width)),
-    h = Math.max(1, Math.round(r.height)),
+}
+// Match the backing store to the cached CSS size and current DPR. Runs every
+// frame, but reads no layout: devicePixelRatio is a plain property and the cached
+// size only changes on resize. DPR can change after load (browser zoom — which
+// also fires "resize" — or moving to a hi-DPI monitor, where the CSS size is
+// unchanged so the cache stays valid), so re-apply setPixelRatio here. The gate
+// must match three's Math.floor backing-store sizing exactly: a Math.round
+// mismatch on a fractional DPR (e.g. 1.5) is never reconciled, so it would re-run
+// setSize + wake() every frame and pin the on-demand loop on.
+function reconcile(): void {
+  const w = Math.max(1, Math.round(viewport.w)),
+    h = Math.max(1, Math.round(viewport.h)),
     pr = Math.min(devicePixelRatio, 2);
-  // DPR can change after load (browser zoom, moving to a hi-DPI monitor) but
-  // setPixelRatio was only called once — re-apply it so the backing store stays
-  // sharp. The gate must match three's Math.floor backing-store sizing exactly:
-  // a Math.round mismatch on a fractional DPR (e.g. 1.5) is never reconciled, so
-  // every frame re-ran setSize + wake() and pinned the on-demand loop on.
   if (renderer.getPixelRatio() !== pr) renderer.setPixelRatio(pr);
   if (
     canvas.width !== Math.floor(w * pr) || canvas.height !== Math.floor(h * pr)
@@ -67,11 +77,14 @@ function resize(): void {
     wake();
   }
 }
-window.addEventListener("resize", resize);
+window.addEventListener("resize", () => {
+  measure();
+  reconcile();
+});
 
 function tick(): void {
   requestAnimationFrame(tick);
-  resize();
+  reconcile();
   updateCamera();
   if (frame.tail > 0 || !cameraSettled()) {
     renderer.render(scene, camera);
@@ -89,6 +102,7 @@ function start(): void {
   updateChrome();
   frameView();
   flush(); // synchronous baseline undo snapshot
+  measure(); // seed the viewport cache before the first reconcile/render
   tick(); // start the on-demand render loop
 }
 start();
