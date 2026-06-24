@@ -72,6 +72,7 @@ const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
   { id: "add", ic: "＋", label: "Add" },
   { id: "erase", ic: "－", label: "Erase" },
   { id: "paint", ic: "🪣", label: "Fill" },
+  { id: "eyedropper", ic: "💧", label: "Pick" },
   { id: "measure", ic: "📏", label: "Measure" },
 ];
 // tree visibility-toggle glyphs, by current vis state
@@ -144,7 +145,7 @@ function sceneColors(): number[] {
 // recently-picked draw colours, most-recent first (capped at 4). Drives the
 // color flyout; padded from scene/default colours when fewer than 4 picks exist.
 let recentColors: number[] = [];
-function selectColor(c: number): void {
+export function selectColor(c: number): void {
   S.selColor = c;
   recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, 4);
   updateChrome();

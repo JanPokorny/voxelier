@@ -39,7 +39,7 @@ export type SceneNode = NodeBase & { type: "scene"; children: Node[] };
 export type Node = ObjectNode | SceneNode;
 
 // ---- editor tools ----
-export type Tool = "add" | "erase" | "paint" | "measure";
+export type Tool = "add" | "erase" | "paint" | "eyedropper" | "measure";
 
 // ---- measurement ----
 // One labelled dimension segment between two world points.

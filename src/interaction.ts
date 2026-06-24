@@ -29,6 +29,7 @@ import {
   editAdd,
   editErase,
   editFill,
+  eyedropColor,
   rebuild,
   refreshOverlay,
 } from "./render.ts";
@@ -44,7 +45,7 @@ import {
 } from "./measure.ts";
 import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
-import { updateChrome } from "./ui.ts";
+import { selectColor, updateChrome } from "./ui.ts";
 import { save } from "./persistence.ts";
 import type { Box3, Drag, Seg } from "./types.ts";
 
@@ -166,6 +167,11 @@ function rotDragTo(e: PointerEvent): void {
     d.steps = steps;
     d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
   }
+}
+
+function eyedrop(): void { // pick the draw colour from the voxel under the cursor (any object)
+  const c = eyedropColor();
+  if (c != null) selectColor(c); // routes through the recent-colours list + chrome refresh
 }
 
 function applyVoxel(): void { // bucket: flood-fill the connected same-colour region under the cursor
@@ -343,8 +349,10 @@ canvas.addEventListener("pointerdown", (e) => {
   }
   if (S.editObject) {
     if (e.button === 0) {
-      // add/erase drag out a box footprint; paint floods the cell under the cursor
+      // add/erase drag out a box footprint; eyedropper picks a colour (one-shot);
+      // paint floods the cell under the cursor
       if (S.tool === "add" || S.tool === "erase") startBox(base);
+      else if (S.tool === "eyedropper") eyedrop();
       else {
         S.painting = true;
         S.lastVox = null;

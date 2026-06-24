@@ -16,6 +16,7 @@ import {
   worldBox,
 } from "./boxes.ts";
 import {
+  camera,
   col,
   dimCol,
   dir,
@@ -23,7 +24,9 @@ import {
   matGlass,
   matGlassDepth,
   matSurf,
+  ndc,
   overlay,
+  raycaster,
   scene,
   wake,
 } from "./scene-env.ts";
@@ -388,6 +391,41 @@ export function editFill(cell: Vec, c: number): void {
   if (!next) return; // empty seed cell or already that colour — nothing to do
   S.editObject!.boxes = next;
   afterEdit();
+}
+// Eyedropper: the colour of the voxel under the pointer, picking from ANY visible
+// solid (the edited object or other scene objects), or null when over empty space.
+// We raycast every current mesh, step half a voxel along the view ray into the
+// front-most surface to land inside its cell, then look that world cell up against
+// every visible object's world boxes.
+export function eyedropColor(): number | null {
+  if (!meshes.length) return null;
+  raycaster.setFromCamera(ndc, camera);
+  const h = raycaster.intersectObjects(meshes, false)[0];
+  if (!h) return null;
+  const d = raycaster.ray.direction;
+  const cx = Math.floor(h.point.x + d.x * 0.5),
+    cy = Math.floor(h.point.y + d.y * 0.5),
+    cz = Math.floor(h.point.z + d.z * 0.5);
+  const colorAt = (boxes: Box3[], off: Vec, rot: Rot): number | null => {
+    for (const b of boxes) {
+      const w = worldBox(b, rot, off);
+      if (
+        cx >= w.x0 && cx < w.x1 && cy >= w.y0 && cy < w.y1 &&
+        cz >= w.z0 && cz < w.z1
+      ) return w.c;
+    }
+    return null;
+  };
+  // edited object first (it's the opaque front surface), then everyone else
+  if (S.editObject) {
+    const c = colorAt(S.editObject.boxes, S.editXform.off, S.editXform.rot);
+    if (c != null) return c;
+  }
+  let result: number | null = null;
+  eachObject(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (n, off, rot) => {
+    if (result == null) result = colorAt(n.boxes, off, rot);
+  });
+  return result;
 }
 
 export function rebuild(): void {
