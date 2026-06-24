@@ -30,8 +30,8 @@ body {
   position: fixed;
   inset: 0;
   display: grid;
-  grid-template-columns: 64px 1fr 200px;
-  grid-template-areas: "left stage right";
+  grid-template-columns: 1fr 200px;
+  grid-template-areas: "stage right";
 }
 
 button {
@@ -54,16 +54,35 @@ button.active {
   font-weight: 600;
 }
 
+/* floating tool rail: a transparent full-height overlay on the stage's left edge
+   that pins one button group to the top and one to the bottom. The overlay itself
+   ignores pointer events so the canvas stays draggable between the groups. */
 #tools {
-  grid-area: left;
-  background: var(--panel);
-  border-right: 1px solid var(--line);
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 10px;
+  gap: 10px;
+  pointer-events: none;
+  z-index: 4;
+}
+/* a button group: a rounded floating panel sized to its content (no empty space) */
+.toolgroup {
+  pointer-events: auto;
+  align-self: start;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 10px 6px;
-  z-index: 4;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 .tool {
   width: 50px;

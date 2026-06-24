@@ -75,51 +75,46 @@ const VIS_GLYPH: Record<string, string> = {
   invisible: "⦰",
 };
 
+// a tool-rail button (rounded square with an icon glyph over a small label)
+const toolButton = (
+  ic: string,
+  label: string,
+  active: boolean,
+  onclick: () => void,
+): HTMLElement =>
+  el("button", {
+    className: "tool" + (active ? " active" : ""),
+    innerHTML: `<span class="ic">${ic}</span>${label}`,
+    onclick,
+  });
+
 export function updateChrome(): void {
   const tw = document.getElementById("tools")!;
   tw.innerHTML = "";
+  // top group: the voxel tools while editing an object, else just Measure
+  // (scene actions live in the tree's right-click menu)
+  const top = el("div", { className: "toolgroup" });
   if (S.editObject) {
     for (const t of VOX_TOOLS) {
-      tw.appendChild(el("button", {
-        className: "tool" + (S.tool === t.id ? " active" : ""),
-        innerHTML: `<span class="ic">${t.ic}</span>${t.label}`,
-        onclick: () => {
-          S.tool = t.id;
-          clearMeasure();
-          hoverVox.visible = false;
-          updateChrome();
-        },
+      top.appendChild(toolButton(t.ic, t.label, S.tool === t.id, () => {
+        S.tool = t.id;
+        clearMeasure();
+        hoverVox.visible = false;
+        updateChrome();
       }));
     }
   } else {
-    // scene actions live in the tree's right-click menu; only Measure is a sidebar tool
-    tw.appendChild(el("button", {
-      className: "tool" + (S.measMode ? " active" : ""),
-      innerHTML: '<span class="ic">📏</span>Measure',
-      onclick: () => {
-        S.measMode = !S.measMode;
-        if (!S.measMode) clearMeasure();
-        updateChrome();
-      },
+    top.appendChild(toolButton("📏", "Measure", S.measMode, () => {
+      S.measMode = !S.measMode;
+      if (!S.measMode) clearMeasure();
+      updateChrome();
     }));
   }
-  // import / export pinned to the bottom of the tool rail
-  const spacer = el("div");
-  spacer.style.flex = "1";
-  tw.appendChild(spacer);
-  for (
-    const [ic, label, fn] of [["📂", "Import", importScene], [
-      "💾",
-      "Export",
-      exportScene,
-    ]] as [string, string, () => void][]
-  ) {
-    tw.appendChild(el("button", {
-      className: "tool",
-      innerHTML: `<span class="ic">${ic}</span>${label}`,
-      onclick: fn,
-    }));
-  }
+  // bottom group: import / export
+  const bottom = el("div", { className: "toolgroup" });
+  bottom.appendChild(toolButton("📂", "Import", false, importScene));
+  bottom.appendChild(toolButton("💾", "Export", false, exportScene));
+  tw.append(top, bottom);
   buildTree();
   buildSwatches();
 }
