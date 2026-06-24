@@ -1,8 +1,10 @@
 // Self-check (`deno test`) for the coordinate math the editor's voxel placement
 // relies on. It imports the real rotY/addv from src/math.ts (both pure, no
-// three.js) and asserts the world<->object-local round-trip that locToW and
-// localGroundCell depend on. If rotY's rotation or the inverse convention
-// breaks, placement silently lands on the wrong cell — this fails loudly.
+// three.js) and re-derives the world<->object-local transform here (the real
+// locToW/localGroundCell pull in three.js + global state, so they can't be
+// imported) to assert rotY is its own inverse under a negated rotation — the
+// property those two functions are built on. If rotY's rotation or the inverse
+// convention breaks, placement silently lands on the wrong cell — this fails loudly.
 import { assert } from "@std/assert";
 import type { Box3, Region, Vec } from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
@@ -176,7 +178,8 @@ Deno.test("fillBox matches a cell-level flood fill", () => {
       }
       for (const k of seen) expected.set(k, newC);
     }
-    // actual: fillBox returns null when nothing changes (orig === newC here)
+    // actual: fillBox returns null when nothing changes (orig === newC); the
+    // ?? falls back to the unchanged list for that no-op case
     const out = fillBox(boxes, seed.x, seed.y, seed.z, newC) ?? boxes;
     const got = new Map<number, number>();
     for (const b of out) {
