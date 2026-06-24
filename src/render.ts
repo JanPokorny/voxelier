@@ -259,10 +259,9 @@ function boxFaceGeo(
 function meshSurface(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
-  { transparent = false, pick = false, childId = null }: {
+  { transparent = false, childId }: {
     transparent?: boolean;
-    pick?: boolean;
-    childId?: string | null;
+    childId?: string; // present => pickable, tagged with this context-child id
   } = {},
 ): void {
   if (!boxes.length) return;
@@ -283,10 +282,10 @@ function meshSurface(
     scene.add(dp);
     S.meshes.push(dp);
   }
-  if (pick) {
+  if (childId != null) {
     m.userData.childId = childId;
     S.pickMeshes.push(m);
-    (S.childMeshes[childId!] || (S.childMeshes[childId!] = [])).push(m);
+    (S.childMeshes[childId] || (S.childMeshes[childId] = [])).push(m);
   }
 }
 
@@ -434,7 +433,7 @@ export function rebuild(): void {
     for (const id of new Set([...gE.keys(), ...gT.keys()])) {
       const e = gE.get(id);
       if (e) {
-        meshSurface(e, col, { pick: true, childId: id });
+        meshSurface(e, col, { childId: id });
       }
       const t = gT.get(id);
       if (t) meshSurface(t, col, { transparent: true }); // not pickable
