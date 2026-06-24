@@ -2,16 +2,10 @@
 // three axes through a voxel; left-click freezes a reading, right-click clears.
 import * as THREE from "three";
 import { S } from "./state.ts";
-import { _mv, camera, canvas, measLines, ndc, raycaster } from "./scene-env.ts";
+import { _mv, camera, canvas, measLines } from "./scene-env.ts";
 import { eachObject } from "./render.ts";
 import { boxesHas, buildIndex, growBounds, worldBox } from "./boxes.ts";
-import {
-  cellOf,
-  groundCell,
-  localGroundCell,
-  locToW,
-  pickVoxel,
-} from "./picking.ts";
+import { localGroundCell, locToW, pickVoxel, worldCell } from "./picking.ts";
 import { emptyBox } from "./model.ts";
 import type { Box3, MeasField, Seg, Vec } from "./types.ts";
 
@@ -77,16 +71,7 @@ function measureRef(): Vec | null { // voxel cell under the pointer, clamped int
   if (S.editObject) {
     const t = pickVoxel();
     cell = t ? { ...t.cell } : localGroundCell(0);
-  } else {
-    raycaster.setFromCamera(ndc, camera);
-    const hits = S.pickMeshes.length
-      ? raycaster.intersectObjects(S.pickMeshes, false)
-      : [];
-    if (hits.length) {
-      const h = hits[0], n = h.face ? h.face.normal : { x: 0, y: 0, z: 0 };
-      cell = cellOf(h.point, n);
-    } else cell = groundCell(0);
-  }
+  } else cell = worldCell();
   if (!cell) return null;
   return {
     x: Math.max(f.mn.x, Math.min(f.mx.x, cell.x)),
