@@ -145,6 +145,14 @@ export function wrapInGroup(target: Node, dragged: Node): boolean {
   commit();
   return true;
 }
+// wrap a single node in a fresh group and select it (context-menu "New group")
+export function wrapNodeInGroup(node: Node): void {
+  const g = wrapNode(node);
+  if (!g) return;
+  S.collapsed.delete(g.id);
+  selectNode(g);
+  save();
+}
 
 // ---- right-click (context-menu) actions on a tree node ----
 export function duplicateNode(node: Node): void {

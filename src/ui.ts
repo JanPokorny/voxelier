@@ -26,7 +26,7 @@ import {
   reparentNode,
   rotateSelection,
   wrapInGroup,
-  wrapNode,
+  wrapNodeInGroup,
 } from "./commands.ts";
 import { save } from "./persistence.ts";
 import { redo, undo } from "./history.ts";
@@ -499,16 +499,7 @@ function showItemMenu(node: Node, x: number, y: number): void {
   if (node.type === "scene") {
     add("New object", () => addObjectIn(node));
     add("New group", () => addGroupIn(node));
-  } else {
-    add("New group", () => {
-      const g = wrapNode(node);
-      if (g) {
-        S.collapsed.delete(g.id);
-        selectNode(g);
-        save();
-      }
-    });
-  }
+  } else add("New group", () => wrapNodeInGroup(node));
   document.body.appendChild(m);
   S.ctxMenuEl = m;
   const r = m.getBoundingClientRect();
