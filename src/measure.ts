@@ -22,7 +22,7 @@ export function clearMeasure(): void {
 }
 
 // the field being measured: edited object (local) or current scene context (world)
-export function measureField(): MeasField {
+function measureField(): MeasField {
   if (S.measFieldCache) return S.measFieldCache;
   const boxes: Box3[] = [];
   let toW: (x: number, y: number, z: number) => THREE.Vector3;
@@ -58,7 +58,7 @@ export function measureField(): MeasField {
   S.measFieldCache = { has, mn, mx, toW, empty };
   return S.measFieldCache;
 }
-export function measureRef(): Vec | null { // voxel cell under the pointer, clamped into the field
+function measureRef(): Vec | null { // voxel cell under the pointer, clamped into the field
   const f = measureField();
   if (f.empty) return null;
   let cell: Vec | null = null;
@@ -86,7 +86,7 @@ export function measureRef(): Vec | null { // voxel cell under the pointer, clam
     z: Math.max(f.mn.z, Math.min(f.mx.z, cell.z)),
   };
 }
-export function measureAt(cell: Vec): Seg[] { // segments along all 3 axes through `cell`, split on filled/empty
+function measureAt(cell: Vec): Seg[] { // segments along all 3 axes through `cell`, split on filled/empty
   const f = measureField(),
     ax: (keyof Vec)[] = ["x", "y", "z"],
     out: Seg[] = [];
