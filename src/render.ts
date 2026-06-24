@@ -226,10 +226,10 @@ function meshSurface(
     pick?: boolean;
     childId?: string | null;
   } = {},
-): THREE.Mesh | null {
-  if (!boxes.length) return null;
+): void {
+  if (!boxes.length) return;
   const g = boxFaceGeo(boxes, colorOf);
-  if (!g) return null;
+  if (!g) return;
   const m = new THREE.Mesh(g, transparent ? matGlass : matSurf);
   m.castShadow = true;
   m.receiveShadow = true;
@@ -250,7 +250,6 @@ function meshSurface(
     S.pickMeshes.push(m);
     (S.childMeshes[childId!] || (S.childMeshes[childId!] = [])).push(m);
   }
-  return m;
 }
 
 // Visit every visible object (skipping the one being edited) with its accumulated
