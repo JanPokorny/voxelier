@@ -37,7 +37,6 @@ import type {
   Node,
   Pending,
   Rot,
-  SceneNode,
   Tool,
   Vec,
 } from "./types.ts";
