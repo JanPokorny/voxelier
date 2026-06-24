@@ -51,13 +51,12 @@ export function enterNode(node: Node, fit?: boolean): void { // click in tree / 
   if (!p) return;
   if (node.type === "scene") {
     S.path = p;
-    S.selection.clear();
     S.editObject = null;
   } else {
     S.path = p.slice(0, -1);
     S.editObject = node;
-    S.selection.clear();
   }
+  S.selection.clear();
   S.tool = "add";
   clearMeasure();
   refresh();
