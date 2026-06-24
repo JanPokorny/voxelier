@@ -25,6 +25,31 @@ const mkRnd = (seed: number) => {
   return (a: number, b: number) => a + Math.floor(rnd() * (b - a + 1));
 };
 
+// iterate every cell of a half-open box [x0,x1) × [y0,y1) × [z0,z1)
+const eachCell = (
+  b: Region,
+  cb: (x: number, y: number, z: number) => void,
+) => {
+  for (let x = b.x0; x < b.x1; x++) {
+    for (let y = b.y0; y < b.y1; y++) {
+      for (let z = b.z0; z < b.z1; z++) cb(x, y, z);
+    }
+  }
+};
+// materialize a disjoint box set into a cell-key -> colour map, asserting that no
+// two boxes cover the same cell (`what` names the set in the overlap message)
+const materialize = (boxes: Box3[], what: string): Map<number, number> => {
+  const m = new Map<number, number>();
+  for (const b of boxes) {
+    eachCell(b, (x, y, z) => {
+      const k = key(x, y, z);
+      assert(!m.has(k), `${what} overlap at ${x},${y},${z}`);
+      m.set(k, b.c);
+    });
+  }
+  return m;
+};
+
 Deno.test("voxel placement round-trip", () => {
   // independent oracle: rotY must produce these exact 90°-step rotations. The
   // round-trip below only proves rotY(·,-r) inverts rotY(·,r), which a wrong but
@@ -87,17 +112,12 @@ Deno.test("box algebra matches a voxel reference", () => {
     };
   };
   const ref = new Map<number, number>(); // cell key -> colour
-  const fill = (r: Region, c: number | null) => {
-    for (let x = r.x0; x < r.x1; x++) {
-      for (let y = r.y0; y < r.y1; y++) {
-        for (let z = r.z0; z < r.z1; z++) {
-          const k = key(x, y, z);
-          if (c === null) ref.delete(k);
-          else ref.set(k, c);
-        }
-      }
-    }
-  };
+  const fill = (r: Region, c: number | null) =>
+    eachCell(r, (x, y, z) => {
+      const k = key(x, y, z);
+      if (c === null) ref.delete(k);
+      else ref.set(k, c);
+    });
   let boxes: Box3[] = [];
   for (let step = 0; step < 300; step++) {
     const r = randRegion(), c = ri(1, 5), op = ri(0, 1);
@@ -105,18 +125,7 @@ Deno.test("box algebra matches a voxel reference", () => {
     else (boxes = eraseBox(boxes, r)), fill(r, null);
   }
   // disjoint + occupancy/colour identical to the reference
-  const got = new Map<number, number>();
-  for (const b of boxes) {
-    for (let x = b.x0; x < b.x1; x++) {
-      for (let y = b.y0; y < b.y1; y++) {
-        for (let z = b.z0; z < b.z1; z++) {
-          const k = key(x, y, z);
-          assert(!got.has(k), `boxes overlap at ${x},${y},${z}`);
-          got.set(k, b.c);
-        }
-      }
-    }
-  }
+  const got = materialize(boxes, "boxes");
   assert(got.size === ref.size, `cell count ${got.size} != ${ref.size}`);
   for (const [k, v] of ref) {
     assert(got.get(k) === v, "colour/occupancy mismatch");
@@ -165,14 +174,10 @@ Deno.test("fillBox matches a cell-level flood fill", () => {
     const ref = new Map<number, number>();
     const cells: Vec[] = [];
     for (const b of boxes) {
-      for (let x = b.x0; x < b.x1; x++) {
-        for (let y = b.y0; y < b.y1; y++) {
-          for (let z = b.z0; z < b.z1; z++) {
-            ref.set(key(x, y, z), b.c);
-            cells.push({ x, y, z });
-          }
-        }
-      }
+      eachCell(b, (x, y, z) => {
+        ref.set(key(x, y, z), b.c);
+        cells.push({ x, y, z });
+      });
     }
     if (!cells.length) continue;
     const seed = cells[ri(0, cells.length - 1)], newC = ri(1, 4);
@@ -200,18 +205,7 @@ Deno.test("fillBox matches a cell-level flood fill", () => {
     // actual: fillBox returns null when nothing changes (orig === newC); the
     // ?? falls back to the unchanged list for that no-op case
     const out = fillBox(boxes, seed.x, seed.y, seed.z, newC) ?? boxes;
-    const got = new Map<number, number>();
-    for (const b of out) {
-      for (let x = b.x0; x < b.x1; x++) {
-        for (let y = b.y0; y < b.y1; y++) {
-          for (let z = b.z0; z < b.z1; z++) {
-            const k = key(x, y, z);
-            assert(!got.has(k), `fillBox produced overlap at ${x},${y},${z}`);
-            got.set(k, b.c);
-          }
-        }
-      }
-    }
+    const got = materialize(out, "fillBox produced");
     assert(
       got.size === expected.size,
       `cell count ${got.size} != ${expected.size}`,
