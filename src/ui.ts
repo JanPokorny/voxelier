@@ -365,7 +365,7 @@ function buildTree(): void {
     const isRoot = node === S.root;
     const isSel = !isRoot && S.context.children.includes(node) &&
       S.selection.has(node.id);
-    const v = node.vis || "visible";
+    const v = node.vis;
     const r = el("div", {
       className: "trow" + (isRoot ? " root" : "") + (isSel ? " sel" : "") +
         (node === S.context && !S.editObject ? " ctx" : "") +
