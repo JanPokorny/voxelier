@@ -30,9 +30,8 @@ body {
   position: fixed;
   inset: 0;
   display: grid;
-  grid-template-rows: 1fr auto;
   grid-template-columns: 64px 1fr 200px;
-  grid-template-areas: "left stage right" "left status status";
+  grid-template-areas: "left stage right";
 }
 
 button {
@@ -53,9 +52,6 @@ button.active {
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 600;
-}
-.sep {
-  flex: 1;
 }
 
 #tools {
@@ -350,26 +346,4 @@ h3 {
   gap: 6px;
   max-height: 210px;
   overflow: auto;
-}
-
-#status {
-  grid-area: status;
-  background: var(--panel);
-  border-top: 1px solid var(--line);
-  padding: 5px 12px;
-  color: var(--ink-dim);
-  font-size: 11px;
-  display: flex;
-  gap: 16px;
-  align-items: center;
-}
-kbd {
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 1px 5px;
-  font: inherit;
-  font-size: 10px;
-  color: var(--ink);
 }

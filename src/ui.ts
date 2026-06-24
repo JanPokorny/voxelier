@@ -5,7 +5,7 @@ import { S } from "./state.ts";
 import { addv, hex, rotY } from "./math.ts";
 import { colorCounts, growBounds, worldBox } from "./boxes.ts";
 import { hoverVox } from "./scene-env.ts";
-import { clearMeasure, measureActive } from "./measure.ts";
+import { clearMeasure } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
 import { enterNode, escapeUp, isEntered, selectNode } from "./navigation.ts";
 import { emptyBox, findById, isDescendant, parentOf } from "./model.ts";
@@ -122,17 +122,6 @@ export function updateChrome(): void {
   }
   buildTree();
   buildSwatches();
-  document.getElementById("statHint")!.textContent = measureActive()
-    ? "Measure — hover to read voxel/gap runs on all 3 axes · left-click freezes · right-click clears"
-    : S.editObject
-    ? (S.tool === "paint"
-      ? "Fill — click a voxel to flood-fill its connected same-colour region · right-drag orbits · middle-drag pans · Esc to finish"
-      : `${
-        S.tool === "add" ? "Add" : "Erase"
-      } — drag a box in the floor plane (Shift = height) · right-drag orbits · middle-drag pans · Esc to finish`)
-    : (S.selection.size
-      ? `${S.selection.size} selected — drag to move (Shift: up/down · Alt: allow overlap) · right-drag rotate · R rotate · Del`
-      : "Tree: click a row to enter it · double-click to fit · right-click for actions · N new object");
 }
 
 // distinct colours used in the scene, most-used (by cell volume) first. Cached by
