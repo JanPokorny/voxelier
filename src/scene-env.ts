@@ -27,6 +27,8 @@ export const goal = {
 };
 export const CAM_DIST = 900;
 export const ZOOM_MAX = 2000; // max orthographic view height (zoom-out limit)
+// frustum and near/far here are placeholders — updateCamera() recomputes all of
+// them from the viewport and scene depth every frame, before the first render.
 export const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
 
 // Sky: a full-screen vertical gradient. Looking down from above the ground we
