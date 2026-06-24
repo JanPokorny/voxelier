@@ -44,9 +44,11 @@ export function record(rootJSON: string): void {
   if (restoring) return;
   const snap = snapshot(rootJSON);
   const prev = stack[index];
-  if (prev && prev.rootJSON === snap.rootJSON && prev.editId === snap.editId) {
-    return;
-  }
+  // dedup on the document only: record() is only reached via save() (after a
+  // real mutation) or a baseline flush; navigation that changes editId alone
+  // never calls save(), and restore() reproduces rootJSON exactly — so the
+  // editId is never the deciding difference here.
+  if (prev && prev.rootJSON === snap.rootJSON) return;
   stack.length = index + 1; // drop any redo tail
   stack.push(snap);
   if (stack.length > MAX) stack.shift();
