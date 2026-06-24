@@ -34,7 +34,7 @@ export const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
 // short blend across the side-on angle avoids a hard pop. (No true horizon —
 // that doesn't survive an orthographic projection.)
 const skyU = { uGround: { value: 1 } }; // 1 = green (above), 0 = blue (below)
-export const sky = new THREE.Mesh(
+const sky = new THREE.Mesh(
   new THREE.PlaneGeometry(2, 2),
   new THREE.ShaderMaterial({
     uniforms: skyU,
@@ -107,7 +107,7 @@ export function dimCol(v: number): THREE.Color {
 export const matSurf = new THREE.MeshLambertMaterial({
   vertexColors: true,
   side: THREE.FrontSide,
-}); // opaque surfaces (soft corner AO is added in screen space — see the GTAO pass)
+}); // opaque surfaces (smooth per-vertex corner AO baked into vertex colours)
 // Transparent voxels render as a surface of only the exterior faces, back-face
 // culled — depth-correct yet reading as one glass pane.
 export const TRANSP_OPACITY = 0.42;
