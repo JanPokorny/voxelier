@@ -223,9 +223,9 @@ function boxFaceGeo(
           quad(pu0, pv0, pu1, pv1);
           continue;
         }
-        // AO only varies within AO_R of an edge, so mesh a per-cell band that
-        // deep around the rim (vertices for the gradient) and leave the interior
-        // — where every vertex is ≥ AO_R from any edge, so AO == 1 — as one quad.
+        // AO only varies within AO_R of an edge, so mesh a per-cell band AO_R
+        // deep around the rim (the gradient needs the vertices) and leave the
+        // interior — every vertex ≥ AO_R from any edge, so AO == 1 — as one quad.
         const iu0 = pu0 + AO_R, iu1 = pu1 - AO_R;
         const iv0 = pv0 + AO_R, iv1 = pv1 - AO_R;
         if (iu0 >= iu1 || iv0 >= iv1) { // too small to have a bright interior
