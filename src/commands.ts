@@ -184,7 +184,7 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
   for (let n = 0; n < Math.abs(steps); n++) {
     const x = contextXform();
     // world AABB of a context child under the current context transform
-    const worldBox = (ch: Node) =>
+    const childWorldBox = (ch: Node) =>
       nodeBox(
         ch,
         addv(x.off, rotY(ch.pos, x.rot)),
@@ -194,9 +194,9 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
     for (const id of S.selection) {
       const ch = childById(id);
       if (!ch) continue;
-      const before = worldBox(ch);
+      const before = childWorldBox(ch);
       ch.rot = (ch.rot + dir) & 3;
-      const after = worldBox(ch);
+      const after = childWorldBox(ch);
       const dW = {
         x: (before.min.x + before.max.x) / 2 - (after.min.x + after.max.x) / 2,
         z: (before.min.z + before.max.z) / 2 - (after.min.z + after.max.z) / 2,
@@ -223,5 +223,5 @@ export function nudgeY(d: number): void {
     const c = childById(id);
     if (c) c.pos.y += d;
   }
-  if (S.selection.size) commit(); // rebuild + updateChrome + save
+  if (S.selection.size) commit();
 }
