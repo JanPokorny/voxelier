@@ -156,11 +156,12 @@ function commitMove(): void {
   save();
 }
 function rotDragTo(e: PointerEvent): void {
-  const steps = Math.round((S.drag!.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
-  if (steps !== S.drag!.steps) {
-    rotateSelectionBy(steps - S.drag!.steps!);
-    S.drag!.steps = steps;
-    S.drag!.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
+  const d = S.drag!;
+  const steps = Math.round((d.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
+  if (steps !== d.steps) {
+    rotateSelectionBy(steps - d.steps!);
+    d.steps = steps;
+    d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
   }
 }
 
