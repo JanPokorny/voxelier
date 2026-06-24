@@ -78,21 +78,30 @@ function dragPanOrbit(e: PointerEvent): boolean {
 // world boxes — split into the moving selection's own boxes and everyone else's
 // (the obstacles). Invisible objects are absent from eachObject(), so they never
 // block. A candidate offset is blocked if a shifted selection box overlaps an
-// obstacle box.
-function moveCollision(): { occ: Box3[]; sel: Box3[] } {
+// obstacle box, or if it would push the selection's lowest voxel below the
+// ground (world y=0). minY is that lowest world y0 at drag start.
+function moveCollision(): { occ: Box3[]; sel: Box3[]; minY: number } {
   const occ: Box3[] = [], sel: Box3[] = [];
   eachObject(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (n, off, rot, owner) => {
     const tgt = owner && S.selection.has(owner) ? sel : occ;
     for (const b of n.boxes) tgt.push(worldBox(b, rot, off));
   });
-  return { occ, sel };
+  let minY = Infinity;
+  for (const b of sel) if (b.y0 < minY) minY = b.y0;
+  return { occ, sel, minY };
 }
 const moveBlocked = (
   d: Drag,
   dx: number,
   dy: number,
   dz: number,
-) => boxesOverlap(d.sel ?? [], d.occ ?? [], dx, dy, dz);
+): boolean => {
+  if (boxesOverlap(d.sel ?? [], d.occ ?? [], dx, dy, dz)) return true;
+  const minY = d.minY ?? Infinity;
+  // resist pushing the lowest voxel below the ground; floor at min(0, start) so
+  // an object already below ground isn't yanked up, only stopped from sinking
+  return minY + dy < Math.min(0, minY);
+};
 
 function moveDragTo(e: PointerEvent): void {
   const d = S.drag!;
