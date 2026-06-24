@@ -36,10 +36,6 @@ export type State = {
   childBox: Record<string, Box>; // childId -> {min,max}
   sceneBox: Box | null; // world AABB of all geometry (for camera depth + shadows)
   editXform: Xform;
-
-  // ---- edited object: surface mesh (rebuilt on edit, rAF-debounced) ----
-  editMesh: THREE.Mesh | null;
-  editRemesh: number; // pending requestAnimationFrame id
   voxVer: number; // bumped on any box change (chrome/colour caches)
 
   // ---- pointer interaction ----
@@ -86,9 +82,6 @@ export const S: State = {
   childBox: {},
   sceneBox: null,
   editXform: { off: { x: 0, y: 0, z: 0 }, rot: 0 },
-
-  editMesh: null,
-  editRemesh: 0,
   voxVer: 0,
 
   painting: false,

@@ -86,12 +86,18 @@ function disposeMeshes(): void {
   }
   S.meshes = [];
   editGroup.clear();
-  if (S.editRemesh) {
-    cancelAnimationFrame(S.editRemesh);
-    S.editRemesh = 0;
+  if (editRemesh) {
+    cancelAnimationFrame(editRemesh);
+    editRemesh = 0;
   }
-  S.editMesh = null;
+  editMesh = null;
 }
+
+// The edited object's surface mesh and its pending rAF id. Render-internal scratch
+// (rebuilt on edit, see scheduleEditRemesh) — never read outside this module, and
+// not document state, so it lives here rather than in the shared S object.
+let editMesh: THREE.Mesh | null = null;
+let editRemesh = 0; // pending requestAnimationFrame id, 0 when none
 
 // Greedy box-face mesher: one merged quad per exposed face rectangle, so cost is
 // O(boxes), not O(surface cells) — a 1000³ box is six quads, not six million.
@@ -335,25 +341,25 @@ function buildEditMesh(): void {
   editGroup.position.set(off.x, off.y, off.z);
   editGroup.rotation.set(0, -rot * Math.PI / 2, 0); // rotY(v,rot) == Y-rotation by -rot·90°
   editGroup.updateMatrixWorld(true);
-  if (S.editMesh) {
-    editGroup.remove(S.editMesh);
-    S.editMesh.geometry.dispose();
-    const i = S.meshes.indexOf(S.editMesh);
+  if (editMesh) {
+    editGroup.remove(editMesh);
+    editMesh.geometry.dispose();
+    const i = S.meshes.indexOf(editMesh);
     if (i >= 0) S.meshes.splice(i, 1);
   }
   const g = boxFaceGeo(S.editObject!.boxes, col, true);
-  S.editMesh = g ? new THREE.Mesh(g, matSurf) : null;
-  if (S.editMesh) {
-    S.editMesh.castShadow = S.editMesh.receiveShadow = true;
-    editGroup.add(S.editMesh);
-    S.meshes.push(S.editMesh);
+  editMesh = g ? new THREE.Mesh(g, matSurf) : null;
+  if (editMesh) {
+    editMesh.castShadow = editMesh.receiveShadow = true;
+    editGroup.add(editMesh);
+    S.meshes.push(editMesh);
   }
-  S.pickMeshes = S.editMesh ? [S.editMesh] : [];
+  S.pickMeshes = editMesh ? [editMesh] : [];
 }
 function scheduleEditRemesh(): void {
-  if (S.editRemesh) return;
-  S.editRemesh = requestAnimationFrame(() => {
-    S.editRemesh = 0;
+  if (editRemesh) return;
+  editRemesh = requestAnimationFrame(() => {
+    editRemesh = 0;
     buildEditMesh();
     wake();
   });
