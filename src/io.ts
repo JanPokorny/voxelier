@@ -18,10 +18,11 @@ export function exportScene(): void {
     new Blob([data], { type: "application/json" }),
   );
   const name = S.root.name || "Project"; // matches the root's name in the scene tree
-  const d = new Date(); // local-time stamp: "YYYY-MM-DD HHhMMmSSs"
-  const [date, time] = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-    .toISOString().slice(0, 19).split("T");
-  const stamp = `${date} ${time.replace(":", "h").replace(":", "m")}s`;
+  // local-time stamp "YYYY-MM-DD HHhMMmSSs"
+  const p = (n: number) => String(n).padStart(2, "0");
+  const t = new Date();
+  const stamp = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ` +
+    `${p(t.getHours())}h${p(t.getMinutes())}m${p(t.getSeconds())}s`;
   const a = document.createElement("a");
   a.href = url;
   a.download = `${name} -- ${stamp}.voxelier.json`;
