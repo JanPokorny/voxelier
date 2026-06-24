@@ -46,7 +46,7 @@ import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
 import { updateChrome } from "./ui.ts";
 import { save } from "./persistence.ts";
-import type { Box3, Drag, Seg, Vec } from "./types.ts";
+import type { Box3, Drag, Seg } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
@@ -176,9 +176,7 @@ function applyVoxel(): void { // bucket: flood-fill the connected same-colour re
   updateVoxHover(t);
 }
 function updateVoxHover(t: Pick = pickVoxel()): void {
-  let cell: Vec | null = null;
-  if (S.tool === "add") cell = t ? t.addCell : voxelTarget(t);
-  else cell = t ? t.cell : null;
+  const cell = voxelTarget(t); // add -> addCell/ground, erase/paint -> hovered cell
   if (!cell) {
     hoverVox.visible = false;
     return;
