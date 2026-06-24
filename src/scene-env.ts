@@ -44,18 +44,14 @@ const sky = new THREE.Mesh(
       `varying vec2 vN; void main(){ vN = position.xy; gl_Position = vec4(position.xy, 1.0, 1.0); }`,
     fragmentShader: `precision highp float;
       varying vec2 vN; uniform float uGround;
-      // The GTAO composer's OutputPass applies the linear->sRGB encode to the
-      // whole frame, but this raw shader's colours are authored as final display
-      // (sRGB) values — so convert sRGB->linear here and OutputPass restores the
-      // intended (deeper) shades instead of brightening them.
-      vec3 toLin(vec3 c){
-        return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
-      }
+      // Drawn straight to the canvas (no post-process OutputPass) and a raw
+      // ShaderMaterial gets no colour-space conversion from the renderer, so the
+      // colours below are authored directly in display (sRGB) space.
       void main(){
         float t = (vN.y + 1.0) * 0.5; // 0 bottom .. 1 top
         vec3 grn = mix(vec3(0.24, 0.33, 0.19), vec3(0.42, 0.55, 0.34), t);
         vec3 blu = mix(vec3(0.62, 0.74, 0.86), vec3(0.20, 0.40, 0.62), t);
-        gl_FragColor = vec4(toLin(mix(blu, grn, uGround)), 1.0);
+        gl_FragColor = vec4(mix(blu, grn, uGround), 1.0);
       }`,
   }),
 );
