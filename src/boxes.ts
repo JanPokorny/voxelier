@@ -21,6 +21,10 @@ const overlaps = (b: Box3, r: Region): boolean =>
   b.x0 < r.x1 && r.x0 < b.x1 && b.y0 < r.y1 && r.y0 < b.y1 &&
   b.z0 < r.z1 && r.z0 < b.z1;
 
+// Is cell (x,y,z) inside box b? (half-open [x0,x1) etc.)
+const contains = (b: Box3, x: number, y: number, z: number): boolean =>
+  x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1;
+
 // b minus r, as up to six disjoint fragments that keep b's colour.
 function subtract(b: Box3, r: Region, out: Box3[]): void {
   const ix0 = Math.max(b.x0, r.x0),
@@ -77,10 +81,7 @@ export function fillBox(
 ): Box3[] | null {
   let start = -1;
   for (let i = 0; i < boxes.length; i++) {
-    const b = boxes[i];
-    if (
-      x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1
-    ) {
+    if (contains(boxes[i], x, y, z)) {
       start = i;
       break;
     }
@@ -188,11 +189,7 @@ export function buildIndex(boxes: Box3[]): BoxIndex {
     if (gx < gx0 || gy < gy0 || gz < gz0) return false;
     if (gx - gx0 >= nx || gy - gy0 >= ny || gz - gz0 >= nz) return false;
     for (const b of grid[at(gx, gy, gz)]) {
-      if (
-        x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1
-      ) {
-        return true;
-      }
+      if (contains(b, x, y, z)) return true;
     }
     return false;
   };
@@ -202,16 +199,7 @@ export const boxesHas = (
   x: number,
   y: number,
   z: number,
-): boolean => {
-  for (const b of boxes) {
-    if (
-      x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1
-    ) {
-      return true;
-    }
-  }
-  return false;
-};
+): boolean => boxes.some((b) => contains(b, x, y, z));
 
 // Surface cells of the union: every box face cell whose outward neighbour is
 // empty. Deduped (a corner cell exposed on several faces is emitted once), so the
