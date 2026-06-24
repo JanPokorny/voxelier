@@ -134,7 +134,8 @@ export const ground = new THREE.Mesh(
   new THREE.ShadowMaterial({ opacity: 0.32 }),
 );
 ground.rotation.x = -Math.PI / 2;
-ground.position.y = 0;
+ground.position.y = -0.1; // just below y=0 so faces flush with the ground don't
+// z-fight the catcher (updateCamera keeps this y while tracking the view in x/z)
 ground.receiveShadow = true;
 ground.renderOrder = -1;
 scene.add(ground);
