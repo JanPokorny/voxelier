@@ -15,10 +15,15 @@ export function setNdc(cx: number, cy: number): void {
   ndc.x = ((cx - r.left) / r.width) * 2 - 1;
   ndc.y = -((cy - r.top) / r.height) * 2 + 1;
 }
-export function pickChild(): string | null { // only opaque surfaces are pickable (transparent ones are not interactable)
+// nearest pickable-surface hit under the pointer (opaque meshes only), or null
+const firstHit = (): THREE.Intersection | null => {
+  if (!S.pickMeshes.length) return null;
   raycaster.setFromCamera(ndc, camera);
-  const h = raycaster.intersectObjects(S.pickMeshes, false); // sorted nearest-first
-  return h.length ? (h[0].object.userData.childId ?? null) : null;
+  return raycaster.intersectObjects(S.pickMeshes, false)[0] ?? null; // nearest-first
+};
+export function pickChild(): string | null { // only opaque surfaces are pickable (transparent ones are not interactable)
+  const h = firstHit();
+  return h ? (h.object.userData.childId ?? null) : null;
 }
 const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // y-up, constant set per call
 export function groundCell(yWorld: number): Vec | null {
@@ -37,11 +42,8 @@ export const cellOf = (p: Vec, n: Vec): Vec => ({
   z: Math.floor(p.z - n.z * 0.5),
 });
 export function pickVoxel(): Pick { // -> {cell, addCell} in object-local space, or null
-  if (!S.pickMeshes.length) return null;
-  raycaster.setFromCamera(ndc, camera);
-  const hits = raycaster.intersectObjects(S.pickMeshes, false);
-  if (!hits.length) return null;
-  const h = hits[0];
+  const h = firstHit();
+  if (!h) return null;
   // chunk geometry is built in object-local space (editGroup carries the pose), so
   // the face normal is already local; convert the world hit point back to local.
   const off = S.editXform.off;
@@ -62,14 +64,11 @@ export function pickVoxel(): Pick { // -> {cell, addCell} in object-local space,
   };
 }
 // pointer -> world cell (scene/measure mode): the picked opaque surface cell,
-// else the cell on the ground plane at y=0. The world-space analogue of the
-// pickVoxel/localGroundCell pair used in edit mode.
+// else the ground-plane cell at y=0. World-space counterpart of pickVoxel().cell
+// / localGroundCell used in edit mode.
 export function worldCell(): Vec | null {
-  if (!S.pickMeshes.length) return groundCell(0);
-  raycaster.setFromCamera(ndc, camera);
-  const hits = raycaster.intersectObjects(S.pickMeshes, false);
-  if (!hits.length) return groundCell(0);
-  const h = hits[0];
+  const h = firstHit();
+  if (!h) return groundCell(0);
   return cellOf(h.point, h.face ? h.face.normal : { x: 0, y: 1, z: 0 });
 }
 // pointer -> object-local cell on the horizontal plane at the given local Y
