@@ -83,7 +83,7 @@ scene.add(dir2);
 
 // On-demand rendering (driven in main.ts): wake() requests a short burst of
 // frames. Called on input and whenever the GL scene mutates (rebuild / remesh).
-export const frame = { tail: 60 };
+export const frame = { tail: 0 }; // idle until wake(); boot rebuild() wakes it
 export const wake = (): void => {
   frame.tail = 30;
 };
