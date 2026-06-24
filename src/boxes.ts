@@ -1,11 +1,10 @@
 // Box algebra: an object's shape is a set of disjoint axis-aligned colour boxes
 // (half-open cell ranges). Editing is constructive — add/erase/paint subtract
 // the target region from overlapping boxes (≤6 fragments each) and optionally
-// re-add it. A grid index answers point queries fast. boundaryCells() emits the
-// surface cells of the union (with a cap) for thumbnails; the renderer meshes
-// box faces directly (see render.ts), so it stays off the hot path.
-import { key, rotY } from "./math.ts";
-import type { Box, Box3, Cell, Region, Rot, Vec } from "./types.ts";
+// re-add it. A grid index answers point queries fast. The renderer meshes box
+// faces directly (see render.ts).
+import { rotY } from "./math.ts";
+import type { Box, Box3, Region, Rot, Vec } from "./types.ts";
 
 export const region = (
   x0: number,
@@ -195,55 +194,6 @@ export const boxesHas = (
   y: number,
   z: number,
 ): boolean => boxes.some((b) => contains(b, x, y, z));
-
-// Surface cells of the union: every box face cell whose outward neighbour is
-// empty. Deduped (a corner cell exposed on several faces is emitted once), so the
-// per-cell mesher sees each boundary cell exactly as if it were a stored voxel —
-// but interior cells are never visited.
-// `cap` stops enumeration early (a huge box has millions of surface cells); used
-// by thumbnails, which only need a sample. The mesher uses the greedy box-face
-// path instead, so this is no longer on the hot rendering path.
-export function boundaryCells(
-  boxes: Box3[],
-  has: BoxIndex,
-  cap = Infinity,
-): Cell[] {
-  const seen = new Set<number>();
-  const out: Cell[] = [];
-  const add = (x: number, y: number, z: number, c: number) => {
-    const k = key(x, y, z);
-    if (!seen.has(k)) {
-      seen.add(k);
-      out.push({ x, y, z, c });
-      if (out.length >= cap) throw out; // sentinel: bail out of the deep loops
-    }
-  };
-  try {
-    for (const b of boxes) {
-      for (let y = b.y0; y < b.y1; y++) {
-        for (let z = b.z0; z < b.z1; z++) {
-          if (!has(b.x1, y, z)) add(b.x1 - 1, y, z, b.c);
-          if (!has(b.x0 - 1, y, z)) add(b.x0, y, z, b.c);
-        }
-      }
-      for (let x = b.x0; x < b.x1; x++) {
-        for (let z = b.z0; z < b.z1; z++) {
-          if (!has(x, b.y1, z)) add(x, b.y1 - 1, z, b.c);
-          if (!has(x, b.y0 - 1, z)) add(x, b.y0, z, b.c);
-        }
-      }
-      for (let x = b.x0; x < b.x1; x++) {
-        for (let y = b.y0; y < b.y1; y++) {
-          if (!has(x, y, b.z1)) add(x, y, b.z1 - 1, b.c);
-          if (!has(x, y, b.z0 - 1)) add(x, y, b.z0, b.c);
-        }
-      }
-    }
-  } catch (e) {
-    if (e !== out) throw e; // re-throw anything that isn't the cap sentinel
-  }
-  return out;
-}
 
 // Do any two boxes from the two lists overlap (selection shifted by d)?
 export const boxesOverlap = (
