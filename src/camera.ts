@@ -106,7 +106,11 @@ export function updateCamera(): void {
     0,
     1,
   ); // swing the up-vector toward horizontal near either pole (top-down/bottom-up)
+  // horizontal swing direction at the pole; at the bottom it's the opposite
+  // horizontal (the elevation tangent flips sign) so the roll stays continuous
+  // through straight-up instead of snapping 180°.
   _upN.set(-Math.sin(cam.azim), 0, -Math.cos(cam.azim));
+  if (cam.elev < 0) _upN.negate();
   // _up = lerp((0,1,0), _upN, t); the two are unit-length and orthogonal, so
   // |_up|² = (1-t)² + t² ≥ 0.5 — never degenerate, safe to normalise.
   _up.set(0, 1, 0).lerp(_upN, t);
