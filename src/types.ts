@@ -84,6 +84,7 @@ export type Drag = {
   dirty?: boolean; // rotobj: a rotation was applied during the drag (commit even if net steps == 0)
   clickId?: string | null;
   meas?: "freeze" | "clear";
+  // in-progress box-brush footprint; vertical extent is y0 ± hy, no explicit y1
   box?: {
     x0: number;
     y0: number;
