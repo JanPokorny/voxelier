@@ -5,11 +5,9 @@ import type * as THREE from "three";
 import type {
   Box,
   Drag,
-  DropInfo,
   MeasLabel,
   Node,
   ObjectNode,
-  Pending,
   SceneNode,
   Seg,
   Tool,
@@ -40,13 +38,6 @@ export type State = {
   painting: boolean;
   lastVox: number | null;
   drag: Drag | null;
-
-  // ---- tree drag&drop + context menu + row-click window ----
-  dragId: string | null;
-  dropInfo: DropInfo | null;
-  dropRow: HTMLElement | null;
-  ctxMenuEl: HTMLElement | null;
-  pending: Pending | null;
 
   // ---- measurements ----
   measMode: boolean;
@@ -80,12 +71,6 @@ export const S: State = {
   painting: false,
   lastVox: null,
   drag: null,
-
-  dragId: null,
-  dropInfo: null,
-  dropRow: null,
-  ctxMenuEl: null,
-  pending: null,
 
   measMode: false,
   liveMeas: null,

@@ -31,7 +31,24 @@ import {
 import { save } from "./persistence.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
-import type { Box3, Node, Rot, SceneNode, Tool, Vec } from "./types.ts";
+import type {
+  Box3,
+  DropInfo,
+  Node,
+  Pending,
+  Rot,
+  SceneNode,
+  Tool,
+  Vec,
+} from "./types.ts";
+
+// Tree drag&drop, context-menu, and row-click transient state — all owned and
+// used only here, so they live as module locals rather than in the shared S.
+let dragId: string | null = null; // id of the row being dragged
+let dropInfo: DropInfo | null = null; // resolved drop target while dragging
+let dropRow: HTMLElement | null = null; // row element currently showing a drop cue
+let ctxMenuEl: HTMLElement | null = null; // open context menu, or null
+let pending: Pending | null = null; // scheduled single-vs-double row click
 
 // Terse element factory: create <tag>, assign the given properties (className,
 // innerHTML, textContent, onclick, title, draggable…), append any children.
@@ -330,18 +347,18 @@ function thumbFor(node: Node): HTMLCanvasElement {
 // tree-row clicks: first click enters; a quick second click on the same row fits
 // it; clicking a row that's already entered renames it after the dbl-click window.
 function rowClick(node: Node): void {
-  if (S.pending && S.pending.node === node) { // quick second click on the same row -> zoom to fit
-    clearTimeout(S.pending.timer);
-    S.pending = null;
+  if (pending && pending.node === node) { // quick second click on the same row -> zoom to fit
+    clearTimeout(pending.timer);
+    pending = null;
     fitNode(node);
     return;
   }
-  if (S.pending) clearTimeout(S.pending.timer);
+  if (pending) clearTimeout(pending.timer);
   const arm = (after?: () => void) => {
-    S.pending = {
+    pending = {
       node,
       timer: setTimeout(() => {
-        S.pending = null;
+        pending = null;
         after && after();
       }, 300),
     };
@@ -414,7 +431,7 @@ function buildTree(): void {
     if (!isRoot) {
       r.addEventListener("dragstart", (ev) => {
         ev.stopPropagation();
-        S.dragId = node.id;
+        dragId = node.id;
         if (ev.dataTransfer) {
           ev.dataTransfer.effectAllowed = "move";
           try {
@@ -454,15 +471,15 @@ function buildTree(): void {
 
 // ---- tree right-click context menu ----
 function closeItemMenu(): void {
-  if (S.ctxMenuEl) {
-    S.ctxMenuEl.remove();
-    S.ctxMenuEl = null;
+  if (ctxMenuEl) {
+    ctxMenuEl.remove();
+    ctxMenuEl = null;
     window.removeEventListener("pointerdown", ctxMenuOutside, true);
   }
 }
 function ctxMenuOutside(e: PointerEvent): void {
   if (
-    S.ctxMenuEl && !S.ctxMenuEl.contains(e.target as globalThis.Node | null)
+    ctxMenuEl && !ctxMenuEl.contains(e.target as globalThis.Node | null)
   ) {
     closeItemMenu();
   }
@@ -493,7 +510,7 @@ function showItemMenu(node: Node, x: number, y: number): void {
     add("New group", () => addGroupIn(node));
   } else add("New group", () => wrapNodeInGroup(node));
   document.body.appendChild(m);
-  S.ctxMenuEl = m;
+  ctxMenuEl = m;
   const r = m.getBoundingClientRect();
   m.style.left = Math.min(x, innerWidth - r.width - 4) + "px";
   m.style.top = Math.min(y, innerHeight - r.height - 4) + "px";
@@ -505,22 +522,22 @@ function showItemMenu(node: Node, x: number, y: number): void {
 
 // ---- tree drag & drop state/handlers ----
 function clearDropInd(): void {
-  if (S.dropRow) {
-    S.dropRow.classList.remove("drop-into", "drop-before", "drop-after");
+  if (dropRow) {
+    dropRow.classList.remove("drop-into", "drop-before", "drop-after");
   }
-  S.dropRow = null;
-  S.dropInfo = null;
+  dropRow = null;
+  dropInfo = null;
 }
 function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
-  const dn = S.dragId && findById(S.dragId);
+  const dn = dragId && findById(dragId);
   if (!dn || dn === node || isDescendant(dn, node)) {
     clearDropInd();
     return;
   }
   clearDropInd();
-  S.dropRow = row;
+  dropRow = row;
   if (node === S.root) {
-    S.dropInfo = { parent: S.root, index: S.root.children.length };
+    dropInfo = { parent: S.root, index: S.root.children.length };
     row.classList.add("drop-into");
     return;
   } // drop onto project root
@@ -531,41 +548,41 @@ function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
     idx = par ? par.children.indexOf(node) : 0;
   if (y > h * 0.28 && y < h * 0.72) {
     if (node.type === "scene") {
-      S.dropInfo = { parent: node, index: node.children.length }; // nest inside the group
-    } else S.dropInfo = { wrap: node }; // object onto object -> new group
+      dropInfo = { parent: node, index: node.children.length }; // nest inside the group
+    } else dropInfo = { wrap: node }; // object onto object -> new group
     row.classList.add("drop-into");
   } else if (y < h * 0.5) {
-    S.dropInfo = { parent: par, index: idx };
+    dropInfo = { parent: par, index: idx };
     row.classList.add("drop-before");
   } else {
-    S.dropInfo = { parent: par, index: idx + 1 };
+    dropInfo = { parent: par, index: idx + 1 };
     row.classList.add("drop-after");
   }
 }
 function doDrop(): void {
-  const dn = S.dragId && findById(S.dragId);
-  if (dn && S.dropInfo) {
-    if (S.dropInfo.wrap) wrapInGroup(S.dropInfo.wrap, dn);
+  const dn = dragId && findById(dragId);
+  if (dn && dropInfo) {
+    if (dropInfo.wrap) wrapInGroup(dropInfo.wrap, dn);
     else if (
-      S.dropInfo.parent &&
-      reparentNode(dn, S.dropInfo.parent, S.dropInfo.index!)
+      dropInfo.parent &&
+      reparentNode(dn, dropInfo.parent, dropInfo.index!)
     ) {
-      S.collapsed.delete(S.dropInfo.parent.id); // reveal the target
+      S.collapsed.delete(dropInfo.parent.id); // reveal the target
       selectNode(dn);
       save();
     }
   }
   clearDropInd();
-  S.dragId = null;
+  dragId = null;
 }
 
 {
   const treeEl = document.getElementById("tree")!; // drop on empty area -> move to scene root
   treeEl.addEventListener("dragover", (ev) => {
-    if (ev.target === treeEl && S.dragId) {
+    if (ev.target === treeEl && dragId) {
       ev.preventDefault();
       clearDropInd();
-      S.dropInfo = { parent: S.root, index: S.root.children.length };
+      dropInfo = { parent: S.root, index: S.root.children.length };
     }
   });
   treeEl.addEventListener("drop", (ev) => {
