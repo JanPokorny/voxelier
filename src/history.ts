@@ -68,7 +68,6 @@ function restore(snap: Snap): void {
     S.path.push(node);
   }
   if (!S.path.length) S.path = [S.root];
-  S.context = S.path[S.path.length - 1] as SceneNode;
   S.editObject = snap.editId ? findById(snap.editId) as ObjectNode : null;
   S.selection = new Set(
     snap.selection.filter((id) => S.context.children.some((c) => c.id === id)),

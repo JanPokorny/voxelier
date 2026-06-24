@@ -47,7 +47,6 @@ export function importScene(): void {
         seedUid(d.uid || 1);
         S.root = de(d.root) as SceneNode;
         S.path = [S.root];
-        S.context = S.root;
         S.editObject = null;
         S.selection.clear();
         clearMeasure();

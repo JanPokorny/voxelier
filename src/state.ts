@@ -21,7 +21,7 @@ export type State = {
   // ---- model / editor ----
   root: SceneNode; // root scene (set by start() before first use)
   path: Node[]; // array of groups root..context
-  context: SceneNode; // current group (= path[last])
+  readonly context: SceneNode; // derived: tail of path (the deepest entered group)
   editObject: ObjectNode | null; // object being voxel-edited, or null
   selection: Set<string>; // selected child ids within context
   clipboard: Node[]; // detached node clones
@@ -68,7 +68,11 @@ export type State = {
 export const S: State = {
   root: null!, // set by start() before anything reads it
   path: [],
-  context: null!,
+  // derived from path (its tail) so the two can never desync — path is the
+  // single source of truth for where the editor is in the tree
+  get context(): SceneNode {
+    return this.path[this.path.length - 1] as SceneNode;
+  },
   editObject: null,
   selection: new Set(),
   clipboard: [],

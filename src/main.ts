@@ -78,7 +78,6 @@ function tick(): void {
 function start(): void {
   if (!load()) S.root = seed();
   S.path = [S.root];
-  S.context = S.root;
   S.editObject = null;
   S.selection.clear();
   buildSwatches();
