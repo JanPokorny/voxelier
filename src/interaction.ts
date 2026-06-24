@@ -28,7 +28,7 @@ import {
   eachObject,
   editAdd,
   editErase,
-  editPaint,
+  editFill,
   rebuild,
   refreshOverlay,
 } from "./render.ts";
@@ -155,16 +155,13 @@ function rotDragTo(e: PointerEvent): void {
   }
 }
 
-function applyVoxel(): void { // paint: recolour the filled cell under the cursor
+function applyVoxel(): void { // bucket: flood-fill the connected same-colour region under the cursor
   const t = pickVoxel();
   const c = voxelTarget(t);
   if (!c) return;
   const k = key(c.x, c.y, c.z);
   if (k !== S.lastVox) {
-    editPaint(
-      { x0: c.x, y0: c.y, z0: c.z, x1: c.x + 1, y1: c.y + 1, z1: c.z + 1 },
-      S.selColor,
-    ); // paintBox only touches already-filled cells
+    editFill(c, S.selColor); // recolours the whole face-connected same-colour run
     S.lastVox = k;
   }
   updateVoxHover(t);

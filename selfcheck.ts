@@ -12,7 +12,6 @@ import {
   buildIndex,
   eraseBox,
   fillBox,
-  paintBox,
 } from "./src/boxes.ts";
 
 const toW = (cell: Vec, off: Vec, rot: number): Vec =>
@@ -46,10 +45,10 @@ Deno.test("voxel placement round-trip", () => {
   }
 });
 
-// The box model is the document representation: add/erase/paint must keep the
-// box set disjoint and exactly equal (occupancy + colour) to the cells they'd
-// touch, and boundaryCells() must emit precisely the surface cells. Brute-forced
-// against a reference voxel map over a stream of random ops.
+// The box model is the document representation: add/erase must keep the box set
+// disjoint and exactly equal (occupancy + colour) to the cells they'd touch, and
+// boundaryCells() must emit precisely the surface cells. Brute-forced against a
+// reference voxel map over a stream of random ops.
 Deno.test("box algebra matches a voxel reference", () => {
   const N = 12;
   let s = 12345;
@@ -73,7 +72,6 @@ Deno.test("box algebra matches a voxel reference", () => {
         for (let z = r.z0; z < r.z1; z++) {
           const k = key(x, y, z);
           if (c === null) ref.delete(k);
-          else if (c < 0) ref.has(k) && ref.set(k, -c); // recolour-if-filled
           else ref.set(k, c);
         }
       }
@@ -81,10 +79,9 @@ Deno.test("box algebra matches a voxel reference", () => {
   };
   let boxes: Box3[] = [];
   for (let step = 0; step < 300; step++) {
-    const r = randRegion(), c = ri(1, 5), op = ri(0, 2);
+    const r = randRegion(), c = ri(1, 5), op = ri(0, 1);
     if (op === 0) (boxes = addBox(boxes, r, c)), fill(r, c);
-    else if (op === 1) (boxes = eraseBox(boxes, r)), fill(r, null);
-    else (boxes = paintBox(boxes, r, c)), fill(r, -c);
+    else (boxes = eraseBox(boxes, r)), fill(r, null);
   }
   // disjoint + occupancy/colour identical to the reference
   const got = new Map<number, number>();

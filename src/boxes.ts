@@ -63,28 +63,6 @@ export function eraseBox(boxes: Box3[], r: Region): Box3[] {
   for (const b of boxes) overlaps(b, r) ? subtract(b, r, out) : out.push(b);
   return out;
 }
-// Recolour only the already-filled cells inside `r`.
-export function paintBox(boxes: Box3[], r: Region, c: number): Box3[] {
-  const out: Box3[] = [];
-  for (const b of boxes) {
-    if (!overlaps(b, r)) {
-      out.push(b);
-      continue;
-    }
-    subtract(b, r, out); // surviving parts keep their colour
-    out.push({ // the intersection, recoloured
-      x0: Math.max(b.x0, r.x0),
-      y0: Math.max(b.y0, r.y0),
-      z0: Math.max(b.z0, r.z0),
-      x1: Math.min(b.x1, r.x1),
-      y1: Math.min(b.y1, r.y1),
-      z1: Math.min(b.z1, r.z1),
-      c,
-    });
-  }
-  return out;
-}
-
 // Flood-fill: recolour the connected (face-adjacent) run of same-colour cells
 // containing (x,y,z) to colour `c`. Every box is a solid single-colour cuboid,
 // so a box is wholly inside or outside the region — we flood at the box level

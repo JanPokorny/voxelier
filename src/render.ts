@@ -12,7 +12,6 @@ import {
   eraseBox,
   fillBox,
   growBounds,
-  paintBox,
   worldBox,
 } from "./boxes.ts";
 import {
@@ -348,17 +347,13 @@ function afterEdit(): void {
   scheduleEditRemesh();
 }
 // Edited-object box ops (region is half-open [x0,x1)×…). add lays colour `c`,
-// erase carves, paint recolours only already-filled cells.
+// erase carves; fill (below) flood-fills a connected same-colour region.
 export function editAdd(r: Region, c: number): void {
   S.editObject!.boxes = addBox(S.editObject!.boxes, r, c);
   afterEdit();
 }
 export function editErase(r: Region): void {
   S.editObject!.boxes = eraseBox(S.editObject!.boxes, r);
-  afterEdit();
-}
-export function editPaint(r: Region, c: number): void {
-  S.editObject!.boxes = paintBox(S.editObject!.boxes, r, c);
   afterEdit();
 }
 // Flood-fill the connected same-colour region containing `cell` with colour `c`.

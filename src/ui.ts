@@ -49,7 +49,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
   { id: "add", ic: "＋", label: "Add" },
   { id: "erase", ic: "－", label: "Erase" },
-  { id: "paint", ic: "❖", label: "Paint" },
+  { id: "paint", ic: "🪣", label: "Fill" },
   { id: "measure", ic: "📏", label: "Measure" },
 ];
 // tree visibility-toggle glyphs, by current vis state
@@ -110,7 +110,7 @@ export function updateChrome(): void {
     ? "Measure — hover to read voxel/gap runs on all 3 axes · left-click freezes · right-click clears"
     : S.editObject
     ? (S.tool === "paint"
-      ? "Paint — click/drag to recolour voxels · right-drag orbits · middle-drag pans · Esc to finish"
+      ? "Fill — click a voxel to flood-fill its connected same-colour region · right-drag orbits · middle-drag pans · Esc to finish"
       : `${
         S.tool === "add" ? "Add" : "Erase"
       } — drag a box in the floor plane (Shift = height) · right-drag orbits · middle-drag pans · Esc to finish`)
