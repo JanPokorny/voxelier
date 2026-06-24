@@ -150,7 +150,7 @@ const colorSwatch = (c: number, after?: () => void): HTMLElement => {
   s.style.background = hex(c);
   return s;
 };
-export function buildSwatches(): void {
+function buildSwatches(): void {
   const w = document.getElementById("swatches")!;
   w.innerHTML = "";
   const cols = sceneColors().slice(); // copy: we may unshift the selected colour
