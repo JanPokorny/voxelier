@@ -203,7 +203,9 @@ function updateVoxHover(t: Pick = pickVoxel()): void {
 function startBox(
   base: { x: number; y: number; sx: number; sy: number },
 ): void {
-  const s = voxelTarget();
+  // erase may start over empty space (drag an erase box from the ground plane);
+  // add already falls back to the ground via voxelTarget
+  const s = voxelTarget() ?? (S.tool === "erase" ? localGroundCell(0) : null);
   if (!s) return; // nothing under the pointer to start from
   S.drag = {
     ...base,
