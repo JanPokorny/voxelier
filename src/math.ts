@@ -1,4 +1,5 @@
-// Pure, stateless helpers and the transform algebra (a transform is {off,rot}).
+// Pure helpers and the transform algebra (a transform is {off,rot}), plus the
+// one piece of module state: a monotonic node-id counter (see uid, at the bottom).
 // Voxel cells pack into one integer key instead of a "x,y,z" string: 17 bits per
 // axis (signed, biased by 2^16) keeps |coord| < 65536 and the packed value below
 // 2^51, so a Map<int,int> stays exact and avoids per-cell string alloc/parsing.
