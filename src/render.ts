@@ -27,7 +27,7 @@ import {
   scene,
   wake,
 } from "./scene-env.ts";
-import { contextXform, emptyBox, nodeBox, VIS } from "./model.ts";
+import { boxEmpty, contextXform, emptyBox, nodeBox, VIS } from "./model.ts";
 import { invalidateField } from "./measure.ts";
 import type { Box, Box3, Node, ObjectNode, Region, Rot, Vec } from "./types.ts";
 
@@ -38,7 +38,7 @@ import type { Box, Box3, Node, ObjectNode, Region, Rot, Vec } from "./types.ts";
 // kept (same azimuth) so cube faces still shade with clear light/dark sides.
 const LIGHT_DIR = new THREE.Vector3(40, 150, 30).normalize();
 function fitShadow(box: Box): void {
-  if (box.max.x < box.min.x) return; // empty scene: keep the prior frustum
+  if (boxEmpty(box)) return; // empty scene: keep the prior frustum
   const cx = (box.min.x + box.max.x) / 2,
     cy = (box.min.y + box.max.y) / 2,
     cz = (box.min.z + box.max.z) / 2;
@@ -469,6 +469,6 @@ export function refreshOverlay(): void {
     const b = S.childBox[id];
     // skip the empty-box sentinel (a selected object with no voxels) — its
     // min>max would build a degenerate scene-spanning wireframe
-    if (b && b.max.x >= b.min.x) overlay.add(boxLines(b.min, b.max, 0xf0e6d2));
+    if (b && !boxEmpty(b)) overlay.add(boxLines(b.min, b.max, 0xf0e6d2));
   }
 }

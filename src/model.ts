@@ -131,6 +131,9 @@ export const emptyBox = (): Box => ({
   min: { x: 1e9, y: 1e9, z: 1e9 },
   max: { x: -1e9, y: -1e9, z: -1e9 },
 });
+// still the inside-out sentinel — no real cell has grown it (max < min on every
+// axis, so the x check suffices). Centralises the emptyBox emptiness invariant.
+export const boxEmpty = (b: Box): boolean => b.max.x < b.min.x;
 // world AABB of a node given an accumulated transform
 export function nodeBox(node: Node, off: Vec, rot: Rot, box: Box): Box {
   if (node.type === "object") {

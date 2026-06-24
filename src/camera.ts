@@ -15,7 +15,7 @@ import {
   updateSky,
   ZOOM_MAX,
 } from "./scene-env.ts";
-import { emptyBox, nodeBox, worldXform } from "./model.ts";
+import { boxEmpty, emptyBox, nodeBox, worldXform } from "./model.ts";
 import type { Box, Node } from "./types.ts";
 
 // reused scratch so pan/orbit frames allocate no Vector3s
@@ -42,7 +42,7 @@ export function orbitView(dx: number, dy: number): void { // free orbit (the onl
   );
 }
 export function frameBox(b: Box): void {
-  if (b.max.x < b.min.x) return; // empty -> leave camera as is
+  if (boxEmpty(b)) return; // empty -> leave camera as is
   goal.target.set(
     (b.min.x + b.max.x) / 2,
     (b.min.y + b.max.y) / 2,
@@ -61,7 +61,7 @@ export function frameView(): void {
   const b = emptyBox();
   if (S.editObject) {
     nodeBox(S.editObject, S.editXform.off, S.editXform.rot, b);
-    if (b.max.x < b.min.x) {
+    if (boxEmpty(b)) {
       const o = S.editXform.off;
       goal.target.set(o.x, o.y + 6, o.z);
       goal.zoom = 41;
@@ -78,7 +78,7 @@ export function frameView(): void {
       b.max.z = Math.max(b.max.z, c.max.z);
     }
   }
-  if (b.max.x < b.min.x) {
+  if (boxEmpty(b)) {
     goal.target.set(0, 1, 0);
     goal.zoom = 23;
     return;
@@ -135,7 +135,7 @@ export function updateCamera(): void {
     if (d > far) far = d;
   };
   const b = S.sceneBox;
-  if (b && b.max.x >= b.min.x) {
+  if (b && !boxEmpty(b)) {
     for (const cx of [b.min.x, b.max.x]) {
       for (const cy of [b.min.y, b.max.y]) {
         for (const cz of [b.min.z, b.max.z]) consider(cx, cy, cz);
