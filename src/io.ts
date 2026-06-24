@@ -3,7 +3,7 @@
 // colours and visibility. Export downloads a .json file; import reads one,
 // replaces the document and resets the editor to the scene root.
 import { S } from "./state.ts";
-import { de, save, ser } from "./persistence.ts";
+import { de, flush, ser } from "./persistence.ts";
 import { peekUid, seedUid } from "./math.ts";
 import { rebuild } from "./render.ts";
 import { updateChrome } from "./ui.ts";
@@ -54,7 +54,7 @@ export function importScene(): void {
         rebuild();
         updateChrome();
         frameView();
-        save(); // save() records an undo step
+        flush(); // synchronous baseline undo snapshot for the imported scene
       } catch (e) {
         alert("Import failed: " + (e as Error).message);
       }
