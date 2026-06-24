@@ -34,7 +34,7 @@ const commit = (): void => {
 const rndSym = (v: number): number => (v < 0 ? -Math.round(-v) : Math.round(v));
 
 export function cycleVis(node: Node): void {
-  node.vis = VIS_CYCLE[node.vis || "visible"];
+  node.vis = VIS_CYCLE[node.vis];
   commit();
 }
 export function renameNode(node: Node): void {
@@ -119,7 +119,7 @@ export function reparentNode(
   return true;
 }
 // wrap a node in a fresh group that takes its place (world pose preserved)
-export function wrapNode(node: Node): SceneNode | null {
+function wrapNode(node: Node): SceneNode | null {
   const par = parentOf(node) as SceneNode | null;
   if (!par) return null;
   const idx = par.children.indexOf(node);
@@ -144,6 +144,14 @@ export function wrapInGroup(target: Node, dragged: Node): boolean {
   S.selection = new Set([g.id]);
   commit();
   return true;
+}
+// wrap a single node in a fresh group and select it (context-menu "New group")
+export function wrapNodeInGroup(node: Node): void {
+  const g = wrapNode(node);
+  if (!g) return;
+  S.collapsed.delete(g.id);
+  selectNode(g);
+  save();
 }
 
 // ---- right-click (context-menu) actions on a tree node ----
@@ -184,7 +192,7 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
   for (let n = 0; n < Math.abs(steps); n++) {
     const x = contextXform();
     // world AABB of a context child under the current context transform
-    const worldBox = (ch: Node) =>
+    const childWorldBox = (ch: Node) =>
       nodeBox(
         ch,
         addv(x.off, rotY(ch.pos, x.rot)),
@@ -194,9 +202,9 @@ export function rotateSelectionBy(steps: number): void { // rotate selection in 
     for (const id of S.selection) {
       const ch = childById(id);
       if (!ch) continue;
-      const before = worldBox(ch);
+      const before = childWorldBox(ch);
       ch.rot = (ch.rot + dir) & 3;
-      const after = worldBox(ch);
+      const after = childWorldBox(ch);
       const dW = {
         x: (before.min.x + before.max.x) / 2 - (after.min.x + after.max.x) / 2,
         z: (before.min.z + before.max.z) / 2 - (after.min.z + after.max.z) / 2,
@@ -223,5 +231,5 @@ export function nudgeY(d: number): void {
     const c = childById(id);
     if (c) c.pos.y += d;
   }
-  if (S.selection.size) commit(); // rebuild + updateChrome + save
+  if (S.selection.size) commit();
 }

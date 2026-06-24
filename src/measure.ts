@@ -5,11 +5,18 @@ import { S } from "./state.ts";
 import { _mv, camera, canvas, measLines, ndc, raycaster } from "./scene-env.ts";
 import { eachObject } from "./render.ts";
 import { boxesHas, buildIndex, growBounds, worldBox } from "./boxes.ts";
-import { groundCell, localGroundCell, locToW, pickVoxel } from "./picking.ts";
+import {
+  cellOf,
+  groundCell,
+  localGroundCell,
+  locToW,
+  pickVoxel,
+} from "./picking.ts";
 import { emptyBox } from "./model.ts";
 import type { Box3, MeasField, Seg, Vec } from "./types.ts";
 
 const M_FILL = new THREE.Color(0xa7c4bc), M_EMPTY = new THREE.Color(0x5c677d);
+// measure is a tool while editing an object, a standalone mode otherwise
 export const measureActive = (): boolean =>
   S.editObject ? S.tool === "measure" : S.measMode;
 export const invalidateField = (): void => {
@@ -22,7 +29,7 @@ export function clearMeasure(): void {
 }
 
 // the field being measured: edited object (local) or current scene context (world)
-export function measureField(): MeasField {
+function measureField(): MeasField {
   if (S.measFieldCache) return S.measFieldCache;
   const boxes: Box3[] = [];
   let toW: (x: number, y: number, z: number) => THREE.Vector3;
@@ -52,13 +59,15 @@ export function measureField(): MeasField {
   // bounds are inclusive cell indices; box maxima are exclusive
   const mn = { x: bb.min.x, y: bb.min.y, z: bb.min.z };
   const mx = { x: bb.max.x - 1, y: bb.max.y - 1, z: bb.max.z - 1 };
+  // a hover sweep probes every cell along 3 axes, so for many boxes the grid
+  // index beats a linear scan; below ~64 the index isn't worth building
   const has = boxes.length > 64
     ? buildIndex(boxes)
     : (x: number, y: number, z: number) => boxesHas(boxes, x, y, z);
   S.measFieldCache = { has, mn, mx, toW, empty };
   return S.measFieldCache;
 }
-export function measureRef(): Vec | null { // voxel cell under the pointer, clamped into the field
+function measureRef(): Vec | null { // voxel cell under the pointer, clamped into the field
   const f = measureField();
   if (f.empty) return null;
   let cell: Vec | null = null;
@@ -72,11 +81,7 @@ export function measureRef(): Vec | null { // voxel cell under the pointer, clam
       : [];
     if (hits.length) {
       const h = hits[0], n = h.face ? h.face.normal : { x: 0, y: 0, z: 0 };
-      cell = {
-        x: Math.floor(h.point.x - n.x * 0.5),
-        y: Math.floor(h.point.y - n.y * 0.5),
-        z: Math.floor(h.point.z - n.z * 0.5),
-      };
+      cell = cellOf(h.point, n);
     } else cell = groundCell(0);
   }
   if (!cell) return null;
@@ -86,7 +91,7 @@ export function measureRef(): Vec | null { // voxel cell under the pointer, clam
     z: Math.max(f.mn.z, Math.min(f.mx.z, cell.z)),
   };
 }
-export function measureAt(cell: Vec): Seg[] { // segments along all 3 axes through `cell`, split on filled/empty
+function measureAt(cell: Vec): Seg[] { // segments along all 3 axes through `cell`, split on filled/empty
   const f = measureField(),
     ax: (keyof Vec)[] = ["x", "y", "z"],
     out: Seg[] = [];

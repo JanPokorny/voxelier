@@ -12,7 +12,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 export const scene = new THREE.Scene();
 scene.background = new THREE.Color("#7aa0c4"); // fallback; the sky quad covers it
 
-export const ISO_ELEV = Math.atan(1 / Math.SQRT2);
+const ISO_ELEV = Math.atan(1 / Math.SQRT2);
 export const cam = {
   azim: Math.PI / 4,
   elev: ISO_ELEV,
@@ -34,7 +34,7 @@ export const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
 // short blend across the side-on angle avoids a hard pop. (No true horizon —
 // that doesn't survive an orthographic projection.)
 const skyU = { uGround: { value: 1 } }; // 1 = green (above), 0 = blue (below)
-export const sky = new THREE.Mesh(
+const sky = new THREE.Mesh(
   new THREE.PlaneGeometry(2, 2),
   new THREE.ShaderMaterial({
     uniforms: skyU,
@@ -44,18 +44,14 @@ export const sky = new THREE.Mesh(
       `varying vec2 vN; void main(){ vN = position.xy; gl_Position = vec4(position.xy, 1.0, 1.0); }`,
     fragmentShader: `precision highp float;
       varying vec2 vN; uniform float uGround;
-      // The GTAO composer's OutputPass applies the linear->sRGB encode to the
-      // whole frame, but this raw shader's colours are authored as final display
-      // (sRGB) values — so convert sRGB->linear here and OutputPass restores the
-      // intended (deeper) shades instead of brightening them.
-      vec3 toLin(vec3 c){
-        return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
-      }
+      // Drawn straight to the canvas (no post-process OutputPass) and a raw
+      // ShaderMaterial gets no colour-space conversion from the renderer, so the
+      // colours below are authored directly in display (sRGB) space.
       void main(){
         float t = (vN.y + 1.0) * 0.5; // 0 bottom .. 1 top
         vec3 grn = mix(vec3(0.24, 0.33, 0.19), vec3(0.42, 0.55, 0.34), t);
         vec3 blu = mix(vec3(0.62, 0.74, 0.86), vec3(0.20, 0.40, 0.62), t);
-        gl_FragColor = vec4(toLin(mix(blu, grn, uGround)), 1.0);
+        gl_FragColor = vec4(mix(blu, grn, uGround), 1.0);
       }`,
   }),
 );
@@ -71,7 +67,7 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.62));
 export const dir = new THREE.DirectionalLight(0xffffff, 0.78);
 dir.castShadow = true;
 dir.shadow.mapSize.set(4096, 4096);
-dir.shadow.normalBias = 0.15; // refined per-frame in fitShadow() to ~1 shadow texel
+dir.shadow.normalBias = 0.15; // refined per-rebuild in fitShadow() to ~2 shadow texels
 dir.shadow.bias = -0.0002;
 // the shadow frustum + light position are fitted to the scene bounds on each
 // rebuild (see render.ts), so shadows are stable as the camera pans/orbits
@@ -83,12 +79,12 @@ scene.add(dir2);
 
 // On-demand rendering (driven in main.ts): wake() requests a short burst of
 // frames. Called on input and whenever the GL scene mutates (rebuild / remesh).
-export const frame = { tail: 60 };
+export const frame = { tail: 0 }; // idle until wake(); boot rebuild() wakes it
 export const wake = (): void => {
   frame.tail = 30;
 };
 
-export const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 export const _up = new THREE.Vector3(), _upN = new THREE.Vector3();
 const bg = new THREE.Color("#0f1115");
 // Voxels store a 0xRRGGBB int; resolve to a (cached) THREE.Color, full or dimmed.
@@ -114,10 +110,10 @@ export function dimCol(v: number): THREE.Color {
 export const matSurf = new THREE.MeshLambertMaterial({
   vertexColors: true,
   side: THREE.FrontSide,
-}); // opaque surfaces (soft corner AO is added in screen space — see the GTAO pass)
+}); // opaque surfaces (smooth per-vertex corner AO baked into vertex colours)
 // Transparent voxels render as a surface of only the exterior faces, back-face
 // culled — depth-correct yet reading as one glass pane.
-export const TRANSP_OPACITY = 0.42;
+const TRANSP_OPACITY = 0.42;
 export const matGlass = new THREE.MeshLambertMaterial({
   vertexColors: true,
   transparent: true,

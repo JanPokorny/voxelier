@@ -24,10 +24,10 @@ export type SerNode = SerObject | SerScene;
 export function ser(n: Node): SerNode {
   const b = {
     id: n.id,
-    nm: n.name || "",
+    nm: n.name,
     p: n.pos,
     r: n.rot,
-    vs: n.vis || "visible",
+    vs: n.vis,
   };
   return n.type === "object"
     ? {

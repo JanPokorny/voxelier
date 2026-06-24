@@ -7,7 +7,7 @@ import { rebuild } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
-import type { Node, SceneNode } from "./types.ts";
+import type { Node } from "./types.ts";
 
 // re-mesh + refresh the chrome after a navigation change (no persistence:
 // moving the cursor doesn't alter the document)
@@ -19,7 +19,6 @@ const refresh = (): void => {
 export function ascend(): void {
   if (S.path.length > 1) {
     const c = S.path.pop()!;
-    S.context = S.path[S.path.length - 1] as SceneNode;
     S.selection = new Set([c.id]);
     S.editObject = null;
     clearMeasure();
@@ -42,7 +41,6 @@ export function selectNode(node: Node): void { // select a node from the tree (e
   const p = findPath(node);
   if (!p) return;
   S.path = p.slice(0, -1);
-  S.context = S.path[S.path.length - 1] as SceneNode;
   S.selection = new Set([node.id]);
   S.editObject = null;
   refresh();
@@ -57,13 +55,11 @@ export function enterNode(node: Node, fit?: boolean): void { // click in tree / 
   if (!p) return;
   if (node.type === "scene") {
     S.path = p;
-    S.context = node;
     S.selection.clear();
     S.editObject = null;
     S.tool = "add";
   } else {
     S.path = p.slice(0, -1);
-    S.context = S.path[S.path.length - 1] as SceneNode;
     S.editObject = node;
     S.selection.clear();
     S.tool = "add";

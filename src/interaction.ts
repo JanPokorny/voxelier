@@ -46,7 +46,7 @@ import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
 import { updateChrome } from "./ui.ts";
 import { save } from "./persistence.ts";
-import type { Box3, Drag, Seg, Vec } from "./types.ts";
+import type { Box3, Drag, Seg } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
@@ -156,11 +156,12 @@ function commitMove(): void {
   save();
 }
 function rotDragTo(e: PointerEvent): void {
-  const steps = Math.round((S.drag!.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
-  if (steps !== S.drag!.steps) {
-    rotateSelectionBy(steps - S.drag!.steps!);
-    S.drag!.steps = steps;
-    S.drag!.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
+  const d = S.drag!;
+  const steps = Math.round((d.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
+  if (steps !== d.steps) {
+    rotateSelectionBy(steps - d.steps!);
+    d.steps = steps;
+    d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
   }
 }
 
@@ -176,9 +177,7 @@ function applyVoxel(): void { // bucket: flood-fill the connected same-colour re
   updateVoxHover(t);
 }
 function updateVoxHover(t: Pick = pickVoxel()): void {
-  let cell: Vec | null = null;
-  if (S.tool === "add") cell = t ? t.addCell : voxelTarget(t);
-  else cell = t ? t.cell : null;
+  const cell = voxelTarget(t); // add -> addCell/ground, erase/paint -> hovered cell
   if (!cell) {
     hoverVox.visible = false;
     return;
@@ -338,18 +337,19 @@ canvas.addEventListener("pointerdown", (e) => {
   if (measureActive()) { // left-click freezes, right-click clears; drags still navigate
     if (e.button === 0) S.drag = { ...base, mode: "pan", meas: "freeze" };
     else if (e.button === 2) S.drag = { ...base, mode: "orbit", meas: "clear" };
+    // middle = pan; sx sentinel keeps moved() true so it's never read as a click
     else if (e.button === 1) S.drag = { ...base, mode: "pan", sx: -1e9 };
     return;
   }
   if (S.editObject) {
     if (e.button === 0) {
+      // add/erase drag out a box footprint; paint floods the cell under the cursor
       if (S.tool === "add" || S.tool === "erase") startBox(e, base);
-      // box select in the horizontal plane
       else {
         S.painting = true;
         S.lastVox = null;
         applyVoxel();
-      } // paint
+      }
     } else if (e.button === 2) S.drag = { ...base, mode: "orbit" };
     else if (e.button === 1) S.drag = { ...base, mode: "pan" };
     return;
@@ -374,8 +374,9 @@ canvas.addEventListener("pointerdown", (e) => {
     if (onSel) S.drag = { ...base, mode: "rotobj", steps: 0 };
     else S.drag = { ...base, mode: "orbit" };
   } else if (e.button === 1) {
+    // middle = pan only; sx sentinel keeps moved() true so it's never a click
     S.drag = { ...base, mode: "pan", clickId: null, sx: -1e9 };
-  } // middle = pan only
+  }
 });
 
 canvas.addEventListener("pointermove", (e) => {

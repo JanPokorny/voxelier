@@ -3,7 +3,7 @@
 // colours and visibility. Export downloads a .json file; import reads one,
 // replaces the document and resets the editor to the scene root.
 import { S } from "./state.ts";
-import { de, save, ser } from "./persistence.ts";
+import { de, flush, ser } from "./persistence.ts";
 import { peekUid, seedUid } from "./math.ts";
 import { rebuild } from "./render.ts";
 import { updateChrome } from "./ui.ts";
@@ -21,7 +21,7 @@ export function exportScene(): void {
   const d = new Date(); // local-time stamp: "YYYY-MM-DD HHhMMmSSs"
   const [date, time] = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
     .toISOString().slice(0, 19).split("T");
-  const stamp = `${date} ${time.replace(/:/, "h").replace(/:/, "m")}s`;
+  const stamp = `${date} ${time.replace(":", "h").replace(":", "m")}s`;
   const a = document.createElement("a");
   a.href = url;
   a.download = `${name} -- ${stamp}.voxelier.json`;
@@ -47,14 +47,13 @@ export function importScene(): void {
         seedUid(d.uid || 1);
         S.root = de(d.root) as SceneNode;
         S.path = [S.root];
-        S.context = S.root;
         S.editObject = null;
         S.selection.clear();
         clearMeasure();
         rebuild();
         updateChrome();
         frameView();
-        save(); // save() records an undo step
+        flush(); // synchronous baseline undo snapshot for the imported scene
       } catch (e) {
         alert("Import failed: " + (e as Error).message);
       }

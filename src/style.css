@@ -49,11 +49,6 @@ button {
 button:hover {
   background: #2b3140;
 }
-button:disabled {
-  opacity: 0.35;
-  cursor: default;
-  background: transparent;
-}
 button.active {
   background: var(--accent);
   color: var(--accent-ink);
@@ -103,10 +98,6 @@ button.active {
   background: var(--accent);
   color: var(--accent-ink);
   border-color: var(--accent);
-}
-.tool:disabled, .tool.disabled {
-  opacity: 0.3;
-  pointer-events: none;
 }
 
 #stage {

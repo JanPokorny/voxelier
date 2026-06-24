@@ -26,7 +26,7 @@ import {
   reparentNode,
   rotateSelection,
   wrapInGroup,
-  wrapNode,
+  wrapNodeInGroup,
 } from "./commands.ts";
 import { save } from "./persistence.ts";
 import { redo, undo } from "./history.ts";
@@ -242,13 +242,16 @@ function closePalette(): boolean {
 }
 
 // ---- object/scene tree ----
-// collect a node's boxes in local space (for the thumbnail)
+// flatten a subtree's boxes under an accumulated transform; callers pass
+// identity off/rot so the result is in the node's own frame (for the thumbnail)
 function localBoxes(node: Node, off: Vec, rot: Rot, out: Box3[]): Box3[] {
   if (node.type === "object") {
     for (const b of node.boxes) out.push(worldBox(b, rot, off));
-  } else {for (const ch of node.children) {
+  } else {
+    for (const ch of node.children) {
       localBoxes(ch, addv(off, rotY(ch.pos, rot)), (rot + ch.rot) & 3, out);
-    }}
+    }
+  }
   return out;
 }
 const shade = (c: number, f: number): string => {
@@ -365,7 +368,7 @@ function buildTree(): void {
     const isRoot = node === S.root;
     const isSel = !isRoot && S.context.children.includes(node) &&
       S.selection.has(node.id);
-    const v = node.vis || "visible";
+    const v = node.vis;
     const r = el("div", {
       className: "trow" + (isRoot ? " root" : "") + (isSel ? " sel" : "") +
         (node === S.context && !S.editObject ? " ctx" : "") +
@@ -392,8 +395,10 @@ function buildTree(): void {
     const nm = el("span", { className: "nm" });
     if (isRoot) nm.textContent = node.name || "Project";
     else if (node.name) nm.textContent = node.name;
-    else {nm.innerHTML = '<span class="ph">' +
-        (node.type === "scene" ? "group" : "object") + "</span>";}
+    else {
+      nm.innerHTML = '<span class="ph">' +
+        (node.type === "scene" ? "group" : "object") + "</span>";
+    }
     r.append(th, nm);
     if (!isRoot) {
       r.append(el("button", {
@@ -495,14 +500,7 @@ function showItemMenu(node: Node, x: number, y: number): void {
   if (node.type === "scene") {
     add("New object", () => addObjectIn(node));
     add("New group", () => addGroupIn(node));
-  } else {add("New group", () => {
-      const g = wrapNode(node);
-      if (g) {
-        S.collapsed.delete(g.id);
-        selectNode(g);
-        save();
-      }
-    });}
+  } else add("New group", () => wrapNodeInGroup(node));
   document.body.appendChild(m);
   S.ctxMenuEl = m;
   const r = m.getBoundingClientRect();

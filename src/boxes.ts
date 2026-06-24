@@ -1,11 +1,10 @@
 // Box algebra: an object's shape is a set of disjoint axis-aligned colour boxes
 // (half-open cell ranges). Editing is constructive — add/erase/paint subtract
 // the target region from overlapping boxes (≤6 fragments each) and optionally
-// re-add it. A grid index answers point queries fast. boundaryCells() emits the
-// surface cells of the union (with a cap) for thumbnails; the renderer meshes
-// box faces directly (see render.ts), so it stays off the hot path.
-import { key, rotY } from "./math.ts";
-import type { Box, Box3, Cell, Region, Rot, Vec } from "./types.ts";
+// re-add it. A grid index answers point queries fast. The renderer meshes box
+// faces directly (see render.ts).
+import { rotY } from "./math.ts";
+import type { Box, Box3, Region, Rot, Vec } from "./types.ts";
 
 export const region = (
   x0: number,
@@ -17,9 +16,9 @@ export const region = (
   c: number,
 ): Box3 => ({ x0, y0, z0, x1, y1, z1, c });
 
-const overlaps = (b: Box3, r: Region): boolean =>
-  b.x0 < r.x1 && r.x0 < b.x1 && b.y0 < r.y1 && r.y0 < b.y1 &&
-  b.z0 < r.z1 && r.z0 < b.z1;
+// Is cell (x,y,z) inside box b? (half-open [x0,x1) etc.)
+const contains = (b: Box3, x: number, y: number, z: number): boolean =>
+  x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1;
 
 // b minus r, as up to six disjoint fragments that keep b's colour.
 function subtract(b: Box3, r: Region, out: Box3[]): void {
@@ -50,17 +49,16 @@ function subtract(b: Box3, r: Region, out: Box3[]): void {
   }
 }
 
-// Carve `r` out of every box, then (unless erasing) lay the region back on top
-// with colour `c`. Returns a fresh, still-disjoint box list.
-export function addBox(boxes: Box3[], r: Region, c: number): Box3[] {
-  const out: Box3[] = [];
-  for (const b of boxes) overlaps(b, r) ? subtract(b, r, out) : out.push(b);
-  out.push({ ...r, c });
-  return out;
-}
+// Carve region `r` out of every box. Returns a fresh, still-disjoint box list.
 export function eraseBox(boxes: Box3[], r: Region): Box3[] {
   const out: Box3[] = [];
-  for (const b of boxes) overlaps(b, r) ? subtract(b, r, out) : out.push(b);
+  for (const b of boxes) subtract(b, r, out);
+  return out;
+}
+// Carve `r` out, then lay the region back on top with colour `c`.
+export function addBox(boxes: Box3[], r: Region, c: number): Box3[] {
+  const out = eraseBox(boxes, r);
+  out.push({ ...r, c });
   return out;
 }
 // Flood-fill: recolour the connected (face-adjacent) run of same-colour cells
@@ -77,10 +75,7 @@ export function fillBox(
 ): Box3[] | null {
   let start = -1;
   for (let i = 0; i < boxes.length; i++) {
-    const b = boxes[i];
-    if (
-      x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1
-    ) {
+    if (contains(boxes[i], x, y, z)) {
       start = i;
       break;
     }
@@ -97,18 +92,18 @@ export function fillBox(
       (ox && oz && (a.y1 === b.y0 || b.y1 === a.y0)) ||
       (ox && oy && (a.z1 === b.z0 || b.z1 === a.z0));
   };
-  const region = new Set<number>([start]);
+  const comp = new Set<number>([start]);
   const stack = [start];
   while (stack.length) {
     const a = boxes[stack.pop()!];
     for (let j = 0; j < boxes.length; j++) {
-      if (!region.has(j) && boxes[j].c === orig && touch(a, boxes[j])) {
-        region.add(j);
+      if (!comp.has(j) && boxes[j].c === orig && touch(a, boxes[j])) {
+        comp.add(j);
         stack.push(j);
       }
     }
   }
-  return boxes.map((b, i) => region.has(i) ? { ...b, c } : b);
+  return boxes.map((b, i) => comp.has(i) ? { ...b, c } : b);
 }
 
 export function colorCounts(boxes: Box3[], into: Map<number, number>): void {
@@ -188,11 +183,7 @@ export function buildIndex(boxes: Box3[]): BoxIndex {
     if (gx < gx0 || gy < gy0 || gz < gz0) return false;
     if (gx - gx0 >= nx || gy - gy0 >= ny || gz - gz0 >= nz) return false;
     for (const b of grid[at(gx, gy, gz)]) {
-      if (
-        x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1
-      ) {
-        return true;
-      }
+      if (contains(b, x, y, z)) return true;
     }
     return false;
   };
@@ -202,65 +193,7 @@ export const boxesHas = (
   x: number,
   y: number,
   z: number,
-): boolean => {
-  for (const b of boxes) {
-    if (
-      x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1
-    ) {
-      return true;
-    }
-  }
-  return false;
-};
-
-// Surface cells of the union: every box face cell whose outward neighbour is
-// empty. Deduped (a corner cell exposed on several faces is emitted once), so the
-// per-cell mesher sees each boundary cell exactly as if it were a stored voxel —
-// but interior cells are never visited.
-// `cap` stops enumeration early (a huge box has millions of surface cells); used
-// by thumbnails, which only need a sample. The mesher uses the greedy box-face
-// path instead, so this is no longer on the hot rendering path.
-export function boundaryCells(
-  boxes: Box3[],
-  has: BoxIndex,
-  cap = Infinity,
-): Cell[] {
-  const seen = new Set<number>();
-  const out: Cell[] = [];
-  const add = (x: number, y: number, z: number, c: number) => {
-    const k = key(x, y, z);
-    if (!seen.has(k)) {
-      seen.add(k);
-      out.push({ x, y, z, c });
-      if (out.length >= cap) throw out; // sentinel: bail out of the deep loops
-    }
-  };
-  try {
-    for (const b of boxes) {
-      for (let y = b.y0; y < b.y1; y++) {
-        for (let z = b.z0; z < b.z1; z++) {
-          if (!has(b.x1, y, z)) add(b.x1 - 1, y, z, b.c);
-          if (!has(b.x0 - 1, y, z)) add(b.x0, y, z, b.c);
-        }
-      }
-      for (let x = b.x0; x < b.x1; x++) {
-        for (let z = b.z0; z < b.z1; z++) {
-          if (!has(x, b.y1, z)) add(x, b.y1 - 1, z, b.c);
-          if (!has(x, b.y0 - 1, z)) add(x, b.y0, z, b.c);
-        }
-      }
-      for (let x = b.x0; x < b.x1; x++) {
-        for (let y = b.y0; y < b.y1; y++) {
-          if (!has(x, y, b.z1)) add(x, y, b.z1 - 1, b.c);
-          if (!has(x, y, b.z0 - 1)) add(x, y, b.z0, b.c);
-        }
-      }
-    }
-  } catch (e) {
-    if (e !== out) throw e; // re-throw anything that isn't the cap sentinel
-  }
-  return out;
-}
+): boolean => boxes.some((b) => contains(b, x, y, z));
 
 // Do any two boxes from the two lists overlap (selection shifted by d)?
 export const boxesOverlap = (

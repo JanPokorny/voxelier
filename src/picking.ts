@@ -29,6 +29,13 @@ export function groundCell(yWorld: number): Vec | null {
   }
   return null;
 }
+// the cell a hit point lands in: step back half a voxel along the face normal,
+// then floor. point and normal must be in the same space.
+export const cellOf = (p: Vec, n: Vec): Vec => ({
+  x: Math.floor(p.x - n.x * 0.5),
+  y: Math.floor(p.y - n.y * 0.5),
+  z: Math.floor(p.z - n.z * 0.5),
+});
 export function pickVoxel(): Pick { // -> {cell, addCell} in object-local space, or null
   if (!S.pickMeshes.length) return null;
   raycaster.setFromCamera(ndc, camera);
@@ -44,15 +51,13 @@ export function pickVoxel(): Pick { // -> {cell, addCell} in object-local space,
     z: h.point.z - off.z,
   }, -S.editXform.rot); // inverse rotation (rotY normalises the negative count)
   const n = h.face ? h.face.normal : { x: 0, y: 1, z: 0 };
-  const sx = Math.floor(lp.x - n.x * 0.5),
-    sy = Math.floor(lp.y - n.y * 0.5),
-    sz = Math.floor(lp.z - n.z * 0.5);
+  const s = cellOf(lp, n);
   return {
-    cell: { x: sx, y: sy, z: sz },
+    cell: s,
     addCell: {
-      x: sx + Math.round(n.x),
-      y: sy + Math.round(n.y),
-      z: sz + Math.round(n.z),
+      x: s.x + Math.round(n.x),
+      y: s.y + Math.round(n.y),
+      z: s.z + Math.round(n.z),
     },
   };
 }

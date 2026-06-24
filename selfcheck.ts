@@ -1,18 +1,12 @@
 // Self-check (`deno test`) for the coordinate math the editor's voxel placement
-// relies on. It imports the real rotY/addv from src/math.js (both pure, no
+// relies on. It imports the real rotY/addv from src/math.ts (both pure, no
 // three.js) and asserts the world<->object-local round-trip that locToW and
 // localGroundCell depend on. If rotY's rotation or the inverse convention
 // breaks, placement silently lands on the wrong cell — this fails loudly.
 import { assert } from "@std/assert";
 import type { Box3, Region, Vec } from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
-import {
-  addBox,
-  boundaryCells,
-  buildIndex,
-  eraseBox,
-  fillBox,
-} from "./src/boxes.ts";
+import { addBox, buildIndex, eraseBox, fillBox } from "./src/boxes.ts";
 
 const toW = (cell: Vec, off: Vec, rot: number): Vec =>
   addv(rotY(cell, rot), off); // local -> world (locToW)
@@ -47,7 +41,7 @@ Deno.test("voxel placement round-trip", () => {
 
 // The box model is the document representation: add/erase must keep the box set
 // disjoint and exactly equal (occupancy + colour) to the cells they'd touch, and
-// boundaryCells() must emit precisely the surface cells. Brute-forced against a
+// the grid index must agree with the reference voxel map. Brute-forced against a
 // reference voxel map over a stream of random ops.
 Deno.test("box algebra matches a voxel reference", () => {
   const N = 12;
@@ -100,28 +94,15 @@ Deno.test("box algebra matches a voxel reference", () => {
   for (const [k, v] of ref) {
     assert(got.get(k) === v, "colour/occupancy mismatch");
   }
-  // boundaryCells == occupied cells adjacent to an empty cell
+  // the grid index agrees with the reference voxel map at every cell
   const has = buildIndex(boxes);
   const refHas = (x: number, y: number, z: number) => ref.has(key(x, y, z));
-  const bc = new Map<number, number>();
-  for (const cl of boundaryCells(boxes, has)) {
-    bc.set(key(cl.x, cl.y, cl.z), cl.c);
-  }
   for (let x = -1; x <= N + 1; x++) {
     for (let y = -1; y <= N + 1; y++) {
       for (let z = -1; z <= N + 1; z++) {
         assert(
           has(x, y, z) === refHas(x, y, z),
           "index disagrees with reference",
-        );
-        if (!refHas(x, y, z)) continue;
-        const surf = !refHas(x + 1, y, z) || !refHas(x - 1, y, z) ||
-          !refHas(x, y + 1, z) || !refHas(x, y - 1, z) ||
-          !refHas(x, y, z + 1) || !refHas(x, y, z - 1);
-        const k = key(x, y, z);
-        assert(
-          surf ? bc.get(k) === ref.get(k) : !bc.has(k),
-          `boundary mismatch at ${x},${y},${z}`,
         );
       }
     }
