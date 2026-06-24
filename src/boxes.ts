@@ -93,18 +93,18 @@ export function fillBox(
       (ox && oz && (a.y1 === b.y0 || b.y1 === a.y0)) ||
       (ox && oy && (a.z1 === b.z0 || b.z1 === a.z0));
   };
-  const region = new Set<number>([start]);
+  const comp = new Set<number>([start]);
   const stack = [start];
   while (stack.length) {
     const a = boxes[stack.pop()!];
     for (let j = 0; j < boxes.length; j++) {
-      if (!region.has(j) && boxes[j].c === orig && touch(a, boxes[j])) {
-        region.add(j);
+      if (!comp.has(j) && boxes[j].c === orig && touch(a, boxes[j])) {
+        comp.add(j);
         stack.push(j);
       }
     }
   }
-  return boxes.map((b, i) => region.has(i) ? { ...b, c } : b);
+  return boxes.map((b, i) => comp.has(i) ? { ...b, c } : b);
 }
 
 export function colorCounts(boxes: Box3[], into: Map<number, number>): void {
