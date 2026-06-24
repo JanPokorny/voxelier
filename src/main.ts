@@ -21,6 +21,7 @@ import { updateMeasureLabels } from "./measure.ts";
 import { flush, load } from "./persistence.ts";
 import { seed } from "./seed.ts";
 import "./interaction.ts"; // attaches canvas pointer/wheel/dblclick listeners
+import * as THREE from "three";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { GTAOPass } from "three/addons/postprocessing/GTAOPass.js";
@@ -30,7 +31,19 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 // (GTAO) for soft contact/corner shadows in crevices, then tone-map/sRGB out.
 // Radius/thickness are in world units (1 unit = 1 voxel); the GTAO defaults are
 // tuned for unit-scale scenes, so they're scaled up for our cell-sized geometry.
-const composer = new EffectComposer(renderer);
+// The composer renders into its own targets, which bypasses the renderer's
+// canvas MSAA (the `antialias: true` flag), so geometry edges alias. Give it a
+// multisampled target to restore edge antialiasing. HalfFloatType matches the
+// composer's own default so OutputPass still tone-maps from a linear HDR buffer;
+// size is corrected by composer.setSize() in resize() before the first render.
+const aaSize = renderer.getDrawingBufferSize(new THREE.Vector2());
+const composer = new EffectComposer(
+  renderer,
+  new THREE.WebGLRenderTarget(aaSize.x, aaSize.y, {
+    type: THREE.HalfFloatType,
+    samples: 4,
+  }),
+);
 composer.addPass(new RenderPass(scene, camera));
 const gtao = new GTAOPass(scene, camera, 1, 1);
 gtao.updateGtaoMaterial({
