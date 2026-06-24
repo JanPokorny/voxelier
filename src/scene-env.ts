@@ -4,11 +4,13 @@
 import * as THREE from "three";
 
 export const canvas = document.getElementById("c") as HTMLCanvasElement;
-// Cached canvas CSS size (px), refreshed by main's resize() every frame. Read by
-// the per-frame / per-drag code (camera aspect, pan, measure-label projection,
-// Shift-height scaling) so none of them force a synchronous layout reflow via
-// getBoundingClientRect(); the size only changes on an actual resize anyway.
-export const viewport = { w: 1, h: 1 };
+// Cached canvas CSS rect (px), refreshed by main's resize() every frame. Read by
+// the per-frame / per-drag / per-pointermove code (camera aspect, pan,
+// measure-label projection, Shift-height scaling, pointer->NDC) so none of them
+// force a synchronous layout reflow via getBoundingClientRect(). The canvas is
+// anchored in a viewport-fixed grid, so w/h and the x/y origin only change on an
+// actual window resize — exactly when resize() refreshes this cache.
+export const viewport = { w: 1, h: 1, x: 0, y: 0 };
 export const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;

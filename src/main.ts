@@ -47,8 +47,10 @@ const cameraSettled = (): boolean =>
 
 function resize(): void {
   const r = canvas.getBoundingClientRect();
-  viewport.w = r.width; // cache for per-frame/per-drag readers (camera, measure…)
-  viewport.h = r.height;
+  viewport.w = r.width; // cache for per-frame/per-drag/per-move readers (camera,
+  viewport.h = r.height; // measure, pointer->NDC) — no reflow off this rect read
+  viewport.x = r.left;
+  viewport.y = r.top;
   const w = Math.max(1, Math.round(r.width)),
     h = Math.max(1, Math.round(r.height)),
     pr = Math.min(devicePixelRatio, 2);

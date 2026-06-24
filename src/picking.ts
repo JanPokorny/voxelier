@@ -3,7 +3,7 @@
 import * as THREE from "three";
 import { S } from "./state.ts";
 import { addv, rotY } from "./math.ts";
-import { _hit, camera, canvas, ndc, raycaster } from "./scene-env.ts";
+import { _hit, camera, ndc, raycaster, viewport } from "./scene-env.ts";
 import type { Vec } from "./types.ts";
 
 // a hovered voxel resolved to its own cell plus the empty cell adjacent to the
@@ -11,9 +11,10 @@ import type { Vec } from "./types.ts";
 export type Pick = { cell: Vec; addCell: Vec } | null;
 
 export function setNdc(cx: number, cy: number): void {
-  const r = canvas.getBoundingClientRect();
-  ndc.x = ((cx - r.left) / r.width) * 2 - 1;
-  ndc.y = -((cy - r.top) / r.height) * 2 + 1;
+  // viewport caches the canvas rect (refreshed in main's resize) so the
+  // per-pointermove path doesn't force a synchronous layout reflow here.
+  ndc.x = ((cx - viewport.x) / viewport.w) * 2 - 1;
+  ndc.y = -((cy - viewport.y) / viewport.h) * 2 + 1;
 }
 // nearest pickable-surface hit under the pointer (opaque meshes only), or null
 const firstHit = (): THREE.Intersection | null => {
