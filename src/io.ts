@@ -49,6 +49,7 @@ export function importScene(): void {
         S.path = [S.root];
         S.editObject = null;
         S.selection.clear();
+        S.measMode = false; // leave standalone measure mode (its field is now stale)
         clearMeasure();
         rebuild();
         updateChrome();
