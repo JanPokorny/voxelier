@@ -544,7 +544,7 @@ function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
   const rect = row.getBoundingClientRect(),
     y = ev.clientY - rect.top,
     h = rect.height;
-  const par = parentOf(node) as SceneNode | null,
+  const par = parentOf(node),
     idx = par ? par.children.indexOf(node) : 0;
   if (y > h * 0.28 && y < h * 0.72) {
     if (node.type === "scene") {

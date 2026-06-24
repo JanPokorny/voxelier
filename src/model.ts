@@ -106,9 +106,10 @@ export function findById(id: string, n: Node = S.root): Node | null {
   }
   return null;
 }
-export function parentOf(node: Node): Node | null {
+export function parentOf(node: Node): SceneNode | null {
   const p = findPath(node);
-  return p && p.length > 1 ? p[p.length - 2] : null;
+  // a node only ever appears in a scene's children, so any parent is a SceneNode
+  return p && p.length > 1 ? p[p.length - 2] as SceneNode : null;
 }
 export function isDescendant(node: Node, t: Node): boolean {
   if (node === t) return true;

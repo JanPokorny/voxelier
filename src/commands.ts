@@ -105,7 +105,7 @@ export function reparentNode(
   index: number,
 ): boolean { // move node under newParent at index, preserving world pose
   if (node === newParent || isDescendant(node, newParent)) return false;
-  const A = parentOf(node) as SceneNode | null;
+  const A = parentOf(node);
   if (!A) return false;
   const Wn = xcompose(worldXform(A), { off: { ...node.pos }, rot: node.rot });
   const local = xcompose(xinvert(worldXform(newParent)), Wn);
@@ -127,7 +127,7 @@ export function reparentNode(
 }
 // wrap a node in a fresh group that takes its place (world pose preserved)
 function wrapNode(node: Node): SceneNode | null {
-  const par = parentOf(node) as SceneNode | null;
+  const par = parentOf(node);
   if (!par) return null;
   const idx = par.children.indexOf(node);
   const g = newScene("Group");
@@ -162,7 +162,7 @@ export function wrapNodeInGroup(node: Node): void {
 
 // ---- right-click (context-menu) actions on a tree node ----
 export function duplicateNode(node: Node): void {
-  const par = parentOf(node) as SceneNode | null;
+  const par = parentOf(node);
   if (!par) return;
   const d = cloneShift(node);
   par.children.splice(par.children.indexOf(node) + 1, 0, d);
@@ -170,7 +170,7 @@ export function duplicateNode(node: Node): void {
   save();
 }
 export function deleteNode(node: Node): void {
-  const par = parentOf(node) as SceneNode | null;
+  const par = parentOf(node);
   if (!par) return;
   par.children = par.children.filter((c) => c !== node);
   S.selection.delete(node.id);
