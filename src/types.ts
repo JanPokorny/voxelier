@@ -61,9 +61,10 @@ export type MeasField = {
 };
 
 // ---- pointer drag ----
-// One loosely-shaped record covers every drag mode (pan/orbit/move/rotobj/box/
-// measure); fields are populated per mode at pointerdown. Kept permissive on
-// purpose so the pointer handlers stay terse.
+// One loosely-shaped record covers every drag mode (pan/orbit/move/rotobj/box);
+// measurement has no mode of its own — it piggybacks on a pan/orbit drag via the
+// `meas` field below. Fields are populated per mode at pointerdown, kept
+// permissive on purpose so the pointer handlers stay terse.
 export type Drag = {
   mode: "pan" | "orbit" | "move" | "rotobj" | "box";
   x: number;
