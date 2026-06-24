@@ -36,7 +36,10 @@ export function panCamera(dx: number, dy: number): void {
 }
 export function orbitView(dx: number, dy: number): void { // free orbit (the only camera mode)
   goal.azim -= dx * 0.012; // inverted: drag follows the scene
-  goal.elev = Math.max(-0.35, Math.min(Math.PI / 2, goal.elev + dy * 0.012));
+  goal.elev = Math.max(
+    -Math.PI / 2,
+    Math.min(Math.PI / 2, goal.elev + dy * 0.012),
+  );
 }
 export function frameBox(b: Box): void {
   if (b.max.x < b.min.x) return; // empty -> leave camera as is
@@ -99,10 +102,10 @@ export function updateCamera(): void {
   _dv.set(ce * Math.sin(cam.azim), se, ce * Math.cos(cam.azim));
   camera.position.copy(cam.target).addScaledVector(_dv, CAM_DIST);
   const t = THREE.MathUtils.clamp(
-    (cam.elev - 1.45) / (Math.PI / 2 - 1.45),
+    (Math.abs(cam.elev) - 1.45) / (Math.PI / 2 - 1.45),
     0,
     1,
-  ); // only swing "up" near top-down
+  ); // swing the up-vector toward horizontal near either pole (top-down/bottom-up)
   _upN.set(-Math.sin(cam.azim), 0, -Math.cos(cam.azim));
   // _up = lerp((0,1,0), _upN, t); the two are unit-length and orthogonal, so
   // |_up|² = (1-t)² + t² ≥ 0.5 — never degenerate, safe to normalise.
