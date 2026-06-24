@@ -8,7 +8,13 @@ import { hoverVox } from "./scene-env.ts";
 import { clearMeasure } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
 import { enterNode, escapeUp, isEntered, selectNode } from "./navigation.ts";
-import { emptyBox, findById, isDescendant, parentOf } from "./model.ts";
+import {
+  DEFAULT_COLORS,
+  emptyBox,
+  findById,
+  isDescendant,
+  parentOf,
+} from "./model.ts";
 import {
   addGroupIn,
   addObjectIn,
@@ -103,6 +109,7 @@ export function updateChrome(): void {
         updateChrome();
       }));
     }
+    top.appendChild(colorControl()); // draw-colour picker (only meaningful while editing)
   } else {
     top.appendChild(toolButton("📏", "Measure", S.measMode, () => {
       S.measMode = !S.measMode;
@@ -116,7 +123,6 @@ export function updateChrome(): void {
   bottom.appendChild(toolButton("💾", "Export", false, exportScene));
   tw.append(top, bottom);
   buildTree();
-  buildSwatches();
 }
 
 // distinct colours used in the scene, most-used (by cell volume) first. Cached by
@@ -135,59 +141,59 @@ function sceneColors(): number[] {
   };
   return _scCache.cols;
 }
-// a .sw colour swatch: clicking selects the colour and rebuilds the rail, then
-// runs `after` (e.g. close the palette popup)
-const colorSwatch = (c: number, after?: () => void): HTMLElement => {
+// recently-picked draw colours, most-recent first (capped at 4). Drives the
+// color flyout; padded from scene/default colours when fewer than 4 picks exist.
+let recentColors: number[] = [];
+function selectColor(c: number): void {
+  S.selColor = c;
+  recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, 4);
+  updateChrome();
+}
+// the 4 colours shown in the flyout: recent picks first, then padded with the
+// scene's used colours and the default palette (deduped)
+function recentFour(): number[] {
+  const out: number[] = [];
+  for (const c of [...recentColors, ...sceneColors(), ...DEFAULT_COLORS]) {
+    if (!out.includes(c)) out.push(c);
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+// a .sw colour swatch: clicking makes it the draw colour
+const colorSwatch = (c: number): HTMLElement => {
   const s = el("div", {
     className: "sw" + (c === S.selColor ? " active" : ""),
     title: hex(c),
-    onclick: () => {
-      S.selColor = c;
-      buildSwatches();
-      after?.();
-    },
+    onclick: () => selectColor(c),
   });
   s.style.background = hex(c);
   return s;
 };
-function buildSwatches(): void {
-  const w = document.getElementById("swatches")!;
-  w.innerHTML = "";
-  const cols = sceneColors().slice(); // copy: we may unshift the selected colour
-  if (!cols.includes(S.selColor)) cols.unshift(S.selColor); // selected colour is always shown, at #1 if unused
-  if (cols.length > 15) { // 14 colours + "…" all-colours menu
-    for (let i = 0; i < 14; i++) w.appendChild(colorSwatch(cols[i]));
-    w.appendChild(el("div", {
-      className: "sw more",
-      textContent: "…",
-      title: "All used colours",
-      onclick: openPalette,
-    }));
-  } else { // up to 15 colours, padded with empties
-    for (let i = 0; i < 15; i++) {
-      w.appendChild(
-        i < cols.length
-          ? colorSwatch(cols[i])
-          : el("div", { className: "sw empty" }),
-      );
-    }
-  }
-  // position 16: always the colour picker
-  w.appendChild(el("div", {
+// toolbar draw-colour control: an icon showing the active colour; hovering it
+// reveals a horizontal flyout of the 4 recent colours plus the full picker
+function colorControl(): HTMLElement {
+  const ctl = el("div", { className: "colorctl" });
+  const icon = el("div", {
+    className: "colorbtn",
+    title: "Draw colour — hover for recent colours / picker",
+  });
+  icon.style.background = hex(S.selColor);
+  const fly = el("div", { className: "colorflyout" });
+  for (const c of recentFour()) fly.appendChild(colorSwatch(c));
+  fly.appendChild(el("div", {
     className: "sw more",
     textContent: "🎨",
-    title: "Use colour picker",
+    title: "Colour picker",
     onclick: openColorPicker,
   }));
+  ctl.append(icon, fly);
+  return ctl;
 }
-// the colour picker: pick any RGB; the chosen colour becomes selected
+// the colour picker: pick any RGB; the chosen colour becomes the draw colour
 function openColorPicker(): void {
   const inp = el("input", { type: "color", value: hex(S.selColor) });
   inp.style.cssText = "position:fixed;left:-9999px;top:0";
-  const apply = () => {
-    S.selColor = parseInt(inp.value.slice(1), 16);
-    buildSwatches();
-  };
+  const apply = () => selectColor(parseInt(inp.value.slice(1), 16));
   // change fires when the dialog commits; a cancel fires no change but returns
   // focus to the page, so remove the hidden input on that too (else it leaks)
   const close = () => inp.remove();
@@ -199,37 +205,6 @@ function openColorPicker(): void {
   window.addEventListener("focus", close, { once: true });
   document.body.appendChild(inp);
   inp.click();
-}
-// the "…" menu: every colour currently used in the scene
-function openPalette(): void {
-  closePalette();
-  const back = el("div", { id: "palback" });
-  back.onclick = (e) => {
-    if (e.target === back) closePalette();
-  };
-  const pop = el("div", { id: "palpop" });
-  pop.appendChild(
-    el("div", { className: "pophead", textContent: "Used colours" }),
-  );
-  const grid = el("div", { className: "popgrid" });
-  const cols = sceneColors();
-  if (!cols.length) {
-    const e = el("div", { textContent: "No colours yet." });
-    e.style.cssText = "color:var(--ink-dim);font-size:12px";
-    grid.appendChild(e);
-  }
-  for (const c of cols) grid.appendChild(colorSwatch(c, closePalette));
-  pop.appendChild(grid);
-  back.appendChild(pop);
-  document.body.appendChild(back);
-}
-function closePalette(): boolean {
-  const b = document.getElementById("palback");
-  if (b) {
-    b.remove();
-    return true;
-  }
-  return false;
 }
 
 // ---- object/scene tree ----
@@ -579,7 +554,6 @@ function doDrop(): void {
 window.addEventListener("keydown", (e) => {
   if ((e.target as HTMLElement).tagName === "INPUT") return;
   const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
-  if (k === "escape" && closePalette()) return;
   if (mod) {
     if (k === "z") {
       e.preventDefault();

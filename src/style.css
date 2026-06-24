@@ -268,13 +268,48 @@ h3 {
 .trow .tb.on {
   color: var(--accent);
 }
-.swatches {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+/* draw-colour control in the tool rail: the active-colour icon and its hover
+   flyout of recent colours + picker */
+.colorctl {
+  position: relative;
+}
+.colorbtn {
+  width: 50px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  outline: 1px solid rgba(0, 0, 0, 0.35);
+  outline-offset: -2px;
+  cursor: pointer;
+}
+.colorflyout {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  display: none;
   gap: 6px;
+  padding: 6px;
+  margin-left: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+/* keep the 8px gap hoverable so the pointer can cross from icon to flyout */
+.colorflyout::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+}
+.colorctl:hover .colorflyout {
+  display: flex;
 }
 .sw {
-  aspect-ratio: 1;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
   cursor: pointer;
   border: 2px solid transparent;
@@ -284,11 +319,6 @@ h3 {
 .sw.active {
   border-color: var(--ink);
   box-shadow: 0 0 0 1px var(--ink);
-}
-.sw.empty {
-  cursor: default;
-  outline-color: var(--line);
-  outline-style: dashed;
 }
 .sw.more {
   display: flex;
@@ -334,35 +364,4 @@ h3 {
   height: 1px;
   background: var(--line);
   margin: 4px 6px;
-}
-#palback {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-#palpop {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 14px;
-  width: 300px;
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
-}
-.pophead {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.7px;
-  color: var(--ink-dim);
-  margin-bottom: 10px;
-}
-.popgrid {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 6px;
-  max-height: 210px;
-  overflow: auto;
 }
