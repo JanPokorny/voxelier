@@ -50,6 +50,9 @@ import type { Box3, Drag, Seg } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
+// sentinel start-x for non-click drags (middle-button pan): keeps moved() true so
+// the gesture is never finalised as a click in pointerup
+const NOT_A_CLICK = -1e9;
 
 // World-Y units per pixel of vertical pointer travel, for Shift height edits.
 // One screen pixel is `perPx` world units along the screen's vertical axis; world
@@ -337,8 +340,7 @@ canvas.addEventListener("pointerdown", (e) => {
   if (measureActive()) { // left-click freezes, right-click clears; drags still navigate
     if (e.button === 0) S.drag = { ...base, mode: "pan", meas: "freeze" };
     else if (e.button === 2) S.drag = { ...base, mode: "orbit", meas: "clear" };
-    // middle = pan; sx sentinel keeps moved() true so it's never read as a click
-    else if (e.button === 1) S.drag = { ...base, mode: "pan", sx: -1e9 };
+    else if (e.button === 1) S.drag = { ...base, mode: "pan", sx: NOT_A_CLICK };
     return;
   }
   if (S.editObject) {
@@ -374,8 +376,7 @@ canvas.addEventListener("pointerdown", (e) => {
     if (onSel) S.drag = { ...base, mode: "rotobj", steps: 0 };
     else S.drag = { ...base, mode: "orbit" };
   } else if (e.button === 1) {
-    // middle = pan only; sx sentinel keeps moved() true so it's never a click
-    S.drag = { ...base, mode: "pan", clickId: null, sx: -1e9 };
+    S.drag = { ...base, mode: "pan", sx: NOT_A_CLICK };
   }
 });
 
