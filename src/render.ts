@@ -72,11 +72,15 @@ function fitShadow(box: Box): void {
   dir.shadow.normalBias = 4 * R / dir.shadow.mapSize.x;
 }
 
+// every scene mesh added by the current rebuild (incl. the edit mesh and glass
+// depth-prepass siblings). Render-internal: only this module adds/disposes them,
+// so it lives here, not in the shared S object.
+let meshes: THREE.Mesh[] = [];
 function disposeMeshes(): void {
   // a glass surface and its depth-prepass sibling share one geometry, so track
   // what's been freed to dispose each BufferGeometry exactly once
   const freed = new Set<THREE.BufferGeometry>();
-  for (const m of S.meshes) {
+  for (const m of meshes) {
     scene.remove(m);
     const g = m.geometry;
     if (g && !freed.has(g)) {
@@ -84,7 +88,7 @@ function disposeMeshes(): void {
       freed.add(g);
     }
   }
-  S.meshes = [];
+  meshes = [];
   editGroup.clear();
   if (editRemesh) {
     cancelAnimationFrame(editRemesh);
@@ -271,7 +275,7 @@ function meshSurface(
   m.castShadow = true;
   m.receiveShadow = true;
   scene.add(m);
-  S.meshes.push(m);
+  meshes.push(m);
   if (transparent) {
     // depth-only sibling: lays down the nearest-glass depth before the colour pass
     m.renderOrder = 2;
@@ -280,7 +284,7 @@ function meshSurface(
     dp.castShadow = false;
     dp.receiveShadow = false;
     scene.add(dp);
-    S.meshes.push(dp);
+    meshes.push(dp);
   }
   if (childId != null) {
     m.userData.childId = childId;
@@ -343,15 +347,15 @@ function buildEditMesh(): void {
   if (editMesh) {
     editGroup.remove(editMesh);
     editMesh.geometry.dispose();
-    const i = S.meshes.indexOf(editMesh);
-    if (i >= 0) S.meshes.splice(i, 1);
+    const i = meshes.indexOf(editMesh);
+    if (i >= 0) meshes.splice(i, 1);
   }
   const g = boxFaceGeo(S.editObject!.boxes, col, true);
   editMesh = g ? new THREE.Mesh(g, matSurf) : null;
   if (editMesh) {
     editMesh.castShadow = editMesh.receiveShadow = true;
     editGroup.add(editMesh);
-    S.meshes.push(editMesh);
+    meshes.push(editMesh);
   }
   S.pickMeshes = editMesh ? [editMesh] : [];
 }

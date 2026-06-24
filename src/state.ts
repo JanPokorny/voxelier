@@ -26,7 +26,6 @@ export type State = {
   collapsed: Set<string>; // tree: ids of collapsed groups
 
   // ---- render outputs ----
-  meshes: THREE.Mesh[]; // all meshes added this rebuild
   pickMeshes: THREE.Mesh[]; // meshes raycast for picking
   childMeshes: Record<string, THREE.Mesh[]>; // childId -> [meshes] (scene mode)
   childBox: Record<string, Box>; // childId -> {min,max}
@@ -60,7 +59,6 @@ export const S: State = {
   selColor: 0xd4a373,
   collapsed: new Set(),
 
-  meshes: [],
   pickMeshes: [],
   childMeshes: {},
   childBox: {},
