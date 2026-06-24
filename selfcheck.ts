@@ -11,6 +11,7 @@ import {
   boundaryCells,
   buildIndex,
   eraseBox,
+  fillBox,
   paintBox,
 } from "./src/boxes.ts";
 
@@ -126,6 +127,96 @@ Deno.test("box algebra matches a voxel reference", () => {
           `boundary mismatch at ${x},${y},${z}`,
         );
       }
+    }
+  }
+});
+
+// fillBox (the paint-bucket tool) must recolour exactly the face-connected
+// same-colour region of the seed cell and nothing else. Brute-forced against a
+// cell-level flood-fill reference over random multi-colour box stacks.
+Deno.test("fillBox matches a cell-level flood fill", () => {
+  const N = 10;
+  let s = 999;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const ri = (a: number, b: number) => a + Math.floor(rnd() * (b - a + 1));
+  const NB = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [
+    0,
+    0,
+    -1,
+  ]];
+  for (let trial = 0; trial < 40; trial++) {
+    let boxes: Box3[] = [];
+    for (let op = 0; op < 8; op++) {
+      const x0 = ri(0, N), y0 = ri(0, N), z0 = ri(0, N);
+      const r: Region = {
+        x0,
+        y0,
+        z0,
+        x1: ri(x0 + 1, N + 1),
+        y1: ri(y0 + 1, N + 1),
+        z1: ri(z0 + 1, N + 1),
+      };
+      boxes = addBox(boxes, r, ri(1, 3));
+    }
+    // cell -> colour map and the list of filled cells, both from the box set
+    const ref = new Map<number, number>();
+    const cells: Vec[] = [];
+    for (const b of boxes) {
+      for (let x = b.x0; x < b.x1; x++) {
+        for (let y = b.y0; y < b.y1; y++) {
+          for (let z = b.z0; z < b.z1; z++) {
+            ref.set(key(x, y, z), b.c);
+            cells.push({ x, y, z });
+          }
+        }
+      }
+    }
+    if (!cells.length) continue;
+    const seed = cells[ri(0, cells.length - 1)], newC = ri(1, 4);
+    const orig = ref.get(key(seed.x, seed.y, seed.z))!;
+    // reference: cell-level BFS over same-colour face-neighbours
+    const expected = new Map(ref);
+    if (orig !== newC) {
+      const seen = new Set<number>([key(seed.x, seed.y, seed.z)]);
+      const st: Vec[] = [seed];
+      while (st.length) {
+        const p = st.pop()!;
+        for (const [dx, dy, dz] of NB) {
+          const nx = p.x + dx,
+            ny = p.y + dy,
+            nz = p.z + dz,
+            nk = key(nx, ny, nz);
+          if (!seen.has(nk) && ref.get(nk) === orig) {
+            seen.add(nk);
+            st.push({ x: nx, y: ny, z: nz });
+          }
+        }
+      }
+      for (const k of seen) expected.set(k, newC);
+    }
+    // actual: fillBox returns null when nothing changes (orig === newC here)
+    const out = fillBox(boxes, seed.x, seed.y, seed.z, newC) ?? boxes;
+    const got = new Map<number, number>();
+    for (const b of out) {
+      for (let x = b.x0; x < b.x1; x++) {
+        for (let y = b.y0; y < b.y1; y++) {
+          for (let z = b.z0; z < b.z1; z++) {
+            const k = key(x, y, z);
+            assert(!got.has(k), `fillBox produced overlap at ${x},${y},${z}`);
+            got.set(k, b.c);
+          }
+        }
+      }
+    }
+    assert(
+      got.size === expected.size,
+      `cell count ${got.size} != ${expected.size}`,
+    );
+    for (const [k, v] of expected) {
+      assert(
+        got.get(k) === v,
+        `fill colour mismatch (got ${got.get(k)} != ${v})`,
+      );
     }
   }
 });

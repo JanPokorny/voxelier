@@ -10,6 +10,7 @@ import {
   addBox,
   buildIndex,
   eraseBox,
+  fillBox,
   growBounds,
   paintBox,
   worldBox,
@@ -358,6 +359,13 @@ export function editErase(r: Region): void {
 }
 export function editPaint(r: Region, c: number): void {
   S.editObject!.boxes = paintBox(S.editObject!.boxes, r, c);
+  afterEdit();
+}
+// Flood-fill the connected same-colour region containing `cell` with colour `c`.
+export function editFill(cell: Vec, c: number): void {
+  const next = fillBox(S.editObject!.boxes, cell.x, cell.y, cell.z, c);
+  if (!next) return; // empty seed cell or already that colour — nothing to do
+  S.editObject!.boxes = next;
   afterEdit();
 }
 
