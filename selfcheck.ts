@@ -15,8 +15,10 @@ const toW = (cell: Vec, off: Vec, rot: number): Vec =>
 const toLocal = (w: Vec, off: Vec, rot: number): Vec =>
   rotY({ x: w.x - off.x, y: 0, z: w.z - off.z }, -rot); // world -> local (inverse rotation)
 
-// deterministic LCG + integer-range helper, so the random op streams below are
-// reproducible across runs (each test seeds its own stream)
+// deterministic seeded PRNG + integer-range helper, so the random op streams
+// below are reproducible across runs (each test seeds its own stream). Not a
+// faithful LCG — the multiply exceeds 2^53 and rounds before the mask — but a
+// stable, well-spread stream is all the fuzz tests need.
 const mkRnd = (seed: number) => {
   let s = seed;
   const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
