@@ -65,9 +65,11 @@ function fitShadow(box: Box): void {
   sc.near = Math.max(1, d - R - 20);
   sc.far = d + R + 20;
   sc.updateProjectionMatrix();
-  // bias ~half a shadow texel (texel = 2R / mapSize): enough to avoid acne but
-  // small enough that the shadow still meets contact edges (no light rim)
-  dir.shadow.normalBias = R / dir.shadow.mapSize.x;
+  // normalBias ~2 shadow texels (texel = 2R/mapSize). Offsetting the receiver
+  // along its normal kills self-shadow acne on large near-horizontal faces lit
+  // head-on — most visibly the 1-tall floor, which a half-texel bias left
+  // speckled — while staying small enough that contact shadows don't peter-pan.
+  dir.shadow.normalBias = 4 * R / dir.shadow.mapSize.x;
 }
 
 export function disposeMeshes(): void {
