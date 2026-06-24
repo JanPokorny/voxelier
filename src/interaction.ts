@@ -204,7 +204,6 @@ function startBox(
     ...base,
     mode: "box",
     shiftAnchorY: null,
-    hyBase: 0,
     box: { x0: s.x, y0: s.y, z0: s.z, x1: s.x, z1: s.z, hy: 0 },
     // add collides with the object's own solids; snapshot them (immutable during
     // the drag) so the box can't be dragged to overlap a filled cell (Alt: ignore)
