@@ -64,7 +64,8 @@ export function frameView(): void {
       goal.zoom = 41;
       return;
     } // empty object
-  } else {for (const id in S.childBox) {
+  } else {
+    for (const id in S.childBox) {
       const c = S.childBox[id];
       b.min.x = Math.min(b.min.x, c.min.x);
       b.min.y = Math.min(b.min.y, c.min.y);
@@ -72,7 +73,8 @@ export function frameView(): void {
       b.max.x = Math.max(b.max.x, c.max.x);
       b.max.y = Math.max(b.max.y, c.max.y);
       b.max.z = Math.max(b.max.z, c.max.z);
-    }}
+    }
+  }
   if (b.max.x < b.min.x) {
     goal.target.set(0, 1, 0);
     goal.zoom = 23;
