@@ -84,7 +84,6 @@ export const wake = (): void => {
   frame.tail = 30;
 };
 
-const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 export const _up = new THREE.Vector3(), _upN = new THREE.Vector3();
 const bg = new THREE.Color("#0f1115");
 // Voxels store a 0xRRGGBB int; resolve to a (cached) THREE.Color, full or dimmed.
@@ -153,7 +152,7 @@ scene.add(editGroup);
 export const overlay = new THREE.Group();
 scene.add(overlay);
 export const hoverVox = new THREE.LineSegments(
-  new THREE.EdgesGeometry(boxGeo),
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
   new THREE.LineBasicMaterial({ color: 0xa7c4bc, depthTest: false }),
 );
 hoverVox.visible = false;
