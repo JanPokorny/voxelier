@@ -15,22 +15,20 @@ const refresh = (): void => {
   rebuild();
   updateChrome();
 };
-
-export function ascend(): void {
-  if (S.path.length > 1) {
-    const c = S.path.pop()!;
-    S.selection = new Set([c.id]);
-    S.editObject = null;
-    clearMeasure();
-    refresh();
-  }
-}
-export function exitObject(): void {
-  const o = S.editObject!;
+// leave edit mode with exactly `id` selected in the current context — the shared
+// tail of ascend/exitObject/selectNode
+const selectOnly = (id: string): void => {
+  S.selection = new Set([id]);
   S.editObject = null;
-  S.selection = new Set([o.id]);
   clearMeasure();
   refresh();
+};
+
+export function ascend(): void {
+  if (S.path.length > 1) selectOnly(S.path.pop()!.id);
+}
+export function exitObject(): void {
+  selectOnly(S.editObject!.id);
 }
 export function escapeUp(): void {
   if (S.editObject) exitObject();
@@ -41,10 +39,7 @@ export function selectNode(node: Node): void { // select a node from the tree (e
   const p = findPath(node);
   if (!p) return;
   S.path = p.slice(0, -1);
-  S.selection = new Set([node.id]);
-  S.editObject = null;
-  clearMeasure();
-  refresh();
+  selectOnly(node.id);
 }
 export function isEntered(node: Node): boolean { // is this node the one currently being edited/descended into?
   return node.type === "object"
