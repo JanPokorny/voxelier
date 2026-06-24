@@ -39,7 +39,7 @@ export const pathXform = (p: Node[]): Xform =>
     rot: 0,
   });
 export const hex = (v: number): string =>
-  "#" + (v >>> 0).toString(16).padStart(6, "0").slice(-6);
+  "#" + (v & 0xffffff).toString(16).padStart(6, "0");
 
 // node ids — a single monotonic counter, seeded from storage on load
 let _uid = 1;
