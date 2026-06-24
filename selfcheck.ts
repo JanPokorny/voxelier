@@ -13,6 +13,14 @@ const toW = (cell: Vec, off: Vec, rot: number): Vec =>
 const toLocal = (w: Vec, off: Vec, rot: number): Vec =>
   rotY({ x: w.x - off.x, y: 0, z: w.z - off.z }, -rot); // world -> local (inverse rotation)
 
+// deterministic LCG + integer-range helper, so the random op streams below are
+// reproducible across runs (each test seeds its own stream)
+const mkRnd = (seed: number) => {
+  let s = seed;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  return (a: number, b: number) => a + Math.floor(rnd() * (b - a + 1));
+};
+
 Deno.test("voxel placement round-trip", () => {
   const offsets: Vec[] = [{ x: 0, y: 0, z: 0 }, { x: 5, y: 1, z: -3 }, {
     x: -7,
@@ -45,9 +53,7 @@ Deno.test("voxel placement round-trip", () => {
 // reference voxel map over a stream of random ops.
 Deno.test("box algebra matches a voxel reference", () => {
   const N = 12;
-  let s = 12345;
-  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  const ri = (a: number, b: number) => a + Math.floor(rnd() * (b - a + 1));
+  const ri = mkRnd(12345);
   const randRegion = (): Region => {
     const x0 = ri(0, N), y0 = ri(0, N), z0 = ri(0, N);
     return {
@@ -114,9 +120,7 @@ Deno.test("box algebra matches a voxel reference", () => {
 // cell-level flood-fill reference over random multi-colour box stacks.
 Deno.test("fillBox matches a cell-level flood fill", () => {
   const N = 10;
-  let s = 999;
-  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  const ri = (a: number, b: number) => a + Math.floor(rnd() * (b - a + 1));
+  const ri = mkRnd(999);
   const NB = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [
     0,
     0,
