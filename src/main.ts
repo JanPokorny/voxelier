@@ -51,7 +51,13 @@ gtao.updateGtaoMaterial({
   thickness: 6,
   scale: 1.4,
   distanceExponent: 1,
+  samples: 32, // 2x the default 16: more raw AO samples = less salt-and-pepper grain
 });
+// Strengthen the Poisson denoise that smooths the AO (defaults: 16 samples /
+// 2 rings / radius 4). A wider, denser kernel cleans up the residual speckle;
+// the edge-stopping phi weights stay default so AO still stops at depth/normal
+// discontinuities instead of bleeding across edges.
+gtao.updatePdMaterial({ rings: 4, radius: 5 });
 composer.addPass(gtao);
 composer.addPass(new OutputPass());
 // Keep the infinite backdrop out of the AO G-buffer: the ground shadow-catcher
