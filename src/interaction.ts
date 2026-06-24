@@ -85,15 +85,23 @@ function dragPanOrbit(e: PointerEvent): boolean {
 // block. A candidate offset is blocked if a shifted selection box overlaps an
 // obstacle box, or if it would push the selection's lowest voxel below the
 // ground (world y=0). minY is that lowest world y0 at drag start.
-function moveCollision(): { occ: Box3[]; sel: Box3[]; minY: number } {
+function moveCollision(): {
+  occ: Box3[];
+  sel: Box3[];
+  minY: number;
+  hgt: number;
+} {
   const occ: Box3[] = [], sel: Box3[] = [];
   eachObject(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (n, off, rot, owner) => {
     const tgt = owner && S.selection.has(owner) ? sel : occ;
     for (const b of n.boxes) tgt.push(worldBox(b, rot, off));
   });
-  let minY = Infinity;
-  for (const b of sel) if (b.y0 < minY) minY = b.y0;
-  return { occ, sel, minY };
+  let minY = Infinity, maxY = -Infinity;
+  for (const b of sel) {
+    if (b.y0 < minY) minY = b.y0;
+    if (b.y1 > maxY) maxY = b.y1;
+  }
+  return { occ, sel, minY, hgt: sel.length ? maxY - minY : 0 };
 }
 const moveBlocked = (
   d: Drag,
@@ -110,29 +118,48 @@ const moveBlocked = (
 
 function moveDragTo(e: PointerEvent): void {
   const d = S.drag!;
-  let dx = d.dx!, dy = d.dy!, dz = d.dz!;
-  if (e.shiftKey) { // Shift: adjust height from where it was dragged to
+  const free = (x: number, y: number, z: number) =>
+    e.altKey || !moveBlocked(d, x, y, z);
+  if (e.shiftKey) { // Shift: set the intended height directly (overrides the hop)
     if (d.shiftAnchorY == null) {
       d.shiftAnchorY = e.clientY;
-      d.dyBase = d.dy;
+      d.dyBase = d.dyUser ?? 0;
     }
-    dy = d.dyBase! +
+    const dy = d.dyBase! +
       Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
-  } else { // horizontal: move on the floor plane
+    if (free(d.dx!, dy, d.dz!)) {
+      d.dyUser = dy;
+      d.dy = dy;
+    }
+  } else { // horizontal: move on the floor plane, hopping over small obstacles
     d.shiftAnchorY = null;
+    let dx = d.dx!, dz = d.dz!;
     const g = groundCell(0);
     if (g && d.start) {
       dx = g.x - d.start.x;
       dz = g.z - d.start.z;
     }
+    // When the target is blocked, raise the object just enough to clear it — but
+    // only up to 10% of its height. The bump is recomputed each move, so dragging
+    // off the obstacle (bump 0 clears) drops it back to the user's chosen height.
+    const base = d.dyUser ?? 0;
+    const maxBump = Math.floor(0.1 * (d.hgt ?? 0));
+    let hopped = false;
+    for (let b = 0; b <= maxBump; b++) {
+      if (free(dx, base + b, dz)) {
+        d.dx = dx;
+        d.dz = dz;
+        d.dy = base + b;
+        hopped = true;
+        break;
+      }
+    }
+    if (!hopped) { // obstacle too tall to hop: slide along it at the base height
+      if (free(dx, base, d.dz!)) d.dx = dx;
+      if (free(d.dx!, base, dz)) d.dz = dz;
+      d.dy = base;
+    }
   }
-  // advance each axis toward the cursor only where it wouldn't intersect another
-  // object (so the piece slides along obstacles); Alt ignores collisions.
-  const free = (x: number, y: number, z: number) =>
-    e.altKey || !moveBlocked(d, x, y, z);
-  if (free(dx, d.dy!, d.dz!)) d.dx = dx;
-  if (free(d.dx!, dy, d.dz!)) d.dy = dy;
-  if (free(d.dx!, d.dy!, dz)) d.dz = dz;
   for (const id of S.selection) {
     for (const m of (S.childMeshes[id] || [])) {
       m.position.set(d.dx!, d.dy!, d.dz!);

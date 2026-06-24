@@ -95,6 +95,8 @@ export type Drag = {
   occ?: Box3[]; // obstacles: move = other objects (world); box add = own solids (local)
   sel?: Box3[]; // moving selection boxes (world)
   minY?: number; // move: lowest world y0 of the selection at drag start (ground clamp)
+  hgt?: number; // move: selection world height (caps the collision hop to 10%)
+  dyUser?: number; // move: vertical offset the user set via Shift (the hop adds to it)
 };
 
 // Pending drop target while dragging a tree row.
