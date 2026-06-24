@@ -107,7 +107,7 @@ export function dimCol(v: number): THREE.Color {
 export const matSurf = new THREE.MeshLambertMaterial({
   vertexColors: true,
   side: THREE.FrontSide,
-}); // opaque surfaces (baked edge AO)
+}); // opaque surfaces (soft corner AO is added in screen space — see the GTAO pass)
 // Transparent voxels render as a surface of only the exterior faces, back-face
 // culled — depth-correct yet reading as one glass pane.
 export const TRANSP_OPACITY = 0.42;
