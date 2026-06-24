@@ -15,11 +15,15 @@ const refresh = (): void => {
   rebuild();
   updateChrome();
 };
+// context is always the tail of the path (the deepest group entered)
+const setContextFromPath = (): void => {
+  S.context = S.path[S.path.length - 1] as SceneNode;
+};
 
 export function ascend(): void {
   if (S.path.length > 1) {
     const c = S.path.pop()!;
-    S.context = S.path[S.path.length - 1] as SceneNode;
+    setContextFromPath();
     S.selection = new Set([c.id]);
     S.editObject = null;
     clearMeasure();
@@ -42,7 +46,7 @@ export function selectNode(node: Node): void { // select a node from the tree (e
   const p = findPath(node);
   if (!p) return;
   S.path = p.slice(0, -1);
-  S.context = S.path[S.path.length - 1] as SceneNode;
+  setContextFromPath();
   S.selection = new Set([node.id]);
   S.editObject = null;
   refresh();
@@ -63,7 +67,7 @@ export function enterNode(node: Node, fit?: boolean): void { // click in tree / 
     S.tool = "add";
   } else {
     S.path = p.slice(0, -1);
-    S.context = S.path[S.path.length - 1] as SceneNode;
+    setContextFromPath();
     S.editObject = node;
     S.selection.clear();
     S.tool = "add";
