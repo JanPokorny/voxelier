@@ -9,7 +9,6 @@ import { S } from "./state.ts";
 import { addv, rotY, xcompose } from "./math.ts";
 import { addBox, eraseBox, fillBox, growBounds, worldBox } from "./boxes.ts";
 import {
-  boxGeo,
   col,
   dimCol,
   dir,
@@ -73,7 +72,7 @@ export function disposeMeshes(): void {
   for (const m of S.meshes) {
     scene.remove(m);
     const g = m.geometry;
-    if (g && g !== boxGeo && !freed.has(g)) {
+    if (g && !freed.has(g)) {
       g.dispose();
       freed.add(g);
     }
