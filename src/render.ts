@@ -106,13 +106,22 @@ const FACE6 = [
   { a: 2, hi: false, u: 1, v: 0, n: [0, 0, -1] },
 ] as const;
 type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
-// Smooth (per-vertex) ambient occlusion baked into the mesh: a face vertex
-// darkens by how many of the four outside-layer cells touching it are solid
-// (0 = open -> full bright, 4 = enclosed -> darkest). Gouraud-interpolated across
-// the quad, so corners and creases shade as a soft gradient. Adjacent cells
-// compute the same value at a shared vertex (seamless), and a flush continuation
-// has no occluders -> AO == 1, so a flat mass split into boxes shows no crease.
-const AO4 = [1.0, 0.78, 0.58, 0.42, 0.3]; // brightness by occluder count 0..4
+// Smooth, spread-out ambient occlusion baked into the mesh. A face vertex
+// accumulates occlusion from the solid outside-layer cells within AO_R cells of
+// it, each weighted by a linear distance falloff, so a wall or corner casts a
+// soft shadow that fades over several voxels instead of a one-cell dark rim.
+// Gouraud-interpolated; an interior vertex ≥ AO_R from every edge has no occluder
+// in range -> brightness 1, so flat masses split into boxes stay seamless.
+const AO_R = 4; // occlusion spread radius, in cells
+const AO_DARK = 0.38; // brightness of a fully-occluded (rim/corner) vertex
+// sample kernel: outside-layer cell offsets within AO_R + linear falloff weight
+const AO_KERNEL: [number, number, number][] = [];
+for (let du = -AO_R; du < AO_R; du++) {
+  for (let dv = -AO_R; dv < AO_R; dv++) {
+    const d = Math.hypot(du + 0.5, dv + 0.5);
+    if (d < AO_R) AO_KERNEL.push([du, dv, 1 - d / AO_R]);
+  }
+}
 function boxFaceGeo(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
@@ -166,20 +175,19 @@ function boxFaceGeo(
         o[v] = vv;
         return [o[0], o[1], o[2]];
       };
-      // AO brightness at one face vertex: the 2×2 outside-layer cells touching it
+      // AO brightness at a face vertex: solid outside-layer cells within AO_R
+      // darken it, weighted by distance — vis is the product of (1 - weight).
       const vbright = (vu: number, vv: number): number => {
         if (!has) return 1;
-        let n = 0;
+        let vis = 1;
         const cell = aoCell; // {a,u,v} permute 0..2, so all 3 slots are written
         cell[a] = wo;
-        for (let du = -1; du <= 0; du++) {
-          for (let dv = -1; dv <= 0; dv++) {
-            cell[u] = vu + du;
-            cell[v] = vv + dv;
-            if (has(cell[0], cell[1], cell[2])) n++;
-          }
+        for (const [du, dv, w] of AO_KERNEL) {
+          cell[u] = vu + du;
+          cell[v] = vv + dv;
+          if (has(cell[0], cell[1], cell[2])) vis *= 1 - w;
         }
-        return AO4[n];
+        return AO_DARK + (1 - AO_DARK) * vis;
       };
       // one quad with per-vertex AO baked into the vertex colours (Gouraud)
       const quad = (qu0: number, qv0: number, qu1: number, qv1: number) => {
@@ -209,20 +217,26 @@ function boxFaceGeo(
           quad(pu0, pv0, pu1, pv1);
           continue;
         }
-        // AO only varies within 1 cell of the rim (the interior's vertices sit ≥1
-        // cell in, where the 2×2 sample is all open -> AO 1), so mesh a per-cell
-        // border ring and leave the interior as one bright quad.
-        for (let cu = pu0; cu < pu1; cu++) { // bottom & top rows of the ring
-          quad(cu, pv0, cu + 1, pv0 + 1);
-          if (pv1 - 1 > pv0) quad(cu, pv1 - 1, cu + 1, pv1);
+        // AO only varies within AO_R of an edge, so mesh a per-cell band that
+        // deep around the rim (vertices for the gradient) and leave the interior
+        // — where every vertex is ≥ AO_R from any edge, so AO == 1 — as one quad.
+        const iu0 = pu0 + AO_R, iu1 = pu1 - AO_R;
+        const iv0 = pv0 + AO_R, iv1 = pv1 - AO_R;
+        if (iu0 >= iu1 || iv0 >= iv1) { // too small to have a bright interior
+          for (let cu = pu0; cu < pu1; cu++) {
+            for (let cv = pv0; cv < pv1; cv++) quad(cu, cv, cu + 1, cv + 1);
+          }
+          continue;
         }
-        for (let cv = pv0 + 1; cv < pv1 - 1; cv++) { // left & right columns
-          quad(pu0, cv, pu0 + 1, cv + 1);
-          if (pu1 - 1 > pu0) quad(pu1 - 1, cv, pu1, cv + 1);
+        for (let cu = pu0; cu < pu1; cu++) { // bottom & top bands (full width)
+          for (let cv = pv0; cv < iv0; cv++) quad(cu, cv, cu + 1, cv + 1);
+          for (let cv = iv1; cv < pv1; cv++) quad(cu, cv, cu + 1, cv + 1);
         }
-        if (pu0 + 1 < pu1 - 1 && pv0 + 1 < pv1 - 1) {
-          quad(pu0 + 1, pv0 + 1, pu1 - 1, pv1 - 1); // bright interior
+        for (let cv = iv0; cv < iv1; cv++) { // left & right bands (interior rows)
+          for (let cu = pu0; cu < iu0; cu++) quad(cu, cv, cu + 1, cv + 1);
+          for (let cu = iu1; cu < pu1; cu++) quad(cu, cv, cu + 1, cv + 1);
         }
+        quad(iu0, iv0, iu1, iv1); // bright interior (AO == 1)
       }
     }
   }
