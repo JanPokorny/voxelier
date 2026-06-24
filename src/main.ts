@@ -136,7 +136,7 @@ function start(): void {
   rebuild();
   updateChrome();
   frameView();
-  flush();
-  tick(); // flush: synchronous baseline undo snapshot
+  flush(); // synchronous baseline undo snapshot
+  tick(); // start the on-demand render loop
 }
 start();
