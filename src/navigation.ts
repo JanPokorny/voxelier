@@ -58,13 +58,12 @@ export function enterNode(node: Node, fit?: boolean): void { // click in tree / 
     S.path = p;
     S.selection.clear();
     S.editObject = null;
-    S.tool = "add";
   } else {
     S.path = p.slice(0, -1);
     S.editObject = node;
     S.selection.clear();
-    S.tool = "add";
   }
+  S.tool = "add";
   clearMeasure();
   refresh();
   if (fit) frameView();
