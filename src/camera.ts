@@ -152,7 +152,6 @@ export function updateCamera(): void {
   }
   camera.near = near - 10;
   camera.far = far + 10;
-  camera.zoom = 1;
   camera.updateProjectionMatrix();
   // invisible shadow catcher tracks the view. Sits a hair below y=0 (not exactly
   // on it) so a voxel face flush with the ground isn't coplanar with the catcher:
