@@ -242,7 +242,8 @@ function closePalette(): boolean {
 }
 
 // ---- object/scene tree ----
-// collect a node's boxes in local space (for the thumbnail)
+// flatten a subtree's boxes under an accumulated transform; callers pass
+// identity off/rot so the result is in the node's own frame (for the thumbnail)
 function localBoxes(node: Node, off: Vec, rot: Rot, out: Box3[]): Box3[] {
   if (node.type === "object") {
     for (const b of node.boxes) out.push(worldBox(b, rot, off));
