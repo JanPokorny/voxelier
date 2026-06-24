@@ -41,9 +41,6 @@ export type Node = ObjectNode | SceneNode;
 // ---- editor tools ----
 export type Tool = "add" | "erase" | "paint" | "measure";
 
-// A surface cell produced by box meshing: position + colour.
-export type Cell = { x: number; y: number; z: number; c: number };
-
 // ---- measurement ----
 // One labelled dimension segment between two world points.
 export type Seg = {
