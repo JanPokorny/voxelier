@@ -23,7 +23,6 @@ export type State = {
   readonly context: SceneNode; // derived: tail of path (the deepest entered group)
   editObject: ObjectNode | null; // object being voxel-edited, or null
   selection: Set<string>; // selected child ids within context
-  clipboard: Node[]; // detached node clones
   tool: Tool; // voxel tool when editing an object
   selColor: number; // current draw colour (any 0xRRGGBB)
   collapsed: Set<string>; // tree: ids of collapsed groups
@@ -69,7 +68,6 @@ export const S: State = {
   },
   editObject: null,
   selection: new Set(),
-  clipboard: [],
   tool: "add",
   selColor: 0xd4a373,
   collapsed: new Set(),

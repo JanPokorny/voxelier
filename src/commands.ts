@@ -46,6 +46,8 @@ export function renameNode(node: Node): void {
   }
 }
 
+// detached node clones for copy/paste — private to this module's clipboard flow
+let clipboard: Node[] = [];
 // selected context children, resolved to live nodes (dropping stale ids)
 const selectedNodes = (): Node[] =>
   [...S.selection].map((id) => childById(id)).filter((n): n is Node => !!n);
@@ -82,15 +84,15 @@ export function duplicateSelection(): void {
   commit();
 }
 export function copySelection(): void {
-  S.clipboard = selectedNodes().map(clone);
+  clipboard = selectedNodes().map(clone);
 }
 export function cutSelection(): void {
   copySelection();
   deleteSelection();
 }
 export function pasteClipboard(): void {
-  if (!S.clipboard.length) return;
-  const ns = S.clipboard.map(cloneShift);
+  if (!clipboard.length) return;
+  const ns = clipboard.map(cloneShift);
   S.context.children.push(...ns);
   S.selection = new Set(ns.map((d) => d.id));
   commit();
