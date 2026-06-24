@@ -7,12 +7,15 @@ import { eachObject } from "./render.ts";
 import { boxesHas, buildIndex, growBounds, worldBox } from "./boxes.ts";
 import { localGroundCell, locToW, pickVoxel, worldCell } from "./picking.ts";
 import { emptyBox } from "./model.ts";
-import type { Box3, MeasField, Seg, Vec } from "./types.ts";
+import type { Box3, MeasField, MeasLabel, Seg, Vec } from "./types.ts";
 
 const M_FILL = new THREE.Color(0xa7c4bc), M_EMPTY = new THREE.Color(0x5c677d);
-// memoised occupancy field for the current edit target / scene context; only this
-// module touches it, so it's a module local (invalidated via invalidateField()).
+// Measurement state owned solely by this module: the memoised occupancy field
+// (invalidated via invalidateField()), the frozen dimension readings, and the
+// live DOM label elements with their world anchors.
 let fieldCache: MeasField | null = null;
+let frozenMeas: Seg[][] = [];
+let measLabels: MeasLabel[] = [];
 // measure is a tool while editing an object, a standalone mode otherwise
 export const measureActive = (): boolean =>
   S.editObject ? S.tool === "measure" : S.measMode;
@@ -21,7 +24,7 @@ export const invalidateField = (): void => {
 };
 export function clearMeasure(): void {
   S.liveMeas = null;
-  S.frozenMeas = [];
+  frozenMeas = [];
   renderMeasure();
 }
 
@@ -125,7 +128,7 @@ export function pointerMeasure(): void {
 }
 export function freezeMeasure(): void {
   if (S.liveMeas && S.liveMeas.length) {
-    S.frozenMeas.push(S.liveMeas);
+    frozenMeas.push(S.liveMeas);
     renderMeasure();
   }
 }
@@ -133,10 +136,10 @@ export function freezeMeasure(): void {
 export function renderMeasure(): void {
   const cont = document.getElementById("measure")!;
   cont.innerHTML = "";
-  S.measLabels = [];
+  measLabels = [];
   const sets: { s: Seg[]; fz: boolean }[] = [];
   if (S.liveMeas) sets.push({ s: S.liveMeas, fz: false });
-  for (const f of S.frozenMeas) sets.push({ s: f, fz: true });
+  for (const f of frozenMeas) sets.push({ s: f, fz: true });
   const pos: number[] = [], colr: number[] = [];
   for (const set of sets) {
     for (const seg of set.s) {
@@ -149,7 +152,7 @@ export function renderMeasure(): void {
         (set.fz ? " frozen" : "");
       el.textContent = String(seg.len);
       cont.appendChild(el);
-      S.measLabels.push({ el, w: seg.mid });
+      measLabels.push({ el, w: seg.mid });
     }
   }
   measLines.geometry.dispose();
@@ -160,9 +163,9 @@ export function renderMeasure(): void {
   measLines.visible = pos.length > 0;
 }
 export function updateMeasureLabels(): void {
-  if (!S.measLabels.length) return;
+  if (!measLabels.length) return;
   const r = canvas.getBoundingClientRect();
-  for (const L of S.measLabels) {
+  for (const L of measLabels) {
     _mv.copy(L.w).project(camera);
     if (_mv.z > 1) {
       L.el.style.display = "none";

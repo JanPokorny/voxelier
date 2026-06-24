@@ -5,7 +5,6 @@ import type * as THREE from "three";
 import type {
   Box,
   Drag,
-  MeasLabel,
   Node,
   ObjectNode,
   SceneNode,
@@ -41,8 +40,6 @@ export type State = {
   // ---- measurements ----
   measMode: boolean;
   liveMeas: Seg[] | null;
-  frozenMeas: Seg[][];
-  measLabels: MeasLabel[];
 };
 
 export const S: State = {
@@ -72,6 +69,4 @@ export const S: State = {
 
   measMode: false,
   liveMeas: null,
-  frozenMeas: [],
-  measLabels: [],
 };
