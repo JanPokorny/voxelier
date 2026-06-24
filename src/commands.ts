@@ -56,12 +56,17 @@ const cloneShift = (n: Node): Node => {
   return d;
 };
 
-export function createObject(): void {
+// add a fresh empty object at the camera focus into `parent`, reveal it, enter it
+const spawnObject = (parent: SceneNode, fit: boolean): void => {
   const o = newObject();
   o.pos = { x: Math.round(goal.target.x), y: 0, z: Math.round(goal.target.z) };
-  S.context.children.push(o);
-  enterNode(o, true);
+  parent.children.push(o);
+  S.collapsed.delete(parent.id);
+  enterNode(o, fit); // fit only when spawning into the open context; nested stays put
   save();
+};
+export function createObject(): void {
+  spawnObject(S.context, true);
 }
 export function deleteSelection(): void {
   if (!S.selection.size) return;
@@ -170,13 +175,8 @@ export function deleteNode(node: Node): void {
   if (S.editObject === node) S.editObject = null;
   commit();
 }
-export function addObjectIn(group: SceneNode): void { // new empty object inside a group (enter it)
-  const o = newObject();
-  o.pos = { x: Math.round(goal.target.x), y: 0, z: Math.round(goal.target.z) };
-  group.children.push(o);
-  S.collapsed.delete(group.id);
-  enterNode(o); // no fit: it's empty, so leave the viewport where it is
-  save();
+export function addObjectIn(group: SceneNode): void { // new empty object inside a group
+  spawnObject(group, false);
 }
 export function addGroupIn(group: SceneNode): void { // new empty group inside a group
   const g = newScene("Group");
