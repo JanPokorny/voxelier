@@ -133,16 +133,24 @@ function resize(): void {
 }
 window.addEventListener("resize", resize);
 
+// Skip the expensive screen-space GTAO pass while the camera is moving: AO only
+// needs recomputing once the view settles, so a pan/orbit/zoom stays smooth and
+// the soft AO resolves the moment it stops. `movingPrev` forces one full-quality
+// frame on the moving->settled transition even if the input tail already ran out.
+let movingPrev = false;
 function tick(): void {
   requestAnimationFrame(tick);
   resize();
   updateCamera();
-  if (frame.tail > 0 || !cameraSettled()) {
-    syncGtaoProjection();
+  const moving = !cameraSettled();
+  if (moving || movingPrev || frame.tail > 0) {
+    gtao.enabled = !moving;
+    if (gtao.enabled) syncGtaoProjection();
     composer.render();
     updateMeasureLabels();
     if (frame.tail > 0) frame.tail--;
   }
+  movingPrev = moving;
 }
 
 function start(): void {
