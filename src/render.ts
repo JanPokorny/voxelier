@@ -272,7 +272,7 @@ export function eachObject(
   vis: number,
   cb: ObjCb,
 ): void {
-  const ev = Math.max(vis, VIS[node.vis || "visible"]);
+  const ev = Math.max(vis, VIS[node.vis]);
   if (node === S.editObject || ev >= 2) return; // invisible -> skip
   if (node.type === "object") cb(node, off, rot, owner, ev === 1);
   else {
