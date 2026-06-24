@@ -1,5 +1,5 @@
 // Self-check (`deno test`) for the coordinate math the editor's voxel placement
-// relies on. It imports the real rotY/addv from src/math.js (both pure, no
+// relies on. It imports the real rotY/addv from src/math.ts (both pure, no
 // three.js) and asserts the world<->object-local round-trip that locToW and
 // localGroundCell depend on. If rotY's rotation or the inverse convention
 // breaks, placement silently lands on the wrong cell — this fails loudly.
