@@ -43,6 +43,7 @@ export function selectNode(node: Node): void { // select a node from the tree (e
   S.path = p.slice(0, -1);
   S.selection = new Set([node.id]);
   S.editObject = null;
+  clearMeasure();
   refresh();
 }
 export function isEntered(node: Node): boolean { // is this node the one currently being edited/descended into?
