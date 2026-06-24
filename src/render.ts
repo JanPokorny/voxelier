@@ -65,7 +65,7 @@ function fitShadow(box: Box): void {
   dir.shadow.normalBias = 4 * R / dir.shadow.mapSize.x;
 }
 
-export function disposeMeshes(): void {
+function disposeMeshes(): void {
   // a glass surface and its depth-prepass sibling share one geometry, so track
   // what's been freed to dispose each BufferGeometry exactly once
   const freed = new Set<THREE.BufferGeometry>();
@@ -299,7 +299,7 @@ const worldBoxesInto = (
 
 // ---- edited object: a single mesh in object-local space (editGroup carries the
 // pose), rebuilt on a debounced frame as the box list changes ----
-export function buildEditMesh(): void {
+function buildEditMesh(): void {
   const { off, rot } = S.editXform;
   editGroup.position.set(off.x, off.y, off.z);
   editGroup.rotation.set(0, -rot * Math.PI / 2, 0); // rotY(v,rot) == Y-rotation by -rot·90°
