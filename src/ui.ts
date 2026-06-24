@@ -246,9 +246,11 @@ function closePalette(): boolean {
 function localBoxes(node: Node, off: Vec, rot: Rot, out: Box3[]): Box3[] {
   if (node.type === "object") {
     for (const b of node.boxes) out.push(worldBox(b, rot, off));
-  } else {for (const ch of node.children) {
+  } else {
+    for (const ch of node.children) {
       localBoxes(ch, addv(off, rotY(ch.pos, rot)), (rot + ch.rot) & 3, out);
-    }}
+    }
+  }
   return out;
 }
 const shade = (c: number, f: number): string => {
@@ -392,8 +394,10 @@ function buildTree(): void {
     const nm = el("span", { className: "nm" });
     if (isRoot) nm.textContent = node.name || "Project";
     else if (node.name) nm.textContent = node.name;
-    else {nm.innerHTML = '<span class="ph">' +
-        (node.type === "scene" ? "group" : "object") + "</span>";}
+    else {
+      nm.innerHTML = '<span class="ph">' +
+        (node.type === "scene" ? "group" : "object") + "</span>";
+    }
     r.append(th, nm);
     if (!isRoot) {
       r.append(el("button", {
@@ -495,14 +499,16 @@ function showItemMenu(node: Node, x: number, y: number): void {
   if (node.type === "scene") {
     add("New object", () => addObjectIn(node));
     add("New group", () => addGroupIn(node));
-  } else {add("New group", () => {
+  } else {
+    add("New group", () => {
       const g = wrapNode(node);
       if (g) {
         S.collapsed.delete(g.id);
         selectNode(g);
         save();
       }
-    });}
+    });
+  }
   document.body.appendChild(m);
   S.ctxMenuEl = m;
   const r = m.getBoundingClientRect();
