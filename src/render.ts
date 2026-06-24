@@ -376,7 +376,7 @@ export function rebuild(): void {
       (n, off, rot) => worldBoxesInto(n, off, rot, others),
     );
     growBounds(others, sceneBox);
-    meshSurface(others, (c) => col(c), { transparent: true }); // everything else: glass
+    meshSurface(others, col, { transparent: true }); // everything else: glass
     buildEditMesh(); // edited object: opaque, in 3D
     nodeBox(S.editObject, S.editXform.off, S.editXform.rot, sceneBox); // eachObject skips it
   } else {
@@ -393,15 +393,15 @@ export function rebuild(): void {
         growBounds(wb, S.childBox[owner] || (S.childBox[owner] = emptyBox()));
       } else (tr ? ctxT : ctxE).push(...wb);
     });
-    meshSurface(ctxE, (c) => dimCol(c));
-    meshSurface(ctxT, (c) => dimCol(c), { transparent: true });
+    meshSurface(ctxE, dimCol);
+    meshSurface(ctxT, dimCol, { transparent: true });
     for (const id of new Set([...gE.keys(), ...gT.keys()])) {
       const e = gE.get(id);
       if (e) {
-        meshSurface(e, (c) => col(c), { pick: true, childId: id });
+        meshSurface(e, col, { pick: true, childId: id });
       }
       const t = gT.get(id);
-      if (t) meshSurface(t, (c) => col(c), { transparent: true }); // not pickable
+      if (t) meshSurface(t, col, { transparent: true }); // not pickable
     }
   }
   S.sceneBox = sceneBox; // camera depth range reads this (see updateCamera)
