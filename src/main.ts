@@ -8,8 +8,10 @@ import {
   canvas,
   frame,
   goal,
+  ground,
   renderer,
   scene,
+  sky,
   wake,
 } from "./scene-env.ts";
 import { rebuild } from "./render.ts";
@@ -39,13 +41,23 @@ gtao.updateGtaoMaterial({
 });
 composer.addPass(gtao);
 composer.addPass(new OutputPass());
+// Keep the infinite backdrop out of the AO G-buffer: the ground shadow-catcher
+// and the sky quad must stay in the beauty pass, but if GTAO sees them it darkens
+// the green backdrop (and bands at the ground plane's far edge). overrideVisibility
+// is GTAO's per-AO-pass hook (it already drops lines); also drop ground + sky.
+// deno-lint-ignore no-explicit-any
+const gtaoAny = gtao as any;
+const baseOverrideVisibility = gtaoAny.overrideVisibility.bind(gtao);
+gtaoAny.overrideVisibility = () => {
+  baseOverrideVisibility();
+  ground.visible = false;
+  sky.visible = false;
+};
 // GTAOPass caches the camera projection at setSize, but our orthographic
 // projection changes every frame (zoom + per-frame depth range), so refresh the
 // matrices it reconstructs view-space positions from before each composite.
-// deno-lint-ignore no-explicit-any
-const gtaoU = (gtao as any).gtaoMaterial.uniforms;
-// deno-lint-ignore no-explicit-any
-const pdU = (gtao as any).pdMaterial.uniforms;
+const gtaoU = gtaoAny.gtaoMaterial.uniforms;
+const pdU = gtaoAny.pdMaterial.uniforms;
 function syncGtaoProjection(): void {
   gtaoU.cameraProjectionMatrix.value.copy(camera.projectionMatrix);
   gtaoU.cameraProjectionMatrixInverse.value.copy(

@@ -34,7 +34,7 @@ export const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
 // short blend across the side-on angle avoids a hard pop. (No true horizon —
 // that doesn't survive an orthographic projection.)
 const skyU = { uGround: { value: 1 } }; // 1 = green (above), 0 = blue (below)
-const sky = new THREE.Mesh(
+export const sky = new THREE.Mesh(
   new THREE.PlaneGeometry(2, 2),
   new THREE.ShaderMaterial({
     uniforms: skyU,
