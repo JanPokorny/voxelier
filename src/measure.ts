@@ -16,11 +16,14 @@ import { emptyBox } from "./model.ts";
 import type { Box3, MeasField, Seg, Vec } from "./types.ts";
 
 const M_FILL = new THREE.Color(0xa7c4bc), M_EMPTY = new THREE.Color(0x5c677d);
+// memoised occupancy field for the current edit target / scene context; only this
+// module touches it, so it's a module local (invalidated via invalidateField()).
+let fieldCache: MeasField | null = null;
 // measure is a tool while editing an object, a standalone mode otherwise
 export const measureActive = (): boolean =>
   S.editObject ? S.tool === "measure" : S.measMode;
 export const invalidateField = (): void => {
-  S.measFieldCache = null;
+  fieldCache = null;
 };
 export function clearMeasure(): void {
   S.liveMeas = null;
@@ -30,7 +33,7 @@ export function clearMeasure(): void {
 
 // the field being measured: edited object (local) or current scene context (world)
 function measureField(): MeasField {
-  if (S.measFieldCache) return S.measFieldCache;
+  if (fieldCache) return fieldCache;
   const boxes: Box3[] = [];
   let toW: (x: number, y: number, z: number) => THREE.Vector3;
   if (S.editObject) {
@@ -64,8 +67,8 @@ function measureField(): MeasField {
   const has = boxes.length > 64
     ? buildIndex(boxes)
     : (x: number, y: number, z: number) => boxesHas(boxes, x, y, z);
-  S.measFieldCache = { has, mn, mx, toW, empty };
-  return S.measFieldCache;
+  fieldCache = { has, mn, mx, toW, empty };
+  return fieldCache;
 }
 function measureRef(): Vec | null { // voxel cell under the pointer, clamped into the field
   const f = measureField();

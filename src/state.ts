@@ -6,7 +6,6 @@ import type {
   Box,
   Drag,
   DropInfo,
-  MeasField,
   MeasLabel,
   Node,
   ObjectNode,
@@ -55,7 +54,6 @@ export type State = {
   liveMeas: Seg[] | null;
   frozenMeas: Seg[][];
   measLabels: MeasLabel[];
-  measFieldCache: MeasField | null;
 
   // ---- persistence debounce ----
   saveT: number | null;
@@ -98,7 +96,6 @@ export const S: State = {
   liveMeas: null,
   frozenMeas: [],
   measLabels: [],
-  measFieldCache: null,
 
   saveT: null,
 };
