@@ -195,7 +195,6 @@ function updateVoxHover(t: Pick = pickVoxel()): void {
 
 // ---- box brush (add/erase): drag an NxM footprint, Shift extrudes vertically ----
 function startBox(
-  _e: PointerEvent,
   base: { x: number; y: number; sx: number; sy: number },
 ): void {
   const s = voxelTarget();
@@ -345,7 +344,7 @@ canvas.addEventListener("pointerdown", (e) => {
   if (S.editObject) {
     if (e.button === 0) {
       // add/erase drag out a box footprint; paint floods the cell under the cursor
-      if (S.tool === "add" || S.tool === "erase") startBox(e, base);
+      if (S.tool === "add" || S.tool === "erase") startBox(base);
       else {
         S.painting = true;
         S.lastVox = null;
