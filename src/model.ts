@@ -56,10 +56,10 @@ export const newObject = (): ObjectNode => ({
   vis: "visible",
   boxes: [],
 });
-export const newScene = (): SceneNode => ({
+export const newScene = (name = ""): SceneNode => ({
   type: "scene",
   id: uid(),
-  name: "",
+  name,
   pos: { x: 0, y: 0, z: 0 },
   rot: 0,
   vis: "visible",

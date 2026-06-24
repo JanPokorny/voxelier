@@ -123,8 +123,7 @@ function wrapNode(node: Node): SceneNode | null {
   const par = parentOf(node) as SceneNode | null;
   if (!par) return null;
   const idx = par.children.indexOf(node);
-  const g = newScene();
-  g.name = "Group";
+  const g = newScene("Group");
   g.pos = { ...node.pos };
   g.rot = node.rot;
   par.children.splice(idx, 1, g); // g takes the node's slot (and its world pose)
@@ -180,8 +179,7 @@ export function addObjectIn(group: SceneNode): void { // new empty object inside
   save();
 }
 export function addGroupIn(group: SceneNode): void { // new empty group inside a group
-  const g = newScene();
-  g.name = "Group";
+  const g = newScene("Group");
   group.children.push(g);
   S.collapsed.delete(group.id);
   selectNode(g);
