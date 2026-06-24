@@ -5,7 +5,13 @@ import { S } from "./state.ts";
 import { _mv, camera, canvas, measLines, ndc, raycaster } from "./scene-env.ts";
 import { eachObject } from "./render.ts";
 import { boxesHas, buildIndex, growBounds, worldBox } from "./boxes.ts";
-import { groundCell, localGroundCell, locToW, pickVoxel } from "./picking.ts";
+import {
+  cellOf,
+  groundCell,
+  localGroundCell,
+  locToW,
+  pickVoxel,
+} from "./picking.ts";
 import { emptyBox } from "./model.ts";
 import type { Box3, MeasField, Seg, Vec } from "./types.ts";
 
@@ -72,11 +78,7 @@ function measureRef(): Vec | null { // voxel cell under the pointer, clamped int
       : [];
     if (hits.length) {
       const h = hits[0], n = h.face ? h.face.normal : { x: 0, y: 0, z: 0 };
-      cell = {
-        x: Math.floor(h.point.x - n.x * 0.5),
-        y: Math.floor(h.point.y - n.y * 0.5),
-        z: Math.floor(h.point.z - n.z * 0.5),
-      };
+      cell = cellOf(h.point, n);
     } else cell = groundCell(0);
   }
   if (!cell) return null;
