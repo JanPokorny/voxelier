@@ -16,6 +16,7 @@ import { emptyBox } from "./model.ts";
 import type { Box3, MeasField, Seg, Vec } from "./types.ts";
 
 const M_FILL = new THREE.Color(0xa7c4bc), M_EMPTY = new THREE.Color(0x5c677d);
+// measure is a tool while editing an object, a standalone mode otherwise
 export const measureActive = (): boolean =>
   S.editObject ? S.tool === "measure" : S.measMode;
 export const invalidateField = (): void => {
@@ -58,6 +59,8 @@ function measureField(): MeasField {
   // bounds are inclusive cell indices; box maxima are exclusive
   const mn = { x: bb.min.x, y: bb.min.y, z: bb.min.z };
   const mx = { x: bb.max.x - 1, y: bb.max.y - 1, z: bb.max.z - 1 };
+  // a hover sweep probes every cell along 3 axes, so for many boxes the grid
+  // index beats a linear scan; below ~64 the index isn't worth building
   const has = boxes.length > 64
     ? buildIndex(boxes)
     : (x: number, y: number, z: number) => boxesHas(boxes, x, y, z);
