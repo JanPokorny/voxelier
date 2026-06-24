@@ -189,16 +189,13 @@ export function addGroupIn(group: SceneNode): void { // new empty group inside a
 }
 export function rotateSelectionBy(steps: number): void { // rotate selection in 90° steps about each piece's own centre
   const dir = steps < 0 ? -1 : 1;
+  // invariant across the loop: we rotate context children, not the path that
+  // defines the context frame, so the context transform never changes here
+  const x = contextXform();
+  // world AABB of a context child under the current context transform
+  const childWorldBox = (ch: Node) =>
+    nodeBox(ch, addv(x.off, rotY(ch.pos, x.rot)), (x.rot + ch.rot) & 3, emptyBox());
   for (let n = 0; n < Math.abs(steps); n++) {
-    const x = contextXform();
-    // world AABB of a context child under the current context transform
-    const childWorldBox = (ch: Node) =>
-      nodeBox(
-        ch,
-        addv(x.off, rotY(ch.pos, x.rot)),
-        (x.rot + ch.rot) & 3,
-        emptyBox(),
-      );
     for (const id of S.selection) {
       const ch = childById(id);
       if (!ch) continue;
