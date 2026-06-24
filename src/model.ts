@@ -121,6 +121,11 @@ export const worldXform = (node: Node): Xform =>
   pathXform(findPath(node) || [S.root]);
 
 // AABB helpers
+// Sentinel "inside-out" box that growBounds overwrites on the first real cell.
+// 1e9 (a finite value well past any voxel coord), not ±Infinity, on purpose: an
+// empty box's centroid (min+max)/2 must stay finite — rotateSelectionBy recentres
+// on it for a geometry-less node, and Infinity would make that 0/… NaN and corrupt
+// the position.
 export const emptyBox = (): Box => ({
   min: { x: 1e9, y: 1e9, z: 1e9 },
   max: { x: -1e9, y: -1e9, z: -1e9 },
