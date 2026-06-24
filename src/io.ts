@@ -3,14 +3,12 @@
 // colours and visibility. Export downloads a .json file; import reads one,
 // replaces the document and resets the editor to the scene root.
 import { S } from "./state.ts";
-import { de, flush, ser } from "./persistence.ts";
-import { peekUid, seedUid } from "./math.ts";
+import { flush, installScene, ser } from "./persistence.ts";
+import { peekUid } from "./math.ts";
 import { rebuild } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
-import type { SceneNode } from "./types.ts";
-import type { SerNode } from "./persistence.ts";
 
 export function exportScene(): void {
   const data = JSON.stringify({ uid: peekUid(), root: ser(S.root) });
@@ -40,13 +38,9 @@ export function importScene(): void {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const d = JSON.parse(reader.result as string) as {
-          uid?: number;
-          root?: SerNode;
-        };
-        if (!d || !d.root) throw new Error("not a Voxelier scene file");
-        seedUid(d.uid || 1);
-        S.root = de(d.root) as SceneNode;
+        if (!installScene(JSON.parse(reader.result as string))) {
+          throw new Error("not a Voxelier scene file");
+        }
         S.path = [S.root];
         S.editObject = null;
         S.selection.clear();
