@@ -64,8 +64,8 @@ export function pickVoxel(): Pick { // -> {cell, addCell} in object-local space,
   };
 }
 // pointer -> world cell (scene/measure mode): the picked opaque surface cell,
-// else the ground-plane cell at y=0. World-space counterpart of pickVoxel().cell
-// / localGroundCell used in edit mode.
+// else the ground-plane cell at y=0. The world-space counterpart of edit mode's
+// pickVoxel().cell (on a hit) / localGroundCell (no hit).
 export function worldCell(): Vec | null {
   const h = firstHit();
   if (!h) return groundCell(0);

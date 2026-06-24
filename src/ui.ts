@@ -1,6 +1,6 @@
-// DOM chrome: the tool buttons + status hint, the colour palette/swatches, the
-// object/scene tree (thumbnails, row clicks, context menu, drag & drop) and the
-// global keyboard shortcuts. Attaches its window/tree listeners on import.
+// DOM chrome: the tool buttons + draw-colour control (recent colours + picker),
+// the object/scene tree (thumbnails, row clicks, context menu, drag & drop) and
+// the global keyboard shortcuts. Attaches its window/tree listeners on import.
 import { S } from "./state.ts";
 import { addv, hex, rotY } from "./math.ts";
 import { colorCounts, growBounds, worldBox } from "./boxes.ts";
