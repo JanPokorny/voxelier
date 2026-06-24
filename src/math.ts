@@ -1,7 +1,4 @@
 // Pure, stateless helpers and the transform algebra (a transform is {off,rot}).
-// rotY rotates a vector about Y in 90° steps; compose nests Y inside X; invert
-// undoes one; pathXform accumulates a root..node path. These are the only pieces
-// the runnable selfcheck exercises.
 // Voxel cells pack into one integer key instead of a "x,y,z" string: 17 bits per
 // axis (signed, biased by 2^16) keeps |coord| < 65536 and the packed value below
 // 2^51, so a Map<int,int> stays exact and avoids per-cell string alloc/parsing.
