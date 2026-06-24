@@ -145,8 +145,9 @@ export function worldBox(b: Box3, rot: Rot, off: Vec): Box3 {
 // so has() tests only a handful of boxes regardless of total count.
 const GC = 16;
 const gi = Math.floor;
-export type BoxIndex = (x: number, y: number, z: number) => boolean;
-export function buildIndex(boxes: Box3[]): BoxIndex {
+export function buildIndex(
+  boxes: Box3[],
+): (x: number, y: number, z: number) => boolean {
   if (!boxes.length) return () => false;
   let mnx = Infinity,
     mny = Infinity,
