@@ -12,6 +12,7 @@ import {
   goal,
   hoverVox,
   overlay,
+  viewport,
   ZOOM_MAX,
 } from "./scene-env.ts";
 import {
@@ -62,8 +63,7 @@ const NOT_A_CLICK = -1e9;
 // so dividing by it makes the dragged height track the pointer exactly instead of
 // lagging it in the foreshortened isometric view.
 function worldYPerPixel(): number {
-  const perPx = (camera.top - camera.bottom) /
-    canvas.getBoundingClientRect().height;
+  const perPx = (camera.top - camera.bottom) / viewport.h;
   const upY = Math.abs(camera.matrixWorldInverse.elements[5]);
   return perPx / Math.max(upY, 0.15); // clamp: near top-down, Y barely projects
 }

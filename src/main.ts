@@ -10,6 +10,7 @@ import {
   goal,
   renderer,
   scene,
+  viewport,
   wake,
 } from "./scene-env.ts";
 import { rebuild } from "./render.ts";
@@ -46,6 +47,8 @@ const cameraSettled = (): boolean =>
 
 function resize(): void {
   const r = canvas.getBoundingClientRect();
+  viewport.w = r.width; // cache for per-frame/per-drag readers (camera, measure…)
+  viewport.h = r.height;
   const w = Math.max(1, Math.round(r.width)),
     h = Math.max(1, Math.round(r.height)),
     pr = Math.min(devicePixelRatio, 2);

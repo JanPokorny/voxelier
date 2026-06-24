@@ -9,10 +9,10 @@ import {
   cam,
   CAM_DIST,
   camera,
-  canvas,
   goal,
   ground,
   updateSky,
+  viewport,
   ZOOM_MAX,
 } from "./scene-env.ts";
 import { boxEmpty, emptyBox, nodeBox, worldXform } from "./model.ts";
@@ -26,8 +26,7 @@ const _dv = new THREE.Vector3(),
   _yUp = new THREE.Vector3(0, 1, 0);
 
 export function panCamera(dx: number, dy: number): void {
-  const r = canvas.getBoundingClientRect();
-  const perPx = (camera.top - camera.bottom) / r.height;
+  const perPx = (camera.top - camera.bottom) / viewport.h;
   camera.getWorldDirection(_fwd);
   _right.crossVectors(_fwd, _yUp).normalize();
   _camUp.crossVectors(_right, _fwd).normalize();
@@ -116,8 +115,7 @@ export function updateCamera(): void {
   _up.set(0, 1, 0).lerp(_upN, t);
   camera.up.copy(_up.normalize());
   camera.lookAt(cam.target);
-  const r = canvas.getBoundingClientRect(),
-    a = r.width / r.height,
+  const a = viewport.w / viewport.h,
     h = cam.zoom,
     w = h * a;
   camera.left = -w / 2;

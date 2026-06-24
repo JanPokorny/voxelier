@@ -2,7 +2,7 @@
 // three axes through a voxel; left-click freezes a reading, right-click clears.
 import * as THREE from "three";
 import { S } from "./state.ts";
-import { _mv, camera, canvas, measLines } from "./scene-env.ts";
+import { _mv, camera, measLines, viewport } from "./scene-env.ts";
 import { eachObject } from "./render.ts";
 import { boxesHas, buildIndex, growBounds, worldBox } from "./boxes.ts";
 import { localGroundCell, locToW, pickVoxel, worldCell } from "./picking.ts";
@@ -164,7 +164,6 @@ export function renderMeasure(): void {
 }
 export function updateMeasureLabels(): void {
   if (!measLabels.length) return;
-  const r = canvas.getBoundingClientRect();
   for (const L of measLabels) {
     _mv.copy(L.w).project(camera);
     if (_mv.z > 1) {
@@ -172,7 +171,7 @@ export function updateMeasureLabels(): void {
       continue;
     }
     L.el.style.display = "";
-    L.el.style.left = ((_mv.x * 0.5 + 0.5) * r.width) + "px";
-    L.el.style.top = ((-_mv.y * 0.5 + 0.5) * r.height) + "px";
+    L.el.style.left = ((_mv.x * 0.5 + 0.5) * viewport.w) + "px";
+    L.el.style.top = ((-_mv.y * 0.5 + 0.5) * viewport.h) + "px";
   }
 }
