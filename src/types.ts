@@ -1,6 +1,5 @@
-// Shared domain types for the editor. Kept in one place so the model, render,
-// interaction and UI layers all speak the same vocabulary. Three.js types are
-// imported where geometry/scene objects cross a module boundary.
+// Shared domain types. THREE types are imported where scene objects cross a
+// module boundary.
 import type * as THREE from "three";
 
 // ---- geometry / transform algebra ----
