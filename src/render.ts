@@ -100,8 +100,40 @@ const FACE6 = [
   { a: 2, hi: false, u: 1, v: 0, n: [0, 0, -1] },
 ] as const;
 type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
-// Soft corner shading is done in screen space now (GTAO post-process), so the
-// mesher just emits one flat quad per exposed face rectangle — no baked AO.
+// Merge axis-aligned rects that share a full edge (matching perpendicular span,
+// touching) into larger rects, repeating until stable. A flat surface split
+// across several flush boxes thus meshes as one quad — no internal seam for the
+// screen-space AO to crease. Rects in a group are disjoint, so merges stay valid.
+function mergeRects(rects: Rect[]): void {
+  for (let merged = true; merged;) {
+    merged = false;
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        const a = rects[i], b = rects[j];
+        let m: Rect | null = null;
+        if (
+          a[1] === b[1] && a[3] === b[3] && (a[2] === b[0] || b[2] === a[0])
+        ) {
+          m = [Math.min(a[0], b[0]), a[1], Math.max(a[2], b[2]), a[3]]; // along u
+        } else if (
+          a[0] === b[0] && a[2] === b[2] && (a[3] === b[1] || b[3] === a[1])
+        ) {
+          m = [a[0], Math.min(a[1], b[1]), a[2], Math.max(a[3], b[3])]; // along v
+        }
+        if (m) {
+          rects[i] = m;
+          rects.splice(j, 1);
+          merged = true;
+          j--;
+        }
+      }
+    }
+  }
+}
+// Soft corner shading is done in screen space (GTAO post-process), so the mesher
+// emits flat quads. Exposed face rects are grouped by face/plane/colour and
+// merged across boxes first, so a flat surface the box model split into several
+// boxes meshes as one continuous quad (no internal seam for AO to crease).
 function boxFaceGeo(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
@@ -109,11 +141,15 @@ function boxFaceGeo(
   const pos: number[] = [], nor: number[] = [], colr: number[] = [];
   const lo = boxes.map((b) => [b.x0, b.y0, b.z0]);
   const hi = boxes.map((b) => [b.x1, b.y1, b.z1]);
+  // key "faceIndex:plane:colour" -> coplanar same-colour exposed rectangles
+  const groups = new Map<
+    string,
+    { fi: number; plane: number; c: number; rects: Rect[] }
+  >();
   for (let i = 0; i < boxes.length; i++) {
-    const c = colorOf(boxes[i].c), cr = c.r, cg = c.g, cb = c.b;
-    const blo = lo[i], bhi = hi[i];
-    for (const f of FACE6) {
-      const { a, u, v } = f, plane = f.hi ? bhi[a] : blo[a];
+    const cval = boxes[i].c, blo = lo[i], bhi = hi[i];
+    for (let fi = 0; fi < 6; fi++) {
+      const f = FACE6[fi], { a, u, v } = f, plane = f.hi ? bhi[a] : blo[a];
       // faces of neighbouring boxes that abut (and so hide) this one
       const covers: Rect[] = [];
       for (let j = 0; j < boxes.length; j++) {
@@ -144,24 +180,33 @@ function boxFaceGeo(
         pieces = next;
         if (!pieces.length) break;
       }
-      // each exposed sub-rectangle -> one flat quad, wound CCW for the normal
-      const o = [0, 0, 0];
-      const P = (uu: number, vv: number): [number, number, number] => {
-        o[a] = plane;
-        o[u] = uu;
-        o[v] = vv;
-        return [o[0], o[1], o[2]];
-      };
-      for (const p of pieces) {
-        const A = P(p[0], p[1]),
-          B = P(p[2], p[1]),
-          C = P(p[2], p[3]),
-          D = P(p[0], p[3]);
-        for (const q of [A, B, C, A, C, D]) {
-          pos.push(q[0], q[1], q[2]);
-          nor.push(f.n[0], f.n[1], f.n[2]);
-          colr.push(cr, cg, cb);
-        }
+      if (!pieces.length) continue;
+      const key = fi + ":" + plane + ":" + cval;
+      const grp = groups.get(key);
+      if (grp) { for (const p of pieces) grp.rects.push(p); }
+      else groups.set(key, { fi, plane, c: cval, rects: pieces });
+    }
+  }
+  for (const grp of groups.values()) {
+    mergeRects(grp.rects);
+    const f = FACE6[grp.fi], { a, u, v } = f, plane = grp.plane;
+    const c = colorOf(grp.c), cr = c.r, cg = c.g, cb = c.b;
+    const o = [0, 0, 0];
+    const P = (uu: number, vv: number): [number, number, number] => {
+      o[a] = plane;
+      o[u] = uu;
+      o[v] = vv;
+      return [o[0], o[1], o[2]];
+    };
+    for (const p of grp.rects) {
+      const A = P(p[0], p[1]),
+        B = P(p[2], p[1]),
+        C = P(p[2], p[3]),
+        D = P(p[0], p[3]);
+      for (const q of [A, B, C, A, C, D]) {
+        pos.push(q[0], q[1], q[2]);
+        nor.push(f.n[0], f.n[1], f.n[2]);
+        colr.push(cr, cg, cb);
       }
     }
   }
