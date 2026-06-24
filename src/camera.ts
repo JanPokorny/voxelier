@@ -102,8 +102,9 @@ export function updateCamera(): void {
     1,
   ); // only swing "up" near top-down
   _upN.set(-Math.sin(cam.azim), 0, -Math.cos(cam.azim));
+  // _up = lerp((0,1,0), _upN, t); the two are unit-length and orthogonal, so
+  // |_up|² = (1-t)² + t² ≥ 0.5 — never degenerate, safe to normalise.
   _up.set(0, 1, 0).lerp(_upN, t);
-  if (_up.lengthSq() < 1e-6) _up.copy(_upN);
   camera.up.copy(_up.normalize());
   camera.lookAt(cam.target);
   const r = canvas.getBoundingClientRect(),
