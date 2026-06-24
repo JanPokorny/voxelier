@@ -13,7 +13,7 @@ import {
   wake,
 } from "./scene-env.ts";
 import { rebuild } from "./render.ts";
-import { buildSwatches, updateChrome } from "./ui.ts";
+import { updateChrome } from "./ui.ts";
 import { frameView, updateCamera } from "./camera.ts";
 import { updateMeasureLabels } from "./measure.ts";
 import { flush, load } from "./persistence.ts";
@@ -80,7 +80,6 @@ function start(): void {
   S.path = [S.root];
   S.editObject = null;
   S.selection.clear();
-  buildSwatches();
   rebuild();
   updateChrome();
   frameView();
