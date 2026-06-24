@@ -112,7 +112,7 @@ type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
 // the quad, so corners and creases shade as a soft gradient. Adjacent cells
 // compute the same value at a shared vertex (seamless), and a flush continuation
 // has no occluders -> AO == 1, so a flat mass split into boxes shows no crease.
-const AO4 = [1.0, 0.86, 0.72, 0.6, 0.5]; // brightness by occluder count 0..4
+const AO4 = [1.0, 0.78, 0.58, 0.42, 0.3]; // brightness by occluder count 0..4
 function boxFaceGeo(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
