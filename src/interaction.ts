@@ -17,6 +17,7 @@ import {
 import {
   groundCell,
   localGroundCell,
+  localPlaneCell,
   locToW,
   type Pick,
   pickChild,
@@ -47,7 +48,7 @@ import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
 import { selectColor, updateChrome } from "./ui.ts";
 import { save } from "./persistence.ts";
-import type { Box3, Drag, Seg } from "./types.ts";
+import type { Box3, Drag, Seg, Vec } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
@@ -199,19 +200,60 @@ function updateVoxHover(t: Pick = pickVoxel()): void {
   hoverVox.position.set(w.x + 0.5, w.y + 0.5, w.z + 0.5);
 }
 
-// ---- box brush (add/erase): drag an NxM footprint, Shift extrudes vertically ----
+// ---- box brush (add/erase): drag a footprint in the started face's plane,
+// Shift extrudes along that face's normal ----
+type BoxState = NonNullable<Drag["box"]>;
+// the two in-plane axes for normal axis `na`
+const planeAxes = (na: number): [number, number] =>
+  na === 0 ? [1, 2] : na === 1 ? [0, 2] : [0, 1];
+// half-open Box3 region for box `b` with the given in-plane corner + extrude depth
+function boxRegionAt(b: BoxState, cu: number, cv: number, hy: number): Box3 {
+  const [ua, va] = planeAxes(b.na);
+  const lo = [0, 0, 0], hi = [0, 0, 0];
+  const span = (ax: number, p: number, q: number) => {
+    lo[ax] = Math.min(p, q);
+    hi[ax] = Math.max(p, q);
+  };
+  span(b.na, b.s[b.na], b.s[b.na] + hy); // extrude axis: s[na] .. s[na]+hy
+  span(ua, b.s[ua], cu);
+  span(va, b.s[va], cv);
+  return {
+    x0: lo[0],
+    y0: lo[1],
+    z0: lo[2],
+    x1: hi[0] + 1,
+    y1: hi[1] + 1,
+    z1: hi[2] + 1,
+    c: 0,
+  };
+}
+const boxRegion = (b: BoxState): Box3 => {
+  const [ua, va] = planeAxes(b.na);
+  return boxRegionAt(b, b.c[ua], b.c[va], b.hy);
+};
+
 function startBox(
   base: { x: number; y: number; sx: number; sy: number },
 ): void {
-  // erase may start over empty space (drag an erase box from the ground plane);
-  // add already falls back to the ground via voxelTarget
-  const s = voxelTarget() ?? (S.tool === "erase" ? localGroundCell(0) : null);
-  if (!s) return; // nothing under the pointer to start from
+  const t = pickVoxel();
+  let s: Vec, na: number;
+  if (t) {
+    // normal axis = the one where the add-cell steps off the hit cell
+    na = t.addCell.x !== t.cell.x ? 0 : t.addCell.y !== t.cell.y ? 1 : 2;
+    s = S.tool === "add" ? t.addCell : t.cell;
+  } else {
+    // empty space: lay the footprint on the ground plane (XZ), extrude in Y. add
+    // needs a ground start to build off nothing; erase may also start mid-air.
+    const g = localGroundCell(0);
+    if (!g) return;
+    s = g;
+    na = 1;
+  }
   S.drag = {
     ...base,
     mode: "box",
     shiftAnchorY: null,
-    box: { x0: s.x, y0: s.y, z0: s.z, x1: s.x, z1: s.z, hy: 0 },
+    box: { s: [s.x, s.y, s.z], c: [s.x, s.y, s.z], na, hy: 0 },
     // add collides with the object's own solids; snapshot them (immutable during
     // the drag) so the box can't be dragged to overlap a filled cell (Alt: ignore)
     occ: S.tool === "add" ? S.editObject!.boxes.slice() : undefined,
@@ -221,61 +263,33 @@ function startBox(
 }
 function boxDragTo(e: PointerEvent): void {
   const d = S.drag!, b = d.box!;
-  // would the box with this corner/height clear every solid? (Alt ignores them)
+  const [ua, va] = planeAxes(b.na);
+  // would the box with this corner/extrude clear every solid? (Alt ignores them)
   const collide = S.tool === "add" && !e.altKey;
-  const clear = (x1: number, z1: number, hy: number): boolean => {
-    if (!collide) return true;
-    const r: Box3 = {
-      x0: Math.min(b.x0, x1),
-      y0: Math.min(b.y0, b.y0 + hy),
-      z0: Math.min(b.z0, z1),
-      x1: Math.max(b.x0, x1) + 1,
-      y1: Math.max(b.y0, b.y0 + hy) + 1,
-      z1: Math.max(b.z0, z1) + 1,
-      c: 0,
-    };
-    return !boxesOverlap([r], d.occ ?? [], 0, 0, 0);
-  };
-  if (e.shiftKey) { // vertical extrude (like moving objects with Shift)
+  const clear = (cu: number, cv: number, hy: number): boolean =>
+    !collide ||
+    !boxesOverlap([boxRegionAt(b, cu, cv, hy)], d.occ ?? [], 0, 0, 0);
+  if (e.shiftKey) { // extrude along the face normal (Shift)
     if (d.shiftAnchorY === null) {
       d.shiftAnchorY = e.clientY;
       d.hyBase = b.hy;
     }
     const hy = d.hyBase! +
       Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel());
-    if (clear(b.x1, b.z1, hy)) b.hy = hy; // else stop at the last clear height
-  } else { // horizontal footprint
+    if (clear(b.c[ua], b.c[va], hy)) b.hy = hy; // else stop at the last clear depth
+  } else { // drag the footprint in the face's plane
     d.shiftAnchorY = null;
-    const c = localGroundCell(b.y0);
-    if (c) { // advance each axis only where it stays clear (slides along solids)
-      if (clear(c.x, b.z1, b.hy)) b.x1 = c.x;
-      if (clear(b.x1, c.z, b.hy)) b.z1 = c.z;
+    const p = localPlaneCell(b.na, b.s[b.na]);
+    if (p) { // advance each in-plane axis only where it stays clear (slides along solids)
+      const pc = [p.x, p.y, p.z];
+      if (clear(pc[ua], b.c[va], b.hy)) b.c[ua] = pc[ua];
+      if (clear(b.c[ua], pc[va], b.hy)) b.c[va] = pc[va];
     }
   }
   renderBox();
 }
-function boxExtent() {
-  const b = S.drag!.box!;
-  return {
-    x0: Math.min(b.x0, b.x1),
-    x1: Math.max(b.x0, b.x1),
-    z0: Math.min(b.z0, b.z1),
-    z1: Math.max(b.z0, b.z1),
-    y0: Math.min(b.y0, b.y0 + b.hy),
-    y1: Math.max(b.y0, b.y0 + b.hy),
-  };
-}
 function commitBox(): void {
-  const x = boxExtent();
-  // boxExtent is inclusive; box regions are half-open
-  const r = {
-    x0: x.x0,
-    y0: x.y0,
-    z0: x.z0,
-    x1: x.x1 + 1,
-    y1: x.y1 + 1,
-    z1: x.z1 + 1,
-  };
+  const r = boxRegion(S.drag!.box!);
   if (S.tool === "add") editAdd(r, S.selColor);
   else editErase(r);
   S.liveMeas = null;
@@ -285,13 +299,8 @@ function commitBox(): void {
 }
 // build the box wireframe as measure-style segments (3 labelled dimension edges + the rest unlabelled)
 function renderBox(): void {
-  const x = boxExtent(),
-    X0 = x.x0,
-    X1 = x.x1 + 1,
-    Y0 = x.y0,
-    Y1 = x.y1 + 1,
-    Z0 = x.z0,
-    Z1 = x.z1 + 1;
+  const r = boxRegion(S.drag!.box!);
+  const X0 = r.x0, X1 = r.x1, Y0 = r.y0, Y1 = r.y1, Z0 = r.z0, Z1 = r.z1;
   const nx = X1 - X0, ny = Y1 - Y0, nz = Z1 - Z0;
   const seg = (
     ax: number,

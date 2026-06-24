@@ -82,13 +82,14 @@ export type Drag = {
   dirty?: boolean; // rotobj: a rotation was applied during the drag (commit even if net steps == 0)
   clickId?: string | null;
   meas?: "freeze" | "clear";
-  // in-progress box-brush footprint; vertical extent is y0 ± hy, no explicit y1
+  // in-progress box-brush footprint, oriented to the face the drag began on. `s`
+  // is the start cell; the footprint lies in the plane perpendicular to axis `na`
+  // (0/1/2) at s[na], its opposite corner tracked in `c` (na coord stays s[na]);
+  // `hy` is the signed extrude depth along na (Shift). Cells are [x,y,z] tuples.
   box?: {
-    x0: number;
-    y0: number;
-    z0: number;
-    x1: number;
-    z1: number;
+    s: [number, number, number];
+    c: [number, number, number];
+    na: number;
     hy: number;
   };
   occ?: Box3[]; // obstacles: move = other objects (world); box add = own solids (local)
