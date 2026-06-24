@@ -24,6 +24,23 @@ const mkRnd = (seed: number) => {
 };
 
 Deno.test("voxel placement round-trip", () => {
+  // independent oracle: rotY must produce these exact 90°-step rotations. The
+  // round-trip below only proves rotY(·,-r) inverts rotY(·,r), which a wrong but
+  // self-inverse rotation (e.g. a chirality flip) would also satisfy — so pin the
+  // actual outputs of a known vector too.
+  const rotCases: [number, Vec][] = [
+    [0, { x: 1, y: 5, z: 2 }],
+    [1, { x: -2, y: 5, z: 1 }],
+    [2, { x: -1, y: 5, z: -2 }],
+    [3, { x: 2, y: 5, z: -1 }],
+  ];
+  for (const [r, want] of rotCases) {
+    const g = rotY({ x: 1, y: 5, z: 2 }, r);
+    assert(
+      g.x === want.x && g.y === want.y && g.z === want.z,
+      `rotY({1,5,2}, ${r}) = ${JSON.stringify(g)} != ${JSON.stringify(want)}`,
+    );
+  }
   const offsets: Vec[] = [{ x: 0, y: 0, z: 0 }, { x: 5, y: 1, z: -3 }, {
     x: -7,
     y: 2,
