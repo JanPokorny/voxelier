@@ -1,5 +1,5 @@
 // Undo/redo via full-document snapshots. Every committed edit funnels through
-// save() (persistence.js), which calls record() here to push a snapshot of the
+// save() (persistence.ts), which calls record() here to push a snapshot of the
 // whole document plus the editor's place in it (path, selection, edit target,
 // collapsed groups). Ctrl-Z walks back through the snapshots, Ctrl-Shift-Z /
 // Ctrl-Y walk forward; making a fresh edit after undoing drops the redo tail.
