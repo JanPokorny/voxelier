@@ -12,7 +12,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 export const scene = new THREE.Scene();
 scene.background = new THREE.Color("#7aa0c4"); // fallback; the sky quad covers it
 
-export const ISO_ELEV = Math.atan(1 / Math.SQRT2);
+const ISO_ELEV = Math.atan(1 / Math.SQRT2);
 export const cam = {
   azim: Math.PI / 4,
   elev: ISO_ELEV,
@@ -88,7 +88,7 @@ export const wake = (): void => {
   frame.tail = 30;
 };
 
-export const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
 export const _up = new THREE.Vector3(), _upN = new THREE.Vector3();
 const bg = new THREE.Color("#0f1115");
 // Voxels store a 0xRRGGBB int; resolve to a (cached) THREE.Color, full or dimmed.
@@ -117,7 +117,7 @@ export const matSurf = new THREE.MeshLambertMaterial({
 }); // opaque surfaces (soft corner AO is added in screen space — see the GTAO pass)
 // Transparent voxels render as a surface of only the exterior faces, back-face
 // culled — depth-correct yet reading as one glass pane.
-export const TRANSP_OPACITY = 0.42;
+const TRANSP_OPACITY = 0.42;
 export const matGlass = new THREE.MeshLambertMaterial({
   vertexColors: true,
   transparent: true,
