@@ -17,10 +17,6 @@ export const region = (
   c: number,
 ): Box3 => ({ x0, y0, z0, x1, y1, z1, c });
 
-const overlaps = (b: Box3, r: Region): boolean =>
-  b.x0 < r.x1 && r.x0 < b.x1 && b.y0 < r.y1 && r.y0 < b.y1 &&
-  b.z0 < r.z1 && r.z0 < b.z1;
-
 // Is cell (x,y,z) inside box b? (half-open [x0,x1) etc.)
 const contains = (b: Box3, x: number, y: number, z: number): boolean =>
   x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1;
@@ -54,17 +50,16 @@ function subtract(b: Box3, r: Region, out: Box3[]): void {
   }
 }
 
-// Carve `r` out of every box, then (unless erasing) lay the region back on top
-// with colour `c`. Returns a fresh, still-disjoint box list.
-export function addBox(boxes: Box3[], r: Region, c: number): Box3[] {
-  const out: Box3[] = [];
-  for (const b of boxes) overlaps(b, r) ? subtract(b, r, out) : out.push(b);
-  out.push({ ...r, c });
-  return out;
-}
+// Carve region `r` out of every box. Returns a fresh, still-disjoint box list.
 export function eraseBox(boxes: Box3[], r: Region): Box3[] {
   const out: Box3[] = [];
-  for (const b of boxes) overlaps(b, r) ? subtract(b, r, out) : out.push(b);
+  for (const b of boxes) subtract(b, r, out);
+  return out;
+}
+// Carve `r` out, then lay the region back on top with colour `c`.
+export function addBox(boxes: Box3[], r: Region, c: number): Box3[] {
+  const out = eraseBox(boxes, r);
+  out.push({ ...r, c });
   return out;
 }
 // Flood-fill: recolour the connected (face-adjacent) run of same-colour cells
