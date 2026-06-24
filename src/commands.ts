@@ -119,7 +119,7 @@ export function reparentNode(
   return true;
 }
 // wrap a node in a fresh group that takes its place (world pose preserved)
-export function wrapNode(node: Node): SceneNode | null {
+function wrapNode(node: Node): SceneNode | null {
   const par = parentOf(node) as SceneNode | null;
   if (!par) return null;
   const idx = par.children.indexOf(node);
