@@ -135,25 +135,28 @@ function sceneColors(): number[] {
   };
   return _scCache.cols;
 }
+// a .sw colour swatch: clicking selects the colour and rebuilds the rail, then
+// runs `after` (e.g. close the palette popup)
+const colorSwatch = (c: number, after?: () => void): HTMLElement => {
+  const s = el("div", {
+    className: "sw" + (c === S.selColor ? " active" : ""),
+    title: hex(c),
+    onclick: () => {
+      S.selColor = c;
+      buildSwatches();
+      after?.();
+    },
+  });
+  s.style.background = hex(c);
+  return s;
+};
 export function buildSwatches(): void {
   const w = document.getElementById("swatches")!;
   w.innerHTML = "";
   const cols = sceneColors().slice(); // copy: we may unshift the selected colour
   if (!cols.includes(S.selColor)) cols.unshift(S.selColor); // selected colour is always shown, at #1 if unused
-  const swatch = (c: number) => {
-    const s = el("div", {
-      className: "sw" + (c === S.selColor ? " active" : ""),
-      title: hex(c),
-      onclick: () => {
-        S.selColor = c;
-        buildSwatches();
-      },
-    });
-    s.style.background = hex(c);
-    return s;
-  };
   if (cols.length > 15) { // 14 colours + "…" all-colours menu
-    for (let i = 0; i < 14; i++) w.appendChild(swatch(cols[i]));
+    for (let i = 0; i < 14; i++) w.appendChild(colorSwatch(cols[i]));
     w.appendChild(el("div", {
       className: "sw more",
       textContent: "…",
@@ -164,7 +167,7 @@ export function buildSwatches(): void {
     for (let i = 0; i < 15; i++) {
       w.appendChild(
         i < cols.length
-          ? swatch(cols[i])
+          ? colorSwatch(cols[i])
           : el("div", { className: "sw empty" }),
       );
     }
@@ -215,19 +218,7 @@ function openPalette(): void {
     e.style.cssText = "color:var(--ink-dim);font-size:12px";
     grid.appendChild(e);
   }
-  for (const c of cols) {
-    const s = el("div", {
-      className: "sw" + (c === S.selColor ? " active" : ""),
-      title: hex(c),
-      onclick: () => {
-        S.selColor = c;
-        buildSwatches();
-        closePalette();
-      },
-    });
-    s.style.background = hex(c);
-    grid.appendChild(s);
-  }
+  for (const c of cols) grid.appendChild(colorSwatch(c, closePalette));
   pop.appendChild(grid);
   back.appendChild(pop);
   document.body.appendChild(back);
