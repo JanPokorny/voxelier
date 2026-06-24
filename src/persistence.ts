@@ -64,9 +64,10 @@ export function de(d: SerNode): Node {
 // Snapshotting (whole-document JSON for undo) and persistence both serialise the
 // model, so they're debounced together: a burst of edits collapses into a single
 // serialisation 250ms after the last change, keeping it off the interaction path.
+let saveT: number | undefined; // pending debounce timer (save -> flush)
 export function flush(): void {
-  clearTimeout(S.saveT ?? undefined);
-  S.saveT = null;
+  clearTimeout(saveT);
+  saveT = undefined;
   const rootJSON = JSON.stringify(ser(S.root)); // serialise once, share with record()
   record(rootJSON); // undo snapshot (no-op during restore)
   try {
@@ -74,8 +75,8 @@ export function flush(): void {
   } catch (_) { /* quota / private mode */ }
 }
 export function save(): void {
-  clearTimeout(S.saveT ?? undefined);
-  S.saveT = setTimeout(flush, 250);
+  clearTimeout(saveT);
+  saveT = setTimeout(flush, 250);
 }
 // Install a parsed { uid, root } envelope as the live document: seed the id
 // counter and deserialise the root. Returns false (and installs nothing) when the

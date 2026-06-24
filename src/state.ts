@@ -53,9 +53,6 @@ export type State = {
   liveMeas: Seg[] | null;
   frozenMeas: Seg[][];
   measLabels: MeasLabel[];
-
-  // ---- persistence debounce ----
-  saveT: number | null;
 };
 
 export const S: State = {
@@ -94,6 +91,4 @@ export const S: State = {
   liveMeas: null,
   frozenMeas: [],
   measLabels: [],
-
-  saveT: null,
 };
