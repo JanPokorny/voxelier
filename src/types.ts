@@ -24,15 +24,8 @@ export type Box3 = {
   z1: number;
   c: number;
 };
-// A box region without colour — an add/erase/paint target.
-export type Region = {
-  x0: number;
-  y0: number;
-  z0: number;
-  x1: number;
-  y1: number;
-  z1: number;
-};
+// A box region without colour — an add/erase/paint target (a Box3 sans colour).
+export type Region = Omit<Box3, "c">;
 
 type NodeBase = {
   id: string;
