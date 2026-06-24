@@ -34,7 +34,7 @@ const commit = (): void => {
 const rndSym = (v: number): number => (v < 0 ? -Math.round(-v) : Math.round(v));
 
 export function cycleVis(node: Node): void {
-  node.vis = VIS_CYCLE[node.vis || "visible"];
+  node.vis = VIS_CYCLE[node.vis];
   commit();
 }
 export function renameNode(node: Node): void {
