@@ -3,32 +3,39 @@
 // object for painting). The edit mode is implicit in what you've entered.
 import { S } from "./state.ts";
 import { findPath } from "./model.ts";
-import { rebuild } from "./render.ts";
+import { rebuild, refreshOverlay } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
-import type { Node } from "./types.ts";
+import type { Node, ObjectNode } from "./types.ts";
 
-// re-mesh + refresh the chrome after a navigation change (no persistence:
-// moving the cursor doesn't alter the document)
-const refresh = (): void => {
-  rebuild();
-  updateChrome();
-};
-// leave edit mode with exactly `id` selected in the current context — the shared
-// tail of ascend/exitObject/selectNode
-const selectOnly = (id: string): void => {
+// Leave edit mode with exactly `id` selected in the current context — the shared
+// tail of ascend/exitObject/selectNode. The rendered scene depends only on the
+// context (path tail) and the edit object; selection is a separate overlay. So
+// when neither changed (a plain re-select within the same context) we skip the
+// AO-meshing rebuild and just refresh the overlay, making tree selection as
+// instant as clicking the object in the 3D scene. Callers snapshot the context
+// and edit object before mutating S.path.
+const selectOnly = (
+  id: string,
+  prevCtx: Node,
+  prevEdit: ObjectNode | null,
+): void => {
   S.selection = new Set([id]);
   S.editObject = null;
   clearMeasure();
-  refresh();
+  if (S.context !== prevCtx || prevEdit) rebuild();
+  else refreshOverlay();
+  updateChrome();
 };
 
 export function ascend(): void {
-  if (S.path.length > 1) selectOnly(S.path.pop()!.id);
+  if (S.path.length <= 1) return;
+  const prevCtx = S.context, prevEdit = S.editObject;
+  selectOnly(S.path.pop()!.id, prevCtx, prevEdit);
 }
 export function exitObject(): void {
-  selectOnly(S.editObject!.id);
+  selectOnly(S.editObject!.id, S.context, S.editObject);
 }
 export function escapeUp(): void {
   if (S.editObject) exitObject();
@@ -38,8 +45,9 @@ export function escapeUp(): void {
 export function selectNode(node: Node): void { // select a node from the tree (enters its parent context)
   const p = findPath(node);
   if (!p) return;
+  const prevCtx = S.context, prevEdit = S.editObject;
   S.path = p.slice(0, -1);
-  selectOnly(node.id);
+  selectOnly(node.id, prevCtx, prevEdit);
 }
 export function enterNode(node: Node, fit?: boolean): void { // dbl-click in tree/canvas: descend or voxel-edit
   const p = findPath(node);
@@ -54,6 +62,7 @@ export function enterNode(node: Node, fit?: boolean): void { // dbl-click in tre
   S.selection.clear();
   S.tool = "add";
   clearMeasure();
-  refresh();
+  rebuild(); // entering always changes the context or edit object -> re-mesh
+  updateChrome();
   if (fit) frameView();
 }
