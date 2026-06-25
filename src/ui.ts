@@ -7,7 +7,7 @@ import { colorCounts, growBounds, worldBox } from "./boxes.ts";
 import { hoverVox } from "./scene-env.ts";
 import { clearMeasure } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
-import { enterNode, escapeUp, isEntered, selectNode } from "./navigation.ts";
+import { enterNode, escapeUp, selectNode } from "./navigation.ts";
 import {
   DEFAULT_COLORS,
   emptyBox,
@@ -303,30 +303,29 @@ function thumbFor(node: Node): HTMLCanvasElement {
   thumbCache.set(node.id, { sig, cv });
   return cv;
 }
-// tree-row clicks: first click enters; a quick second click on the same row fits
-// it; clicking a row that's already entered renames it after the dbl-click window.
+// tree-row clicks mirror clicking the object in the scene: a single click
+// selects, a double click zooms to the node and starts editing it (descend into
+// a group, or open an object for voxel edits). The browser rebuilds the row DOM
+// on select, which would break a native dblclick, so we disambiguate with a
+// short timer instead. Rename lives only in the right-click menu.
 function rowClick(node: Node): void {
-  if (pending && pending.node === node) { // quick second click on the same row -> zoom to fit
+  if (pending && pending.node === node) { // second click within the window: double-click
     clearTimeout(pending.timer);
     pending = null;
-    fitNode(node);
+    enterNode(node, true); // zoom to view + start editing
     return;
   }
   if (pending) clearTimeout(pending.timer);
-  const arm = (after?: () => void) => {
-    pending = {
-      node,
-      timer: setTimeout(() => {
-        pending = null;
-        after && after();
-      }, 300),
-    };
+  pending = {
+    node,
+    timer: setTimeout(() => {
+      pending = null;
+      // root can't be "selected" (selection lives within a context) — clicking it
+      // just returns to the top-level context
+      if (node === S.root) enterNode(node);
+      else selectNode(node);
+    }, 300),
   };
-  if (isEntered(node)) arm(() => renameNode(node)); // already entered: lone click renames after the window
-  else {
-    enterNode(node);
-    arm();
-  } // not entered: enter now; a quick second click still fits
 }
 // the row's cached thumbnail; for a non-empty non-root group it doubles as the
 // collapse toggle (a stacked look = collapsed)

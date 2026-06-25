@@ -41,12 +41,7 @@ export function selectNode(node: Node): void { // select a node from the tree (e
   S.path = p.slice(0, -1);
   selectOnly(node.id);
 }
-export function isEntered(node: Node): boolean { // is this node the one currently being edited/descended into?
-  return node.type === "object"
-    ? S.editObject === node
-    : (S.context === node && !S.editObject);
-}
-export function enterNode(node: Node, fit?: boolean): void { // click in tree / dbl-click in canvas: descend or voxel-edit
+export function enterNode(node: Node, fit?: boolean): void { // dbl-click in tree/canvas: descend or voxel-edit
   const p = findPath(node);
   if (!p) return;
   if (node.type === "scene") {
