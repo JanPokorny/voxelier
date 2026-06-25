@@ -119,35 +119,45 @@ const FACE6 = [
   { a: 2, hi: false, u: 1, v: 0, n: [0, 0, -1] },
 ] as const;
 type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
-// Smooth, spread-out ambient occlusion baked into the mesh. A face vertex's
-// brightness reflects how much of its surrounding neighbourhood is solid: we sum
-// the (distance-weighted) outside-layer cells within AO_R that are filled and
-// normalise by the total kernel weight, giving an occlusion *fraction* that
-// fades smoothly across the whole radius. This coverage model is deliberately
-// NOT a multiplicative product of per-cell visibility — that saturates to the
-// floor within a cell of any concave corner, collapsing the gradient into a hard
-// dark rim. Gouraud-interpolated; an interior vertex ≥ AO_R from every edge has
-// no occluder in range -> brightness 1, so flat masses split into boxes stay
-// seamless.
-const AO_R = 6; // occlusion spread radius, in cells
+// Smooth, spread-out ambient occlusion baked into the mesh. Per exposed face we
+// build a 2D occupancy field of the outside cell layer (1 = solid occluder) over
+// the face's span plus an AO_R margin, then blur it with a few separable box
+// passes — a 3-pass box blur closely approximates a Gaussian. A vertex's
+// occlusion is the blurred (0..1) field at its position: the Gaussian-weighted
+// fraction of its neighbourhood that is solid, so the shadow fades smoothly
+// across the whole radius. The blur uses running sums, so its cost is
+// independent of AO_R — the spread can be widened freely. Gouraud-interpolated;
+// an interior vertex ≥ AO_R from every edge sees no occluder -> brightness 1, so
+// flat masses split into boxes stay seamless.
+const AO_PASSES = 3; // box-blur passes; 3 ≈ a Gaussian
+const AO_BOX = 2; // box radius per pass
+const AO_R = AO_PASSES * AO_BOX; // total blur half-width = spread radius, in cells
 const AO_DARK = 0.5; // brightness of a fully-occluded (rim/corner) vertex
-// sample kernel: outside-layer cell offsets within AO_R, each with a smoothstep
-// distance falloff (eased at both ends). AO_WSUM is the total weight, so a vertex
-// whose whole neighbourhood is solid reaches occlusion 1 (brightness AO_DARK).
-const AO_KERNEL: [number, number, number][] = [];
-let aoWSum = 0;
-for (let du = -AO_R; du < AO_R; du++) {
-  for (let dv = -AO_R; dv < AO_R; dv++) {
-    const d = Math.hypot(du + 0.5, dv + 0.5);
-    if (d < AO_R) {
-      const s = 1 - d / AO_R, // 1 at the occluder .. 0 at the radius edge
-        w = s * s * (3 - 2 * s); // smoothstep falloff
-      AO_KERNEL.push([du, dv, w]);
-      aoWSum += w;
+// One separable box-blur pass with zero padding (out-of-field reads as open),
+// dividing by the full window so each occluder spreads over 2·AO_BOX+1 cells.
+// Blurs `count` lines of `len` elements; line k starts at k·lineStride with
+// elements elemStride apart — call once per axis with the strides swapped.
+function aoBlur1D(
+  src: Float32Array,
+  dst: Float32Array,
+  count: number,
+  len: number,
+  lineStride: number,
+  elemStride: number,
+): void {
+  const div = 2 * AO_BOX + 1;
+  for (let k = 0; k < count; k++) {
+    const base = k * lineStride;
+    let sum = 0;
+    for (let t = 0; t <= AO_BOX && t < len; t++) sum += src[base + t * elemStride];
+    for (let p = 0; p < len; p++) {
+      dst[base + p * elemStride] = sum / div;
+      const add = p + AO_BOX + 1, rem = p - AO_BOX;
+      if (add < len) sum += src[base + add * elemStride];
+      if (rem >= 0) sum -= src[base + rem * elemStride];
     }
   }
 }
-const AO_WSUM = aoWSum;
 function boxFaceGeo(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
@@ -201,54 +211,40 @@ function boxFaceGeo(
         o[v] = vv;
         return [o[0], o[1], o[2]];
       };
-      // AO brightness at a face vertex: sum the distance weights of the solid
-      // outside-layer cells within AO_R and normalise by the total kernel weight,
-      // so brightness tracks the open *fraction* of the neighbourhood and fades
-      // gradually across the whole radius (see the coverage-model note above).
-      // Two layers of work-saving over the naive per-vertex grid sweep:
-      //  - a flat occluder mask over this face's (u,v) span + AO_R margin, built
-      //    once and shared by every vertex, so each kernel tap is an array read
-      //    rather than a has() grid query (the dominant cost on big faces);
-      //  - memoisation, because the rim band is meshed as 1×1 quads so each
-      //    lattice vertex is shared by up to four of them.
-      const aoMemo = new Map<number, number>();
-      let mask: Uint8Array | null = null; // lazy: skip fully-covered faces
-      let mu0 = 0, mv0 = 0, mh = 0; // mask origin (u,v) and row stride
-      const buildMask = (): Uint8Array => {
-        mu0 = blo[u] - AO_R;
-        mv0 = blo[v] - AO_R;
-        const mw = bhi[u] - blo[u] + 2 * AO_R + 1;
-        mh = bhi[v] - blo[v] + 2 * AO_R + 1;
-        const m = new Uint8Array(mw * mh);
+      // AO at a face vertex: read the blurred outside-layer occupancy field (see
+      // the note by AO_PASSES). The field is built lazily and shared by every
+      // vertex of the face, so fully-covered faces (no exposed pieces) cost
+      // nothing, and each vertex is a single array read.
+      let field: Float32Array | null = null;
+      let fu0 = 0, fv0 = 0, fh = 0; // field origin (u,v) and v-row stride
+      const buildField = (): Float32Array => {
+        fu0 = blo[u] - AO_R;
+        fv0 = blo[v] - AO_R;
+        const fw = bhi[u] - blo[u] + 2 * AO_R + 1;
+        fh = bhi[v] - blo[v] + 2 * AO_R + 1;
+        const s = new Float32Array(fw * fh); // outside-layer occupancy (0/1)
         const cell = aoCell; // {a,u,v} permute 0..2, so all 3 slots are written
         cell[a] = wo;
-        for (let i2 = 0; i2 < mw; i2++) {
-          cell[u] = mu0 + i2;
-          const col = i2 * mh;
-          for (let j2 = 0; j2 < mh; j2++) {
-            cell[v] = mv0 + j2;
-            if (has!(cell[0], cell[1], cell[2])) m[col + j2] = 1;
+        for (let i2 = 0; i2 < fw; i2++) {
+          cell[u] = fu0 + i2;
+          const col = i2 * fh;
+          for (let j2 = 0; j2 < fh; j2++) {
+            cell[v] = fv0 + j2;
+            if (has!(cell[0], cell[1], cell[2])) s[col + j2] = 1;
           }
         }
-        return (mask = m);
+        const d = new Float32Array(fw * fh); // ping-pong scratch
+        for (let p = 0; p < AO_PASSES; p++) { // each pass blurs both axes
+          aoBlur1D(s, d, fw, fh, fh, 1); // along v (contiguous rows)
+          aoBlur1D(d, s, fh, fw, 1, fh); // along u (strided columns)
+        }
+        return (field = s); // both sweeps land the result back in s
       };
       const vbright = (vu: number, vv: number): number => {
         if (!has) return 1;
-        const key = vu * 1e6 + vv; // face coords are small ints; |vv| << 1e6
-        const hit = aoMemo.get(key);
-        if (hit !== undefined) return hit;
-        const m = mask ?? buildMask();
-        // base index of (vu,vv) in the mask; +(du,dv) stays in bounds by the
-        // AO_R margin, and du,dv ∈ [-AO_R, AO_R-1], so no per-tap bounds check
-        const bu = vu - mu0, bv = vv - mv0;
-        let occ = 0;
-        for (const [du, dv, w] of AO_KERNEL) {
-          if (m[(bu + du) * mh + (bv + dv)]) occ += w;
-        }
-        const vis = 1 - occ / AO_WSUM; // open fraction of the neighbourhood
-        const b = AO_DARK + (1 - AO_DARK) * vis;
-        aoMemo.set(key, b);
-        return b;
+        const f = field ?? buildField();
+        const occ = f[(vu - fu0) * fh + (vv - fv0)]; // blurred solid fraction
+        return AO_DARK + (1 - AO_DARK) * (1 - occ);
       };
       // one quad with per-vertex AO baked into the vertex colours (Gouraud)
       const quad = (qu0: number, qv0: number, qu1: number, qv1: number) => {
