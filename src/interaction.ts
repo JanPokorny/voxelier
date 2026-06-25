@@ -603,6 +603,11 @@ canvas.addEventListener("pointerup", (e) => {
 canvas.addEventListener("pointercancel", () => {
   if (!S.drag && !S.painting) return;
   const painted = S.painting;
+  // a cancelled selection move/rotate has already carved its content out of the
+  // object (liftSelection); stamp it back so the model can't desync from the view
+  if (S.drag && (S.drag.mode === "selmove" || S.drag.mode === "selrot")) {
+    dropSelection();
+  }
   S.drag = null;
   S.painting = false;
   S.liveMeas = null; // drop any in-progress box-brush / measure wireframe
