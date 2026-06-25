@@ -102,7 +102,14 @@ function pasteVoxAsObject(): void {
   if (!v.length) return;
   const o = newObject();
   o.boxes = v.map((b) => ({ ...b }));
-  o.pos = { x: Math.round(goal.target.x), y: 0, z: Math.round(goal.target.z) };
+  // place at the camera focus, converted from world to the (possibly
+  // transformed) context-local frame the new object lives in
+  const x = contextXform();
+  const l = rotY(
+    { x: goal.target.x - x.off.x, y: 0, z: goal.target.z - x.off.z },
+    -x.rot,
+  );
+  o.pos = { x: Math.round(l.x), y: 0, z: Math.round(l.z) };
   S.context.children.push(o);
   S.collapsed.delete(S.context.id);
   S.selection = new Set([o.id]);

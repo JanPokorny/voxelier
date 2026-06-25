@@ -636,6 +636,10 @@ function doDrop(): void {
 
 window.addEventListener("keydown", (e) => {
   if ((e.target as HTMLElement).tagName === "INPUT") return;
+  // ignore shortcuts mid-gesture: undo/redo (and delete/clipboard) serialize the
+  // live model, which during a lifted-selection drag is in a transient
+  // content-carved-out state that must not be recorded or acted on
+  if (S.drag || S.painting) return;
   const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
   if (mod) {
     if (k === "z") {
