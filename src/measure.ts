@@ -2,35 +2,35 @@
 // three axes through a voxel; left-click freezes a reading, right-click clears.
 import * as THREE from "three";
 import { S } from "./state.ts";
-import { _mv, camera, canvas, measLines, ndc, raycaster } from "./scene-env.ts";
+import { _mv, camera, measLines, viewport } from "./scene-env.ts";
 import { eachObject } from "./render.ts";
 import { boxesHas, buildIndex, growBounds, worldBox } from "./boxes.ts";
-import {
-  cellOf,
-  groundCell,
-  localGroundCell,
-  locToW,
-  pickVoxel,
-} from "./picking.ts";
+import { localGroundCell, locToW, pickVoxel, worldCell } from "./picking.ts";
 import { emptyBox } from "./model.ts";
-import type { Box3, MeasField, Seg, Vec } from "./types.ts";
+import type { Box3, MeasField, MeasLabel, Seg, Vec } from "./types.ts";
 
 const M_FILL = new THREE.Color(0xa7c4bc), M_EMPTY = new THREE.Color(0x5c677d);
+// Measurement state owned solely by this module: the memoised occupancy field
+// (invalidated via invalidateField()), the frozen dimension readings, and the
+// live DOM label elements with their world anchors.
+let fieldCache: MeasField | null = null;
+let frozenMeas: Seg[][] = [];
+let measLabels: MeasLabel[] = [];
 // measure is a tool while editing an object, a standalone mode otherwise
 export const measureActive = (): boolean =>
   S.editObject ? S.tool === "measure" : S.measMode;
 export const invalidateField = (): void => {
-  S.measFieldCache = null;
+  fieldCache = null;
 };
 export function clearMeasure(): void {
   S.liveMeas = null;
-  S.frozenMeas = [];
+  frozenMeas = [];
   renderMeasure();
 }
 
 // the field being measured: edited object (local) or current scene context (world)
 function measureField(): MeasField {
-  if (S.measFieldCache) return S.measFieldCache;
+  if (fieldCache) return fieldCache;
   const boxes: Box3[] = [];
   let toW: (x: number, y: number, z: number) => THREE.Vector3;
   if (S.editObject) {
@@ -64,8 +64,8 @@ function measureField(): MeasField {
   const has = boxes.length > 64
     ? buildIndex(boxes)
     : (x: number, y: number, z: number) => boxesHas(boxes, x, y, z);
-  S.measFieldCache = { has, mn, mx, toW, empty };
-  return S.measFieldCache;
+  fieldCache = { has, mn, mx, toW, empty };
+  return fieldCache;
 }
 function measureRef(): Vec | null { // voxel cell under the pointer, clamped into the field
   const f = measureField();
@@ -74,16 +74,7 @@ function measureRef(): Vec | null { // voxel cell under the pointer, clamped int
   if (S.editObject) {
     const t = pickVoxel();
     cell = t ? { ...t.cell } : localGroundCell(0);
-  } else {
-    raycaster.setFromCamera(ndc, camera);
-    const hits = S.pickMeshes.length
-      ? raycaster.intersectObjects(S.pickMeshes, false)
-      : [];
-    if (hits.length) {
-      const h = hits[0], n = h.face ? h.face.normal : { x: 0, y: 0, z: 0 };
-      cell = cellOf(h.point, n);
-    } else cell = groundCell(0);
-  }
+  } else cell = worldCell();
   if (!cell) return null;
   return {
     x: Math.max(f.mn.x, Math.min(f.mx.x, cell.x)),
@@ -137,7 +128,7 @@ export function pointerMeasure(): void {
 }
 export function freezeMeasure(): void {
   if (S.liveMeas && S.liveMeas.length) {
-    S.frozenMeas.push(S.liveMeas);
+    frozenMeas.push(S.liveMeas);
     renderMeasure();
   }
 }
@@ -145,10 +136,10 @@ export function freezeMeasure(): void {
 export function renderMeasure(): void {
   const cont = document.getElementById("measure")!;
   cont.innerHTML = "";
-  S.measLabels = [];
+  measLabels = [];
   const sets: { s: Seg[]; fz: boolean }[] = [];
   if (S.liveMeas) sets.push({ s: S.liveMeas, fz: false });
-  for (const f of S.frozenMeas) sets.push({ s: f, fz: true });
+  for (const f of frozenMeas) sets.push({ s: f, fz: true });
   const pos: number[] = [], colr: number[] = [];
   for (const set of sets) {
     for (const seg of set.s) {
@@ -161,7 +152,7 @@ export function renderMeasure(): void {
         (set.fz ? " frozen" : "");
       el.textContent = String(seg.len);
       cont.appendChild(el);
-      S.measLabels.push({ el, w: seg.mid });
+      measLabels.push({ el, w: seg.mid });
     }
   }
   measLines.geometry.dispose();
@@ -172,16 +163,15 @@ export function renderMeasure(): void {
   measLines.visible = pos.length > 0;
 }
 export function updateMeasureLabels(): void {
-  if (!S.measLabels.length) return;
-  const r = canvas.getBoundingClientRect();
-  for (const L of S.measLabels) {
+  if (!measLabels.length) return;
+  for (const L of measLabels) {
     _mv.copy(L.w).project(camera);
     if (_mv.z > 1) {
       L.el.style.display = "none";
       continue;
     }
     L.el.style.display = "";
-    L.el.style.left = ((_mv.x * 0.5 + 0.5) * r.width) + "px";
-    L.el.style.top = ((-_mv.y * 0.5 + 0.5) * r.height) + "px";
+    L.el.style.left = ((_mv.x * 0.5 + 0.5) * viewport.w) + "px";
+    L.el.style.top = ((-_mv.y * 0.5 + 0.5) * viewport.h) + "px";
   }
 }

@@ -24,15 +24,8 @@ export type Box3 = {
   z1: number;
   c: number;
 };
-// A box region without colour — an add/erase/paint target.
-export type Region = {
-  x0: number;
-  y0: number;
-  z0: number;
-  x1: number;
-  y1: number;
-  z1: number;
-};
+// A box region without colour — an add/erase/paint target (a Box3 sans colour).
+export type Region = Omit<Box3, "c">;
 
 type NodeBase = {
   id: string;
@@ -46,10 +39,7 @@ export type SceneNode = NodeBase & { type: "scene"; children: Node[] };
 export type Node = ObjectNode | SceneNode;
 
 // ---- editor tools ----
-export type Tool = "add" | "erase" | "paint" | "measure";
-
-// A surface cell produced by box meshing: position + colour.
-export type Cell = { x: number; y: number; z: number; c: number };
+export type Tool = "add" | "erase" | "paint" | "eyedropper" | "measure";
 
 // ---- measurement ----
 // One labelled dimension segment between two world points.
@@ -71,9 +61,10 @@ export type MeasField = {
 };
 
 // ---- pointer drag ----
-// One loosely-shaped record covers every drag mode (pan/orbit/move/rotobj/box/
-// measure); fields are populated per mode at pointerdown. Kept permissive on
-// purpose so the pointer handlers stay terse.
+// One loosely-shaped record covers every drag mode (pan/orbit/move/rotobj/box);
+// measurement has no mode of its own — it piggybacks on a pan/orbit drag via the
+// `meas` field below. Fields are populated per mode at pointerdown, kept
+// permissive on purpose so the pointer handlers stay terse.
 export type Drag = {
   mode: "pan" | "orbit" | "move" | "rotobj" | "box";
   x: number;
@@ -91,17 +82,22 @@ export type Drag = {
   dirty?: boolean; // rotobj: a rotation was applied during the drag (commit even if net steps == 0)
   clickId?: string | null;
   meas?: "freeze" | "clear";
+  // in-progress box-brush footprint, oriented to the face the drag began on. `s`
+  // is the start cell; the footprint lies in the plane perpendicular to axis `na`
+  // (0/1/2) at s[na], its opposite corner tracked in `c` (na coord stays s[na]);
+  // `hy` is the signed extrude depth along na (Shift). Cells are [x,y,z] tuples.
   box?: {
-    x0: number;
-    y0: number;
-    z0: number;
-    x1: number;
-    z1: number;
+    s: [number, number, number];
+    c: [number, number, number];
+    na: number;
     hy: number;
   };
   occ?: Box3[]; // obstacles: move = other objects (world); box add = own solids (local)
   sel?: Box3[]; // moving selection boxes (world)
   minY?: number; // move: lowest world y0 of the selection at drag start (ground clamp)
+  hgt?: number; // move: selection world height (caps the collision hop to 10%)
+  dyUser?: number; // move: vertical offset the user set via Shift (the hop adds to it)
+  shiftAnchorX?: number | null; // box Shift-extrude: pointer x where Shift engaged
 };
 
 // Pending drop target while dragging a tree row.

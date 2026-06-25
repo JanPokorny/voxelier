@@ -30,9 +30,8 @@ body {
   position: fixed;
   inset: 0;
   display: grid;
-  grid-template-rows: 1fr auto;
-  grid-template-columns: 64px 1fr 200px;
-  grid-template-areas: "left stage right" "left status status";
+  grid-template-columns: 1fr 200px;
+  grid-template-areas: "stage right";
 }
 
 button {
@@ -54,20 +53,36 @@ button.active {
   color: var(--accent-ink);
   font-weight: 600;
 }
-.sep {
-  flex: 1;
-}
 
+/* floating tool rail: a transparent full-height overlay on the stage's left edge
+   that pins one button group to the top and one to the bottom. The overlay itself
+   ignores pointer events so the canvas stays draggable between the groups. */
 #tools {
-  grid-area: left;
-  background: var(--panel);
-  border-right: 1px solid var(--line);
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 10px;
+  gap: 10px;
+  pointer-events: none;
+  z-index: 4;
+}
+/* a button group: a rounded floating panel sized to its content (no empty space) */
+.toolgroup {
+  pointer-events: auto;
+  align-self: start;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 10px 6px;
-  z-index: 4;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 .tool {
   width: 50px;
@@ -95,8 +110,8 @@ button.active {
   border-color: #3a4252;
 }
 .tool.active {
-  background: var(--accent);
-  color: var(--accent-ink);
+  /* background + color come from button.active (a .tool is a <button>); only the
+     border is tool-specific */
   border-color: var(--accent);
 }
 
@@ -253,13 +268,48 @@ h3 {
 .trow .tb.on {
   color: var(--accent);
 }
-.swatches {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
+/* draw-colour control in the tool rail: the active-colour icon and its hover
+   flyout of recent colours + picker */
+.colorctl {
+  position: relative;
+}
+.colorbtn {
+  width: 50px;
+  height: 50px; /* 1:1, matching the tool-button footprint above */
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  outline: 1px solid rgba(0, 0, 0, 0.35);
+  outline-offset: -2px;
+  cursor: pointer;
+}
+.colorflyout {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  display: none;
   gap: 6px;
+  padding: 6px;
+  margin-left: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+/* keep the 8px gap hoverable so the pointer can cross from icon to flyout */
+.colorflyout::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+}
+.colorctl:hover .colorflyout {
+  display: flex;
 }
 .sw {
-  aspect-ratio: 1;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
   cursor: pointer;
   border: 2px solid transparent;
@@ -269,11 +319,6 @@ h3 {
 .sw.active {
   border-color: var(--ink);
   box-shadow: 0 0 0 1px var(--ink);
-}
-.sw.empty {
-  cursor: default;
-  outline-color: var(--line);
-  outline-style: dashed;
 }
 .sw.more {
   display: flex;
@@ -319,57 +364,4 @@ h3 {
   height: 1px;
   background: var(--line);
   margin: 4px 6px;
-}
-#palback {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-}
-#palpop {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 14px;
-  width: 300px;
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
-}
-.pophead {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.7px;
-  color: var(--ink-dim);
-  margin-bottom: 10px;
-}
-.popgrid {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 6px;
-  max-height: 210px;
-  overflow: auto;
-}
-
-#status {
-  grid-area: status;
-  background: var(--panel);
-  border-top: 1px solid var(--line);
-  padding: 5px 12px;
-  color: var(--ink-dim);
-  font-size: 11px;
-  display: flex;
-  gap: 16px;
-  align-items: center;
-}
-kbd {
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-bottom-width: 2px;
-  border-radius: 4px;
-  padding: 1px 5px;
-  font: inherit;
-  font-size: 10px;
-  color: var(--ink);
 }

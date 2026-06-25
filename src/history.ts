@@ -1,5 +1,5 @@
 // Undo/redo via full-document snapshots. Every committed edit funnels through
-// save() (persistence.js), which calls record() here to push a snapshot of the
+// save() (persistence.ts), which calls record() here to push a snapshot of the
 // whole document plus the editor's place in it (path, selection, edit target,
 // collapsed groups). Ctrl-Z walks back through the snapshots, Ctrl-Shift-Z /
 // Ctrl-Y walk forward; making a fresh edit after undoing drops the redo tail.
@@ -44,9 +44,11 @@ export function record(rootJSON: string): void {
   if (restoring) return;
   const snap = snapshot(rootJSON);
   const prev = stack[index];
-  if (prev && prev.rootJSON === snap.rootJSON && prev.editId === snap.editId) {
-    return;
-  }
+  // dedup on the document only: record() is only reached via save() (after a
+  // real mutation) or a baseline flush; navigation that changes editId alone
+  // never calls save(), and restore() reproduces rootJSON exactly — so the
+  // editId is never the deciding difference here.
+  if (prev && prev.rootJSON === snap.rootJSON) return;
   stack.length = index + 1; // drop any redo tail
   stack.push(snap);
   if (stack.length > MAX) stack.shift();

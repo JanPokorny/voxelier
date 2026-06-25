@@ -14,7 +14,7 @@ const object = (name: string, boxes: Box3[]): ObjectNode => {
   o.boxes = boxes;
   return o;
 };
-const rgn = (
+const eraseRgn = (
   x0: number,
   y0: number,
   z0: number,
@@ -39,9 +39,9 @@ export function seed(): SceneNode {
     region(0, 1, T, T, H + 1, D - T, C[5]), // left wall
     region(W - T, 1, T, W, H + 1, D - T, C[5]), // right wall
   ];
-  wb = eraseBox(wb, rgn(nearX, 1, 0, nearX + dw, dh + 1, T)); // near door
-  wb = eraseBox(wb, rgn(farX, 1, D - T, farX + dw, dh + 1, D)); // far door
-  wb = eraseBox(wb, rgn(0, mm(900), mm(600), T, mm(2100), D - mm(600))); // window
+  wb = eraseBox(wb, eraseRgn(nearX, 1, 0, nearX + dw, dh + 1, T)); // near door
+  wb = eraseBox(wb, eraseRgn(farX, 1, D - T, farX + dw, dh + 1, D)); // far door
+  wb = eraseBox(wb, eraseRgn(0, mm(900), mm(600), T, mm(2100), D - mm(600))); // window
   const walls = object("Walls", wb);
   walls.vis = "transparent"; // glass so the furnished interior stays visible
 

@@ -12,11 +12,13 @@ import {
   goal,
   hoverVox,
   overlay,
+  viewport,
   ZOOM_MAX,
 } from "./scene-env.ts";
 import {
   groundCell,
   localGroundCell,
+  localPlaneCell,
   locToW,
   type Pick,
   pickChild,
@@ -29,6 +31,7 @@ import {
   editAdd,
   editErase,
   editFill,
+  eyedropColor,
   rebuild,
   refreshOverlay,
 } from "./render.ts";
@@ -44,12 +47,15 @@ import {
 } from "./measure.ts";
 import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
-import { updateChrome } from "./ui.ts";
+import { selectColor, updateChrome } from "./ui.ts";
 import { save } from "./persistence.ts";
-import type { Box3, Drag, Seg } from "./types.ts";
+import type { Box3, Drag, Seg, Vec } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
+// sentinel start-x for non-click drags (middle-button pan): keeps moved() true so
+// the gesture is never finalised as a click in pointerup
+const NOT_A_CLICK = -1e9;
 
 // World-Y units per pixel of vertical pointer travel, for Shift height edits.
 // One screen pixel is `perPx` world units along the screen's vertical axis; world
@@ -57,8 +63,7 @@ const moved = (e: PointerEvent) =>
 // so dividing by it makes the dragged height track the pointer exactly instead of
 // lagging it in the foreshortened isometric view.
 function worldYPerPixel(): number {
-  const perPx = (camera.top - camera.bottom) /
-    canvas.getBoundingClientRect().height;
+  const perPx = (camera.top - camera.bottom) / viewport.h;
   const upY = Math.abs(camera.matrixWorldInverse.elements[5]);
   return perPx / Math.max(upY, 0.15); // clamp: near top-down, Y barely projects
 }
@@ -80,15 +85,23 @@ function dragPanOrbit(e: PointerEvent): boolean {
 // block. A candidate offset is blocked if a shifted selection box overlaps an
 // obstacle box, or if it would push the selection's lowest voxel below the
 // ground (world y=0). minY is that lowest world y0 at drag start.
-function moveCollision(): { occ: Box3[]; sel: Box3[]; minY: number } {
+function moveCollision(): {
+  occ: Box3[];
+  sel: Box3[];
+  minY: number;
+  hgt: number;
+} {
   const occ: Box3[] = [], sel: Box3[] = [];
   eachObject(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (n, off, rot, owner) => {
     const tgt = owner && S.selection.has(owner) ? sel : occ;
     for (const b of n.boxes) tgt.push(worldBox(b, rot, off));
   });
-  let minY = Infinity;
-  for (const b of sel) if (b.y0 < minY) minY = b.y0;
-  return { occ, sel, minY };
+  let minY = Infinity, maxY = -Infinity;
+  for (const b of sel) {
+    if (b.y0 < minY) minY = b.y0;
+    if (b.y1 > maxY) maxY = b.y1;
+  }
+  return { occ, sel, minY, hgt: sel.length ? maxY - minY : 0 };
 }
 const moveBlocked = (
   d: Drag,
@@ -105,29 +118,48 @@ const moveBlocked = (
 
 function moveDragTo(e: PointerEvent): void {
   const d = S.drag!;
-  let dx = d.dx!, dy = d.dy!, dz = d.dz!;
-  if (e.shiftKey) { // Shift: adjust height from where it was dragged to
+  const free = (x: number, y: number, z: number) =>
+    e.altKey || !moveBlocked(d, x, y, z);
+  if (e.shiftKey) { // Shift: set the intended height directly (overrides the hop)
     if (d.shiftAnchorY == null) {
       d.shiftAnchorY = e.clientY;
-      d.dyBase = d.dy;
+      d.dyBase = d.dyUser ?? 0;
     }
-    dy = d.dyBase! +
+    const dy = d.dyBase! +
       Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
-  } else { // horizontal: move on the floor plane
+    if (free(d.dx!, dy, d.dz!)) {
+      d.dyUser = dy;
+      d.dy = dy;
+    }
+  } else { // horizontal: move on the floor plane, hopping over small obstacles
     d.shiftAnchorY = null;
+    let dx = d.dx!, dz = d.dz!;
     const g = groundCell(0);
     if (g && d.start) {
       dx = g.x - d.start.x;
       dz = g.z - d.start.z;
     }
+    // When the target is blocked, raise the object just enough to clear it — but
+    // only up to 10% of its height. The bump is recomputed each move, so dragging
+    // off the obstacle (bump 0 clears) drops it back to the user's chosen height.
+    const base = d.dyUser ?? 0;
+    const maxBump = Math.floor(0.1 * (d.hgt ?? 0));
+    let hopped = false;
+    for (let b = 0; b <= maxBump; b++) {
+      if (free(dx, base + b, dz)) {
+        d.dx = dx;
+        d.dz = dz;
+        d.dy = base + b;
+        hopped = true;
+        break;
+      }
+    }
+    if (!hopped) { // obstacle too tall to hop: slide along it at the base height
+      if (free(dx, base, d.dz!)) d.dx = dx;
+      if (free(d.dx!, base, dz)) d.dz = dz;
+      d.dy = base;
+    }
   }
-  // advance each axis toward the cursor only where it wouldn't intersect another
-  // object (so the piece slides along obstacles); Alt ignores collisions.
-  const free = (x: number, y: number, z: number) =>
-    e.altKey || !moveBlocked(d, x, y, z);
-  if (free(dx, d.dy!, d.dz!)) d.dx = dx;
-  if (free(d.dx!, dy, d.dz!)) d.dy = dy;
-  if (free(d.dx!, d.dy!, dz)) d.dz = dz;
   for (const id of S.selection) {
     for (const m of (S.childMeshes[id] || [])) {
       m.position.set(d.dx!, d.dy!, d.dz!);
@@ -165,6 +197,11 @@ function rotDragTo(e: PointerEvent): void {
   }
 }
 
+function eyedrop(): void { // pick the draw colour from the voxel under the cursor (any object)
+  const c = eyedropColor();
+  if (c != null) selectColor(c); // routes through the recent-colours list + chrome refresh
+}
+
 function applyVoxel(): void { // bucket: flood-fill the connected same-colour region under the cursor
   const t = pickVoxel();
   const c = voxelTarget(t);
@@ -190,19 +227,60 @@ function updateVoxHover(t: Pick = pickVoxel()): void {
   hoverVox.position.set(w.x + 0.5, w.y + 0.5, w.z + 0.5);
 }
 
-// ---- box brush (add/erase): drag an NxM footprint, Shift extrudes vertically ----
+// ---- box brush (add/erase): drag a footprint in the started face's plane,
+// Shift extrudes along that face's normal ----
+type BoxState = NonNullable<Drag["box"]>;
+// the two in-plane axes for normal axis `na`
+const planeAxes = (na: number): [number, number] =>
+  na === 0 ? [1, 2] : na === 1 ? [0, 2] : [0, 1];
+// half-open Box3 region for box `b` with the given in-plane corner + extrude depth
+function boxRegionAt(b: BoxState, cu: number, cv: number, hy: number): Box3 {
+  const [ua, va] = planeAxes(b.na);
+  const lo = [0, 0, 0], hi = [0, 0, 0];
+  const span = (ax: number, p: number, q: number) => {
+    lo[ax] = Math.min(p, q);
+    hi[ax] = Math.max(p, q);
+  };
+  span(b.na, b.s[b.na], b.s[b.na] + hy); // extrude axis: s[na] .. s[na]+hy
+  span(ua, b.s[ua], cu);
+  span(va, b.s[va], cv);
+  return {
+    x0: lo[0],
+    y0: lo[1],
+    z0: lo[2],
+    x1: hi[0] + 1,
+    y1: hi[1] + 1,
+    z1: hi[2] + 1,
+    c: 0,
+  };
+}
+const boxRegion = (b: BoxState): Box3 => {
+  const [ua, va] = planeAxes(b.na);
+  return boxRegionAt(b, b.c[ua], b.c[va], b.hy);
+};
+
 function startBox(
-  _e: PointerEvent,
   base: { x: number; y: number; sx: number; sy: number },
 ): void {
-  const s = voxelTarget();
-  if (!s) return; // nothing under the pointer to start from
+  const t = pickVoxel();
+  let s: Vec, na: number;
+  if (t) {
+    // normal axis = the one where the add-cell steps off the hit cell
+    na = t.addCell.x !== t.cell.x ? 0 : t.addCell.y !== t.cell.y ? 1 : 2;
+    s = S.tool === "add" ? t.addCell : t.cell;
+  } else {
+    // empty space: lay the footprint on the ground plane (XZ), extrude in Y. add
+    // needs a ground start to build off nothing; erase may also start mid-air.
+    const g = localGroundCell(0);
+    if (!g) return;
+    s = g;
+    na = 1;
+  }
   S.drag = {
     ...base,
     mode: "box",
     shiftAnchorY: null,
-    hyBase: 0,
-    box: { x0: s.x, y0: s.y, z0: s.z, x1: s.x, z1: s.z, hy: 0 },
+    box: { s: [s.x, s.y, s.z], c: [s.x, s.y, s.z], na, hy: 0 },
     // add collides with the object's own solids; snapshot them (immutable during
     // the drag) so the box can't be dragged to overlap a filled cell (Alt: ignore)
     occ: S.tool === "add" ? S.editObject!.boxes.slice() : undefined,
@@ -212,61 +290,59 @@ function startBox(
 }
 function boxDragTo(e: PointerEvent): void {
   const d = S.drag!, b = d.box!;
-  // would the box with this corner/height clear every solid? (Alt ignores them)
+  const [ua, va] = planeAxes(b.na);
+  // would the box with this corner/extrude clear every solid? (Alt ignores them)
   const collide = S.tool === "add" && !e.altKey;
-  const clear = (x1: number, z1: number, hy: number): boolean => {
-    if (!collide) return true;
-    const r: Box3 = {
-      x0: Math.min(b.x0, x1),
-      y0: Math.min(b.y0, b.y0 + hy),
-      z0: Math.min(b.z0, z1),
-      x1: Math.max(b.x0, x1) + 1,
-      y1: Math.max(b.y0, b.y0 + hy) + 1,
-      z1: Math.max(b.z0, z1) + 1,
-      c: 0,
-    };
-    return !boxesOverlap([r], d.occ ?? [], 0, 0, 0);
-  };
-  if (e.shiftKey) { // vertical extrude (like moving objects with Shift)
+  const clear = (cu: number, cv: number, hy: number): boolean =>
+    !collide ||
+    !boxesOverlap([boxRegionAt(b, cu, cv, hy)], d.occ ?? [], 0, 0, 0);
+  if (e.shiftKey) { // extrude along the face normal (Shift)
     if (d.shiftAnchorY === null) {
+      d.shiftAnchorX = e.clientX;
       d.shiftAnchorY = e.clientY;
       d.hyBase = b.hy;
     }
-    const hy = d.hyBase! +
-      Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel());
-    if (clear(b.x1, b.z1, hy)) b.hy = hy; // else stop at the last clear height
-  } else { // horizontal footprint
+    // Map pointer travel onto the extrude axis as it appears ON SCREEN, so the
+    // box grows in the direction you drag (not always "up"). Take the world
+    // direction of a one-cell +na step, resolve it against the camera's right/up
+    // axes to get its on-screen direction, then scale by the ortho pixels-per-
+    // world-unit so one screen-cell of pointer travel == one cell of depth (the
+    // extruded face tracks the cursor).
+    const w0 = locToW(b.s[0], b.s[1], b.s[2]);
+    const sN = b.s.slice() as [number, number, number];
+    sN[b.na] += 1;
+    const w1 = locToW(sN[0], sN[1], sN[2]);
+    const wx = w1.x - w0.x, wy = w1.y - w0.y, wz = w1.z - w0.z; // unit (one cell)
+    const m = camera.matrixWorld.elements; // columns 0..2 = right, 4..6 = up
+    const aR = wx * m[0] + wy * m[1] + wz * m[2]; // axis along screen-right
+    const aU = wx * m[4] + wy * m[5] + wz * m[6]; // axis along screen-up
+    // sin²(angle between the axis and the view direction): how much of the axis
+    // lies in the screen plane, independent of zoom. Near 0 only when the axis
+    // points almost straight at/away from the camera (no usable screen direction)
+    // — NOT merely when the model is small on screen, which a pixel threshold
+    // would wrongly trip, dropping side faces back to the vertical mapping.
+    const sin2 = aR * aR + aU * aU;
+    const px = viewport.h / (camera.top - camera.bottom); // pixels per world unit
+    const stepX = aR * px, stepY = -aU * px; // px per +1 cell (y down +)
+    const dxp = e.clientX - d.shiftAnchorX!, dyp = e.clientY - d.shiftAnchorY!;
+    const hy = d.hyBase! + (sin2 > 0.02 // axis usably on screen -> project onto it
+      ? Math.round((dxp * stepX + dyp * stepY) / (stepX * stepX + stepY * stepY))
+      // axis ~along the view: no on-screen direction, fall back to vertical travel
+      : Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel()));
+    if (clear(b.c[ua], b.c[va], hy)) b.hy = hy; // else stop at the last clear depth
+  } else { // drag the footprint in the face's plane
     d.shiftAnchorY = null;
-    const c = localGroundCell(b.y0);
-    if (c) { // advance each axis only where it stays clear (slides along solids)
-      if (clear(c.x, b.z1, b.hy)) b.x1 = c.x;
-      if (clear(b.x1, c.z, b.hy)) b.z1 = c.z;
+    const p = localPlaneCell(b.na, b.s[b.na]);
+    if (p) { // advance each in-plane axis only where it stays clear (slides along solids)
+      const pc = [p.x, p.y, p.z];
+      if (clear(pc[ua], b.c[va], b.hy)) b.c[ua] = pc[ua];
+      if (clear(b.c[ua], pc[va], b.hy)) b.c[va] = pc[va];
     }
   }
   renderBox();
 }
-function boxExtent() {
-  const b = S.drag!.box!;
-  return {
-    x0: Math.min(b.x0, b.x1),
-    x1: Math.max(b.x0, b.x1),
-    z0: Math.min(b.z0, b.z1),
-    z1: Math.max(b.z0, b.z1),
-    y0: Math.min(b.y0, b.y0 + b.hy),
-    y1: Math.max(b.y0, b.y0 + b.hy),
-  };
-}
 function commitBox(): void {
-  const x = boxExtent();
-  // boxExtent is inclusive; box regions are half-open
-  const r = {
-    x0: x.x0,
-    y0: x.y0,
-    z0: x.z0,
-    x1: x.x1 + 1,
-    y1: x.y1 + 1,
-    z1: x.z1 + 1,
-  };
+  const r = boxRegion(S.drag!.box!);
   if (S.tool === "add") editAdd(r, S.selColor);
   else editErase(r);
   S.liveMeas = null;
@@ -276,13 +352,8 @@ function commitBox(): void {
 }
 // build the box wireframe as measure-style segments (3 labelled dimension edges + the rest unlabelled)
 function renderBox(): void {
-  const x = boxExtent(),
-    X0 = x.x0,
-    X1 = x.x1 + 1,
-    Y0 = x.y0,
-    Y1 = x.y1 + 1,
-    Z0 = x.z0,
-    Z1 = x.z1 + 1;
+  const r = boxRegion(S.drag!.box!);
+  const X0 = r.x0, X1 = r.x1, Y0 = r.y0, Y1 = r.y1, Z0 = r.z0, Z1 = r.z1;
   const nx = X1 - X0, ny = Y1 - Y0, nz = Z1 - Z0;
   const seg = (
     ax: number,
@@ -337,14 +408,15 @@ canvas.addEventListener("pointerdown", (e) => {
   if (measureActive()) { // left-click freezes, right-click clears; drags still navigate
     if (e.button === 0) S.drag = { ...base, mode: "pan", meas: "freeze" };
     else if (e.button === 2) S.drag = { ...base, mode: "orbit", meas: "clear" };
-    // middle = pan; sx sentinel keeps moved() true so it's never read as a click
-    else if (e.button === 1) S.drag = { ...base, mode: "pan", sx: -1e9 };
+    else if (e.button === 1) S.drag = { ...base, mode: "pan", sx: NOT_A_CLICK };
     return;
   }
   if (S.editObject) {
     if (e.button === 0) {
-      // add/erase drag out a box footprint; paint floods the cell under the cursor
-      if (S.tool === "add" || S.tool === "erase") startBox(e, base);
+      // add/erase drag out a box footprint; eyedropper picks a colour (one-shot);
+      // paint floods the cell under the cursor
+      if (S.tool === "add" || S.tool === "erase") startBox(base);
+      else if (S.tool === "eyedropper") eyedrop();
       else {
         S.painting = true;
         S.lastVox = null;
@@ -374,8 +446,7 @@ canvas.addEventListener("pointerdown", (e) => {
     if (onSel) S.drag = { ...base, mode: "rotobj", steps: 0 };
     else S.drag = { ...base, mode: "orbit" };
   } else if (e.button === 1) {
-    // middle = pan only; sx sentinel keeps moved() true so it's never a click
-    S.drag = { ...base, mode: "pan", clickId: null, sx: -1e9 };
+    S.drag = { ...base, mode: "pan", sx: NOT_A_CLICK };
   }
 });
 

@@ -144,9 +144,10 @@ export function worldBox(b: Box3, rot: Rot, off: Vec): Box3 {
 // Uniform-grid point index over a box list: a cell maps to the boxes touching it,
 // so has() tests only a handful of boxes regardless of total count.
 const GC = 16;
-const gi = Math.floor;
-export type BoxIndex = (x: number, y: number, z: number) => boolean;
-export function buildIndex(boxes: Box3[]): BoxIndex {
+const gc = (v: number): number => Math.floor(v / GC); // cell coord -> grid cell
+export function buildIndex(
+  boxes: Box3[],
+): (x: number, y: number, z: number) => boolean {
   if (!boxes.length) return () => false;
   let mnx = Infinity,
     mny = Infinity,
@@ -162,24 +163,24 @@ export function buildIndex(boxes: Box3[]): BoxIndex {
     if (b.y1 > mxy) mxy = b.y1;
     if (b.z1 > mxz) mxz = b.z1;
   }
-  const gx0 = gi(mnx / GC), gy0 = gi(mny / GC), gz0 = gi(mnz / GC);
-  const nx = gi((mxx - 1) / GC) - gx0 + 1,
-    ny = gi((mxy - 1) / GC) - gy0 + 1,
-    nz = gi((mxz - 1) / GC) - gz0 + 1;
+  const gx0 = gc(mnx), gy0 = gc(mny), gz0 = gc(mnz);
+  const nx = gc(mxx - 1) - gx0 + 1,
+    ny = gc(mxy - 1) - gy0 + 1,
+    nz = gc(mxz - 1) - gz0 + 1;
   const grid: Box3[][] = Array.from({ length: nx * ny * nz }, () => []);
   const at = (gx: number, gy: number, gz: number) =>
     ((gx - gx0) * ny + (gy - gy0)) * nz + (gz - gz0);
   for (const b of boxes) {
-    for (let gx = gi(b.x0 / GC); gx <= gi((b.x1 - 1) / GC); gx++) {
-      for (let gy = gi(b.y0 / GC); gy <= gi((b.y1 - 1) / GC); gy++) {
-        for (let gz = gi(b.z0 / GC); gz <= gi((b.z1 - 1) / GC); gz++) {
+    for (let gx = gc(b.x0); gx <= gc(b.x1 - 1); gx++) {
+      for (let gy = gc(b.y0); gy <= gc(b.y1 - 1); gy++) {
+        for (let gz = gc(b.z0); gz <= gc(b.z1 - 1); gz++) {
           grid[at(gx, gy, gz)].push(b);
         }
       }
     }
   }
   return (x, y, z) => {
-    const gx = gi(x / GC), gy = gi(y / GC), gz = gi(z / GC);
+    const gx = gc(x), gy = gc(y), gz = gc(z);
     if (gx < gx0 || gy < gy0 || gz < gz0) return false;
     if (gx - gx0 >= nx || gy - gy0 >= ny || gz - gz0 >= nz) return false;
     for (const b of grid[at(gx, gy, gz)]) {

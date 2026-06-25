@@ -3,14 +3,12 @@
 // colours and visibility. Export downloads a .json file; import reads one,
 // replaces the document and resets the editor to the scene root.
 import { S } from "./state.ts";
-import { de, flush, ser } from "./persistence.ts";
-import { peekUid, seedUid } from "./math.ts";
+import { flush, installScene, ser } from "./persistence.ts";
+import { peekUid } from "./math.ts";
 import { rebuild } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
-import type { SceneNode } from "./types.ts";
-import type { SerNode } from "./persistence.ts";
 
 export function exportScene(): void {
   const data = JSON.stringify({ uid: peekUid(), root: ser(S.root) });
@@ -18,10 +16,11 @@ export function exportScene(): void {
     new Blob([data], { type: "application/json" }),
   );
   const name = S.root.name || "Project"; // matches the root's name in the scene tree
-  const d = new Date(); // local-time stamp: "YYYY-MM-DD HHhMMmSSs"
-  const [date, time] = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-    .toISOString().slice(0, 19).split("T");
-  const stamp = `${date} ${time.replace(":", "h").replace(":", "m")}s`;
+  // local-time stamp "YYYY-MM-DD HHhMMmSSs"
+  const p = (n: number) => String(n).padStart(2, "0");
+  const t = new Date();
+  const stamp = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ` +
+    `${p(t.getHours())}h${p(t.getMinutes())}m${p(t.getSeconds())}s`;
   const a = document.createElement("a");
   a.href = url;
   a.download = `${name} -- ${stamp}.voxelier.json`;
@@ -39,17 +38,14 @@ export function importScene(): void {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const d = JSON.parse(reader.result as string) as {
-          uid?: number;
-          root?: SerNode;
-        };
-        if (!d || !d.root) throw new Error("not a Voxelier scene file");
-        seedUid(d.uid || 1);
-        S.root = de(d.root) as SceneNode;
+        if (!installScene(JSON.parse(reader.result as string))) {
+          throw new Error("not a Voxelier scene file");
+        }
         S.path = [S.root];
         S.editObject = null;
         S.selection.clear();
-        clearMeasure();
+        S.measMode = false; // exit standalone measure mode for the new scene
+        clearMeasure(); // discard readings (liveMeas/frozenMeas) from the old one
         rebuild();
         updateChrome();
         frameView();

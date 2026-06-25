@@ -56,10 +56,10 @@ export const newObject = (): ObjectNode => ({
   vis: "visible",
   boxes: [],
 });
-export const newScene = (): SceneNode => ({
+export const newScene = (name = ""): SceneNode => ({
   type: "scene",
   id: uid(),
-  name: "",
+  name,
   pos: { x: 0, y: 0, z: 0 },
   rot: 0,
   vis: "visible",
@@ -106,9 +106,10 @@ export function findById(id: string, n: Node = S.root): Node | null {
   }
   return null;
 }
-export function parentOf(node: Node): Node | null {
+export function parentOf(node: Node): SceneNode | null {
   const p = findPath(node);
-  return p && p.length > 1 ? p[p.length - 2] : null;
+  // a node only ever appears in a scene's children, so any parent is a SceneNode
+  return p && p.length > 1 ? p[p.length - 2] as SceneNode : null;
 }
 export function isDescendant(node: Node, t: Node): boolean {
   if (node === t) return true;
@@ -121,10 +122,18 @@ export const worldXform = (node: Node): Xform =>
   pathXform(findPath(node) || [S.root]);
 
 // AABB helpers
+// Sentinel "inside-out" box that growBounds overwrites on the first real cell.
+// 1e9 (a finite value well past any voxel coord), not ±Infinity, on purpose: an
+// empty box's centroid (min+max)/2 must stay finite — rotateSelectionBy recentres
+// on it for a geometry-less node, and Infinity would make that 0/… NaN and corrupt
+// the position.
 export const emptyBox = (): Box => ({
   min: { x: 1e9, y: 1e9, z: 1e9 },
   max: { x: -1e9, y: -1e9, z: -1e9 },
 });
+// still the inside-out sentinel — no real cell has grown it (max < min on every
+// axis, so the x check suffices). Centralises the emptyBox emptiness invariant.
+export const boxEmpty = (b: Box): boolean => b.max.x < b.min.x;
 // world AABB of a node given an accumulated transform
 export function nodeBox(node: Node, off: Vec, rot: Rot, box: Box): Box {
   if (node.type === "object") {

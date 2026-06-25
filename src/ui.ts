@@ -1,14 +1,20 @@
-// DOM chrome: the tool buttons + status hint, the colour palette/swatches, the
-// object/scene tree (thumbnails, row clicks, context menu, drag & drop) and the
-// global keyboard shortcuts. Attaches its window/tree listeners on import.
+// DOM chrome: the tool buttons + draw-colour control (recent colours + picker),
+// the object/scene tree (thumbnails, row clicks, context menu, drag & drop) and
+// the global keyboard shortcuts. Attaches its window/tree listeners on import.
 import { S } from "./state.ts";
 import { addv, hex, rotY } from "./math.ts";
 import { colorCounts, growBounds, worldBox } from "./boxes.ts";
 import { hoverVox } from "./scene-env.ts";
-import { clearMeasure, measureActive } from "./measure.ts";
+import { clearMeasure } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
-import { enterNode, escapeUp, isEntered, selectNode } from "./navigation.ts";
-import { emptyBox, findById, isDescendant, parentOf } from "./model.ts";
+import { enterNode, escapeUp, selectNode } from "./navigation.ts";
+import {
+  DEFAULT_COLORS,
+  emptyBox,
+  findById,
+  isDescendant,
+  parentOf,
+} from "./model.ts";
 import {
   addGroupIn,
   addObjectIn,
@@ -25,13 +31,30 @@ import {
   renameNode,
   reparentNode,
   rotateSelection,
+  ungroupNode,
   wrapInGroup,
   wrapNodeInGroup,
 } from "./commands.ts";
 import { save } from "./persistence.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
-import type { Box3, Node, Rot, SceneNode, Tool, Vec } from "./types.ts";
+import type {
+  Box3,
+  DropInfo,
+  Node,
+  Pending,
+  Rot,
+  Tool,
+  Vec,
+} from "./types.ts";
+
+// Tree drag&drop, context-menu, and row-click transient state — all owned and
+// used only here, so they live as module locals rather than in the shared S.
+let dragId: string | null = null; // id of the row being dragged
+let dropInfo: DropInfo | null = null; // resolved drop target while dragging
+let dropRow: HTMLElement | null = null; // row element currently showing a drop cue
+let ctxMenuEl: HTMLElement | null = null; // open context menu, or null
+let pending: Pending | null = null; // scheduled single-vs-double row click
 
 // Terse element factory: create <tag>, assign the given properties (className,
 // innerHTML, textContent, onclick, title, draggable…), append any children.
@@ -50,6 +73,7 @@ const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
   { id: "add", ic: "＋", label: "Add" },
   { id: "erase", ic: "－", label: "Erase" },
   { id: "paint", ic: "🪣", label: "Fill" },
+  { id: "eyedropper", ic: "💧", label: "Pick" },
   { id: "measure", ic: "📏", label: "Measure" },
 ];
 // tree visibility-toggle glyphs, by current vis state
@@ -59,64 +83,48 @@ const VIS_GLYPH: Record<string, string> = {
   invisible: "⦰",
 };
 
+// a tool-rail button (rounded square with an icon glyph over a small label)
+const toolButton = (
+  ic: string,
+  label: string,
+  active: boolean,
+  onclick: () => void,
+): HTMLElement =>
+  el("button", {
+    className: "tool" + (active ? " active" : ""),
+    innerHTML: `<span class="ic">${ic}</span>${label}`,
+    onclick,
+  });
+
 export function updateChrome(): void {
   const tw = document.getElementById("tools")!;
   tw.innerHTML = "";
+  // top group: the voxel tools while editing an object, else just Measure
+  // (scene actions live in the tree's right-click menu)
+  const top = el("div", { className: "toolgroup" });
   if (S.editObject) {
     for (const t of VOX_TOOLS) {
-      tw.appendChild(el("button", {
-        className: "tool" + (S.tool === t.id ? " active" : ""),
-        innerHTML: `<span class="ic">${t.ic}</span>${t.label}`,
-        onclick: () => {
-          S.tool = t.id;
-          clearMeasure();
-          hoverVox.visible = false;
-          updateChrome();
-        },
+      top.appendChild(toolButton(t.ic, t.label, S.tool === t.id, () => {
+        S.tool = t.id;
+        clearMeasure();
+        hoverVox.visible = false;
+        updateChrome();
       }));
     }
+    top.appendChild(colorControl()); // draw-colour picker (only meaningful while editing)
   } else {
-    // scene actions live in the tree's right-click menu; only Measure is a sidebar tool
-    tw.appendChild(el("button", {
-      className: "tool" + (S.measMode ? " active" : ""),
-      innerHTML: '<span class="ic">📏</span>Measure',
-      onclick: () => {
-        S.measMode = !S.measMode;
-        if (!S.measMode) clearMeasure();
-        updateChrome();
-      },
+    top.appendChild(toolButton("📏", "Measure", S.measMode, () => {
+      S.measMode = !S.measMode;
+      if (!S.measMode) clearMeasure();
+      updateChrome();
     }));
   }
-  // import / export pinned to the bottom of the tool rail
-  const spacer = el("div");
-  spacer.style.flex = "1";
-  tw.appendChild(spacer);
-  for (
-    const [ic, label, fn] of [["📂", "Import", importScene], [
-      "💾",
-      "Export",
-      exportScene,
-    ]] as [string, string, () => void][]
-  ) {
-    tw.appendChild(el("button", {
-      className: "tool",
-      innerHTML: `<span class="ic">${ic}</span>${label}`,
-      onclick: fn,
-    }));
-  }
+  // bottom group: import / export
+  const bottom = el("div", { className: "toolgroup" });
+  bottom.appendChild(toolButton("📂", "Import", false, importScene));
+  bottom.appendChild(toolButton("💾", "Export", false, exportScene));
+  tw.append(top, bottom);
   buildTree();
-  buildSwatches();
-  document.getElementById("statHint")!.textContent = measureActive()
-    ? "Measure — hover to read voxel/gap runs on all 3 axes · left-click freezes · right-click clears"
-    : S.editObject
-    ? (S.tool === "paint"
-      ? "Fill — click a voxel to flood-fill its connected same-colour region · right-drag orbits · middle-drag pans · Esc to finish"
-      : `${
-        S.tool === "add" ? "Add" : "Erase"
-      } — drag a box in the floor plane (Shift = height) · right-drag orbits · middle-drag pans · Esc to finish`)
-    : (S.selection.size
-      ? `${S.selection.size} selected — drag to move (Shift: up/down · Alt: allow overlap) · right-drag rotate · R rotate · Del`
-      : "Tree: click a row to enter it · double-click to fit · right-click for actions · N new object");
 }
 
 // distinct colours used in the scene, most-used (by cell volume) first. Cached by
@@ -135,56 +143,59 @@ function sceneColors(): number[] {
   };
   return _scCache.cols;
 }
-export function buildSwatches(): void {
-  const w = document.getElementById("swatches")!;
-  w.innerHTML = "";
-  const cols = sceneColors().slice(); // copy: we may unshift the selected colour
-  if (!cols.includes(S.selColor)) cols.unshift(S.selColor); // selected colour is always shown, at #1 if unused
-  const swatch = (c: number) => {
-    const s = el("div", {
-      className: "sw" + (c === S.selColor ? " active" : ""),
-      title: hex(c),
-      onclick: () => {
-        S.selColor = c;
-        buildSwatches();
-      },
-    });
-    s.style.background = hex(c);
-    return s;
-  };
-  if (cols.length > 15) { // 14 colours + "…" all-colours menu
-    for (let i = 0; i < 14; i++) w.appendChild(swatch(cols[i]));
-    w.appendChild(el("div", {
-      className: "sw more",
-      textContent: "…",
-      title: "All used colours",
-      onclick: openPalette,
-    }));
-  } else { // up to 15 colours, padded with empties
-    for (let i = 0; i < 15; i++) {
-      w.appendChild(
-        i < cols.length
-          ? swatch(cols[i])
-          : el("div", { className: "sw empty" }),
-      );
-    }
+// recently-picked draw colours, most-recent first (capped at 4). Drives the
+// color flyout; padded from scene/default colours when fewer than 4 picks exist.
+let recentColors: number[] = [];
+export function selectColor(c: number): void {
+  S.selColor = c;
+  recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, 4);
+  updateChrome();
+}
+// the 4 colours shown in the flyout: recent picks first, then padded with the
+// scene's used colours and the default palette (deduped)
+function recentFour(): number[] {
+  const out: number[] = [];
+  for (const c of [...recentColors, ...sceneColors(), ...DEFAULT_COLORS]) {
+    if (!out.includes(c)) out.push(c);
+    if (out.length >= 4) break;
   }
-  // position 16: always the colour picker
-  w.appendChild(el("div", {
+  return out;
+}
+// a .sw colour swatch: clicking makes it the draw colour
+const colorSwatch = (c: number): HTMLElement => {
+  const s = el("div", {
+    className: "sw" + (c === S.selColor ? " active" : ""),
+    title: hex(c),
+    onclick: () => selectColor(c),
+  });
+  s.style.background = hex(c);
+  return s;
+};
+// toolbar draw-colour control: an icon showing the active colour; hovering it
+// reveals a horizontal flyout of the 4 recent colours plus the full picker
+function colorControl(): HTMLElement {
+  const ctl = el("div", { className: "colorctl" });
+  const icon = el("div", {
+    className: "colorbtn",
+    title: "Draw colour — hover for recent colours / picker",
+  });
+  icon.style.background = hex(S.selColor);
+  const fly = el("div", { className: "colorflyout" });
+  for (const c of recentFour()) fly.appendChild(colorSwatch(c));
+  fly.appendChild(el("div", {
     className: "sw more",
     textContent: "🎨",
-    title: "Use colour picker",
+    title: "Colour picker",
     onclick: openColorPicker,
   }));
+  ctl.append(icon, fly);
+  return ctl;
 }
-// the colour picker: pick any RGB; the chosen colour becomes selected
+// the colour picker: pick any RGB; the chosen colour becomes the draw colour
 function openColorPicker(): void {
   const inp = el("input", { type: "color", value: hex(S.selColor) });
   inp.style.cssText = "position:fixed;left:-9999px;top:0";
-  const apply = () => {
-    S.selColor = parseInt(inp.value.slice(1), 16);
-    buildSwatches();
-  };
+  const apply = () => selectColor(parseInt(inp.value.slice(1), 16));
   // change fires when the dialog commits; a cancel fires no change but returns
   // focus to the page, so remove the hidden input on that too (else it leaks)
   const close = () => inp.remove();
@@ -196,49 +207,6 @@ function openColorPicker(): void {
   window.addEventListener("focus", close, { once: true });
   document.body.appendChild(inp);
   inp.click();
-}
-// the "…" menu: every colour currently used in the scene
-function openPalette(): void {
-  closePalette();
-  const back = el("div", { id: "palback" });
-  back.onclick = (e) => {
-    if (e.target === back) closePalette();
-  };
-  const pop = el("div", { id: "palpop" });
-  pop.appendChild(
-    el("div", { className: "pophead", textContent: "Used colours" }),
-  );
-  const grid = el("div", { className: "popgrid" });
-  const cols = sceneColors();
-  if (!cols.length) {
-    const e = el("div", { textContent: "No colours yet." });
-    e.style.cssText = "color:var(--ink-dim);font-size:12px";
-    grid.appendChild(e);
-  }
-  for (const c of cols) {
-    const s = el("div", {
-      className: "sw" + (c === S.selColor ? " active" : ""),
-      title: hex(c),
-      onclick: () => {
-        S.selColor = c;
-        buildSwatches();
-        closePalette();
-      },
-    });
-    s.style.background = hex(c);
-    grid.appendChild(s);
-  }
-  pop.appendChild(grid);
-  back.appendChild(pop);
-  document.body.appendChild(back);
-}
-function closePalette(): boolean {
-  const b = document.getElementById("palback");
-  if (b) {
-    b.remove();
-    return true;
-  }
-  return false;
 }
 
 // ---- object/scene tree ----
@@ -336,30 +304,73 @@ function thumbFor(node: Node): HTMLCanvasElement {
   thumbCache.set(node.id, { sig, cv });
   return cv;
 }
-// tree-row clicks: first click enters; a quick second click on the same row fits
-// it; clicking a row that's already entered renames it after the dbl-click window.
+// tree-row clicks mirror clicking the object in the scene: a single click
+// selects immediately; a second click soon after zooms to the node and starts
+// editing it (descend into a group, or open an object for voxel edits). We use
+// two independent click events (not a native dblclick) so the immediate select
+// can rebuild the row DOM without breaking double-click detection — the same
+// node's row reoccupies the same spot. Rename lives only in the right-click menu.
 function rowClick(node: Node): void {
-  if (S.pending && S.pending.node === node) { // quick second click on the same row -> zoom to fit
-    clearTimeout(S.pending.timer);
-    S.pending = null;
-    fitNode(node);
+  if (pending && pending.node === node) { // second click within the window
+    clearTimeout(pending.timer);
+    pending = null;
+    enterNode(node, true); // zoom to view + start editing
     return;
   }
-  if (S.pending) clearTimeout(S.pending.timer);
-  const arm = (after?: () => void) => {
-    S.pending = {
-      node,
-      timer: setTimeout(() => {
-        S.pending = null;
-        after && after();
-      }, 300),
+  if (pending) clearTimeout(pending.timer);
+  // root can't be "selected" (selection lives within a context) -> just return
+  // to the top-level context; any other node selects right away
+  if (node === S.root) enterNode(node);
+  else selectNode(node);
+  pending = { node, timer: setTimeout(() => (pending = null), 300) };
+}
+// the row's cached thumbnail; for a non-empty non-root group it doubles as the
+// collapse toggle (a stacked look = collapsed)
+function rowThumb(node: Node): HTMLCanvasElement {
+  const th = thumbFor(node);
+  th.className = "thumb";
+  th.onclick = null;
+  th.title = ""; // (canvas is cached/reused)
+  if (node !== S.root && node.type === "scene" && node.children.length) {
+    const col = S.collapsed.has(node.id);
+    th.classList.add("group");
+    if (col) th.classList.add("collapsed");
+    th.title = col ? "Expand group" : "Collapse group";
+    th.onclick = (e) => {
+      e.stopPropagation();
+      col ? S.collapsed.delete(node.id) : S.collapsed.add(node.id);
+      buildTree();
     };
-  };
-  if (isEntered(node)) arm(() => renameNode(node)); // already entered: lone click renames after the window
-  else {
-    enterNode(node);
-    arm();
-  } // not entered: enter now; a quick second click still fits
+  }
+  return th;
+}
+// wire tree drag&drop reparenting (VSCode-style) onto a row: the root can't be
+// dragged but accepts drops
+function wireRowDnd(r: HTMLElement, node: Node): void {
+  r.draggable = node !== S.root;
+  if (node !== S.root) {
+    r.addEventListener("dragstart", (ev) => {
+      ev.stopPropagation();
+      dragId = node.id;
+      if (ev.dataTransfer) {
+        ev.dataTransfer.effectAllowed = "move";
+        try {
+          ev.dataTransfer.setData("text/plain", node.id);
+        } catch (_) { /* some browsers */ }
+      }
+    });
+  }
+  r.addEventListener("dragend", clearDropInd);
+  r.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    dropOver(ev, node, r);
+  });
+  r.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    doDrop();
+  });
 }
 function buildTree(): void {
   const w = document.getElementById("tree")!;
@@ -376,22 +387,7 @@ function buildTree(): void {
         (!isRoot && v !== "visible" ? " dim" : ""),
     });
     r.style.paddingLeft = (4 + depth * 13) + "px";
-    const th = thumbFor(node);
-    th.className = "thumb";
-    th.onclick = null;
-    th.title = ""; // (canvas is cached/reused)
-    // a non-root group's icon doubles as its collapse toggle (stacked look = collapsed)
-    if (!isRoot && node.type === "scene" && node.children.length) {
-      const col = S.collapsed.has(node.id);
-      th.classList.add("group");
-      if (col) th.classList.add("collapsed");
-      th.title = col ? "Expand group" : "Collapse group";
-      th.onclick = (e) => {
-        e.stopPropagation();
-        col ? S.collapsed.delete(node.id) : S.collapsed.add(node.id);
-        buildTree();
-      };
-    }
+    const th = rowThumb(node);
     const nm = el("span", { className: "nm" });
     if (isRoot) nm.textContent = node.name || "Project";
     else if (node.name) nm.textContent = node.name;
@@ -418,31 +414,7 @@ function buildTree(): void {
       if (!isRoot) selectNode(node);
       showItemMenu(node, e.clientX, e.clientY);
     };
-    // drag & drop reparenting (VSCode-style); the root can't be dragged but accepts drops
-    r.draggable = !isRoot;
-    if (!isRoot) {
-      r.addEventListener("dragstart", (ev) => {
-        ev.stopPropagation();
-        S.dragId = node.id;
-        if (ev.dataTransfer) {
-          ev.dataTransfer.effectAllowed = "move";
-          try {
-            ev.dataTransfer.setData("text/plain", node.id);
-          } catch (_) { /* some browsers */ }
-        }
-      });
-    }
-    r.addEventListener("dragend", clearDropInd);
-    r.addEventListener("dragover", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      dropOver(ev, node, r);
-    });
-    r.addEventListener("drop", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      doDrop();
-    });
+    wireRowDnd(r, node);
     w.appendChild(r);
     if (node.type === "scene" && (isRoot || !S.collapsed.has(node.id))) {
       for (const ch of node.children) {
@@ -463,15 +435,15 @@ function buildTree(): void {
 
 // ---- tree right-click context menu ----
 function closeItemMenu(): void {
-  if (S.ctxMenuEl) {
-    S.ctxMenuEl.remove();
-    S.ctxMenuEl = null;
+  if (ctxMenuEl) {
+    ctxMenuEl.remove();
+    ctxMenuEl = null;
     window.removeEventListener("pointerdown", ctxMenuOutside, true);
   }
 }
 function ctxMenuOutside(e: PointerEvent): void {
   if (
-    S.ctxMenuEl && !S.ctxMenuEl.contains(e.target as globalThis.Node | null)
+    ctxMenuEl && !ctxMenuEl.contains(e.target as globalThis.Node | null)
   ) {
     closeItemMenu();
   }
@@ -490,19 +462,20 @@ function showItemMenu(node: Node, x: number, y: number): void {
     }));
   const div = () => m.appendChild(el("div", { className: "ctxdiv" }));
   add("Rename", () => renameNode(node));
-  add("Fit", () => fitNode(node));
+  add("Locate", () => fitNode(node));
   div();
   if (node !== S.root) {
     add("Duplicate", () => duplicateNode(node));
-    add("Delete", () => deleteNode(node), "danger");
+    add("Delete objects", () => deleteNode(node), "danger");
     div();
   }
   if (node.type === "scene") {
+    if (node !== S.root) add("Ungroup", () => ungroupNode(node));
     add("New object", () => addObjectIn(node));
     add("New group", () => addGroupIn(node));
   } else add("New group", () => wrapNodeInGroup(node));
   document.body.appendChild(m);
-  S.ctxMenuEl = m;
+  ctxMenuEl = m;
   const r = m.getBoundingClientRect();
   m.style.left = Math.min(x, innerWidth - r.width - 4) + "px";
   m.style.top = Math.min(y, innerHeight - r.height - 4) + "px";
@@ -514,67 +487,67 @@ function showItemMenu(node: Node, x: number, y: number): void {
 
 // ---- tree drag & drop state/handlers ----
 function clearDropInd(): void {
-  if (S.dropRow) {
-    S.dropRow.classList.remove("drop-into", "drop-before", "drop-after");
+  if (dropRow) {
+    dropRow.classList.remove("drop-into", "drop-before", "drop-after");
   }
-  S.dropRow = null;
-  S.dropInfo = null;
+  dropRow = null;
+  dropInfo = null;
 }
 function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
-  const dn = S.dragId && findById(S.dragId);
+  const dn = dragId && findById(dragId);
   if (!dn || dn === node || isDescendant(dn, node)) {
     clearDropInd();
     return;
   }
   clearDropInd();
-  S.dropRow = row;
+  dropRow = row;
   if (node === S.root) {
-    S.dropInfo = { parent: S.root, index: S.root.children.length };
+    dropInfo = { parent: S.root, index: S.root.children.length };
     row.classList.add("drop-into");
     return;
   } // drop onto project root
   const rect = row.getBoundingClientRect(),
     y = ev.clientY - rect.top,
     h = rect.height;
-  const par = parentOf(node) as SceneNode | null,
+  const par = parentOf(node),
     idx = par ? par.children.indexOf(node) : 0;
   if (y > h * 0.28 && y < h * 0.72) {
     if (node.type === "scene") {
-      S.dropInfo = { parent: node, index: node.children.length }; // nest inside the group
-    } else S.dropInfo = { wrap: node }; // object onto object -> new group
+      dropInfo = { parent: node, index: node.children.length }; // nest inside the group
+    } else dropInfo = { wrap: node }; // object onto object -> new group
     row.classList.add("drop-into");
   } else if (y < h * 0.5) {
-    S.dropInfo = { parent: par, index: idx };
+    dropInfo = { parent: par, index: idx };
     row.classList.add("drop-before");
   } else {
-    S.dropInfo = { parent: par, index: idx + 1 };
+    dropInfo = { parent: par, index: idx + 1 };
     row.classList.add("drop-after");
   }
 }
 function doDrop(): void {
-  const dn = S.dragId && findById(S.dragId);
-  if (dn && S.dropInfo) {
-    if (S.dropInfo.wrap) wrapInGroup(S.dropInfo.wrap, dn);
+  const dn = dragId && findById(dragId);
+  if (dn && dropInfo) {
+    if (dropInfo.wrap) wrapInGroup(dropInfo.wrap, dn);
     else if (
-      S.dropInfo.parent &&
-      reparentNode(dn, S.dropInfo.parent, S.dropInfo.index!)
+      dropInfo.parent &&
+      reparentNode(dn, dropInfo.parent, dropInfo.index!)
     ) {
-      S.collapsed.delete(S.dropInfo.parent.id); // reveal the target
+      S.collapsed.delete(dropInfo.parent.id); // reveal the target
       selectNode(dn);
       save();
     }
   }
   clearDropInd();
-  S.dragId = null;
+  dragId = null;
 }
 
 {
   const treeEl = document.getElementById("tree")!; // drop on empty area -> move to scene root
   treeEl.addEventListener("dragover", (ev) => {
-    if (ev.target === treeEl && S.dragId) {
+    if (ev.target === treeEl && dragId) {
       ev.preventDefault();
       clearDropInd();
-      S.dropInfo = { parent: S.root, index: S.root.children.length };
+      dropInfo = { parent: S.root, index: S.root.children.length };
     }
   });
   treeEl.addEventListener("drop", (ev) => {
@@ -588,7 +561,6 @@ function doDrop(): void {
 window.addEventListener("keydown", (e) => {
   if ((e.target as HTMLElement).tagName === "INPUT") return;
   const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
-  if (k === "escape" && closePalette()) return;
   if (mod) {
     if (k === "z") {
       e.preventDefault();

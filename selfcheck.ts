@@ -1,8 +1,10 @@
 // Self-check (`deno test`) for the coordinate math the editor's voxel placement
 // relies on. It imports the real rotY/addv from src/math.ts (both pure, no
-// three.js) and asserts the world<->object-local round-trip that locToW and
-// localGroundCell depend on. If rotY's rotation or the inverse convention
-// breaks, placement silently lands on the wrong cell — this fails loudly.
+// three.js) and re-derives the world<->object-local transform here (the real
+// locToW/localGroundCell pull in three.js + global state, so they can't be
+// imported) to assert rotY is its own inverse under a negated rotation — the
+// property those two functions are built on. If rotY's rotation or the inverse
+// convention breaks, placement silently lands on the wrong cell — this fails loudly.
 import { assert } from "@std/assert";
 import type { Box3, Region, Vec } from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
@@ -13,7 +15,59 @@ const toW = (cell: Vec, off: Vec, rot: number): Vec =>
 const toLocal = (w: Vec, off: Vec, rot: number): Vec =>
   rotY({ x: w.x - off.x, y: 0, z: w.z - off.z }, -rot); // world -> local (inverse rotation)
 
+// deterministic seeded PRNG + integer-range helper, so the random op streams
+// below are reproducible across runs (each test seeds its own stream). Not a
+// faithful LCG — the multiply exceeds 2^53 and rounds before the mask — but a
+// stable, well-spread stream is all the fuzz tests need.
+const mkRnd = (seed: number) => {
+  let s = seed;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  return (a: number, b: number) => a + Math.floor(rnd() * (b - a + 1));
+};
+
+// iterate every cell of a half-open box [x0,x1) × [y0,y1) × [z0,z1)
+const eachCell = (
+  b: Region,
+  cb: (x: number, y: number, z: number) => void,
+) => {
+  for (let x = b.x0; x < b.x1; x++) {
+    for (let y = b.y0; y < b.y1; y++) {
+      for (let z = b.z0; z < b.z1; z++) cb(x, y, z);
+    }
+  }
+};
+// materialize a disjoint box set into a cell-key -> colour map, asserting that no
+// two boxes cover the same cell (`what` names the set in the overlap message)
+const materialize = (boxes: Box3[], what: string): Map<number, number> => {
+  const m = new Map<number, number>();
+  for (const b of boxes) {
+    eachCell(b, (x, y, z) => {
+      const k = key(x, y, z);
+      assert(!m.has(k), `${what} overlap at ${x},${y},${z}`);
+      m.set(k, b.c);
+    });
+  }
+  return m;
+};
+
 Deno.test("voxel placement round-trip", () => {
+  // independent oracle: rotY must produce these exact 90°-step rotations. The
+  // round-trip below only proves rotY(·,-r) inverts rotY(·,r), which a wrong but
+  // self-inverse rotation (e.g. a chirality flip) would also satisfy — so pin the
+  // actual outputs of a known vector too.
+  const rotCases: [number, Vec][] = [
+    [0, { x: 1, y: 5, z: 2 }],
+    [1, { x: -2, y: 5, z: 1 }],
+    [2, { x: -1, y: 5, z: -2 }],
+    [3, { x: 2, y: 5, z: -1 }],
+  ];
+  for (const [r, want] of rotCases) {
+    const g = rotY({ x: 1, y: 5, z: 2 }, r);
+    assert(
+      g.x === want.x && g.y === want.y && g.z === want.z,
+      `rotY({1,5,2}, ${r}) = ${JSON.stringify(g)} != ${JSON.stringify(want)}`,
+    );
+  }
   const offsets: Vec[] = [{ x: 0, y: 0, z: 0 }, { x: 5, y: 1, z: -3 }, {
     x: -7,
     y: 2,
@@ -45,9 +99,7 @@ Deno.test("voxel placement round-trip", () => {
 // reference voxel map over a stream of random ops.
 Deno.test("box algebra matches a voxel reference", () => {
   const N = 12;
-  let s = 12345;
-  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  const ri = (a: number, b: number) => a + Math.floor(rnd() * (b - a + 1));
+  const ri = mkRnd(12345);
   const randRegion = (): Region => {
     const x0 = ri(0, N), y0 = ri(0, N), z0 = ri(0, N);
     return {
@@ -60,17 +112,12 @@ Deno.test("box algebra matches a voxel reference", () => {
     };
   };
   const ref = new Map<number, number>(); // cell key -> colour
-  const fill = (r: Region, c: number | null) => {
-    for (let x = r.x0; x < r.x1; x++) {
-      for (let y = r.y0; y < r.y1; y++) {
-        for (let z = r.z0; z < r.z1; z++) {
-          const k = key(x, y, z);
-          if (c === null) ref.delete(k);
-          else ref.set(k, c);
-        }
-      }
-    }
-  };
+  const fill = (r: Region, c: number | null) =>
+    eachCell(r, (x, y, z) => {
+      const k = key(x, y, z);
+      if (c === null) ref.delete(k);
+      else ref.set(k, c);
+    });
   let boxes: Box3[] = [];
   for (let step = 0; step < 300; step++) {
     const r = randRegion(), c = ri(1, 5), op = ri(0, 1);
@@ -78,18 +125,7 @@ Deno.test("box algebra matches a voxel reference", () => {
     else (boxes = eraseBox(boxes, r)), fill(r, null);
   }
   // disjoint + occupancy/colour identical to the reference
-  const got = new Map<number, number>();
-  for (const b of boxes) {
-    for (let x = b.x0; x < b.x1; x++) {
-      for (let y = b.y0; y < b.y1; y++) {
-        for (let z = b.z0; z < b.z1; z++) {
-          const k = key(x, y, z);
-          assert(!got.has(k), `boxes overlap at ${x},${y},${z}`);
-          got.set(k, b.c);
-        }
-      }
-    }
-  }
+  const got = materialize(boxes, "boxes");
   assert(got.size === ref.size, `cell count ${got.size} != ${ref.size}`);
   for (const [k, v] of ref) {
     assert(got.get(k) === v, "colour/occupancy mismatch");
@@ -114,9 +150,7 @@ Deno.test("box algebra matches a voxel reference", () => {
 // cell-level flood-fill reference over random multi-colour box stacks.
 Deno.test("fillBox matches a cell-level flood fill", () => {
   const N = 10;
-  let s = 999;
-  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
-  const ri = (a: number, b: number) => a + Math.floor(rnd() * (b - a + 1));
+  const ri = mkRnd(999);
   const NB = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [
     0,
     0,
@@ -140,14 +174,10 @@ Deno.test("fillBox matches a cell-level flood fill", () => {
     const ref = new Map<number, number>();
     const cells: Vec[] = [];
     for (const b of boxes) {
-      for (let x = b.x0; x < b.x1; x++) {
-        for (let y = b.y0; y < b.y1; y++) {
-          for (let z = b.z0; z < b.z1; z++) {
-            ref.set(key(x, y, z), b.c);
-            cells.push({ x, y, z });
-          }
-        }
-      }
+      eachCell(b, (x, y, z) => {
+        ref.set(key(x, y, z), b.c);
+        cells.push({ x, y, z });
+      });
     }
     if (!cells.length) continue;
     const seed = cells[ri(0, cells.length - 1)], newC = ri(1, 4);
@@ -172,20 +202,10 @@ Deno.test("fillBox matches a cell-level flood fill", () => {
       }
       for (const k of seen) expected.set(k, newC);
     }
-    // actual: fillBox returns null when nothing changes (orig === newC here)
+    // actual: fillBox returns null when nothing changes (orig === newC); the
+    // ?? falls back to the unchanged list for that no-op case
     const out = fillBox(boxes, seed.x, seed.y, seed.z, newC) ?? boxes;
-    const got = new Map<number, number>();
-    for (const b of out) {
-      for (let x = b.x0; x < b.x1; x++) {
-        for (let y = b.y0; y < b.y1; y++) {
-          for (let z = b.z0; z < b.z1; z++) {
-            const k = key(x, y, z);
-            assert(!got.has(k), `fillBox produced overlap at ${x},${y},${z}`);
-            got.set(k, b.c);
-          }
-        }
-      }
-    }
+    const got = materialize(out, "fillBox produced");
     assert(
       got.size === expected.size,
       `cell count ${got.size} != ${expected.size}`,

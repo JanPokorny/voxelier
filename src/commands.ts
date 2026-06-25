@@ -46,6 +46,8 @@ export function renameNode(node: Node): void {
   }
 }
 
+// detached node clones for copy/paste — private to this module's clipboard flow
+let clipboard: Node[] = [];
 // selected context children, resolved to live nodes (dropping stale ids)
 const selectedNodes = (): Node[] =>
   [...S.selection].map((id) => childById(id)).filter((n): n is Node => !!n);
@@ -56,12 +58,17 @@ const cloneShift = (n: Node): Node => {
   return d;
 };
 
-export function createObject(): void {
+// add a fresh empty object at the camera focus into `parent`, reveal it, enter it
+const spawnObject = (parent: SceneNode, fit: boolean): void => {
   const o = newObject();
   o.pos = { x: Math.round(goal.target.x), y: 0, z: Math.round(goal.target.z) };
-  S.context.children.push(o);
-  enterNode(o, true);
+  parent.children.push(o);
+  S.collapsed.delete(parent.id);
+  enterNode(o, fit); // fit only when spawning into the open context; nested stays put
   save();
+};
+export function createObject(): void {
+  spawnObject(S.context, true);
 }
 export function deleteSelection(): void {
   if (!S.selection.size) return;
@@ -77,15 +84,15 @@ export function duplicateSelection(): void {
   commit();
 }
 export function copySelection(): void {
-  S.clipboard = selectedNodes().map(clone);
+  clipboard = selectedNodes().map(clone);
 }
 export function cutSelection(): void {
   copySelection();
   deleteSelection();
 }
 export function pasteClipboard(): void {
-  if (!S.clipboard.length) return;
-  const ns = S.clipboard.map(cloneShift);
+  if (!clipboard.length) return;
+  const ns = clipboard.map(cloneShift);
   S.context.children.push(...ns);
   S.selection = new Set(ns.map((d) => d.id));
   commit();
@@ -98,7 +105,7 @@ export function reparentNode(
   index: number,
 ): boolean { // move node under newParent at index, preserving world pose
   if (node === newParent || isDescendant(node, newParent)) return false;
-  const A = parentOf(node) as SceneNode | null;
+  const A = parentOf(node);
   if (!A) return false;
   const Wn = xcompose(worldXform(A), { off: { ...node.pos }, rot: node.rot });
   const local = xcompose(xinvert(worldXform(newParent)), Wn);
@@ -120,11 +127,10 @@ export function reparentNode(
 }
 // wrap a node in a fresh group that takes its place (world pose preserved)
 function wrapNode(node: Node): SceneNode | null {
-  const par = parentOf(node) as SceneNode | null;
+  const par = parentOf(node);
   if (!par) return null;
   const idx = par.children.indexOf(node);
-  const g = newScene();
-  g.name = "Group";
+  const g = newScene("Group");
   g.pos = { ...node.pos };
   g.rot = node.rot;
   par.children.splice(idx, 1, g); // g takes the node's slot (and its world pose)
@@ -156,7 +162,7 @@ export function wrapNodeInGroup(node: Node): void {
 
 // ---- right-click (context-menu) actions on a tree node ----
 export function duplicateNode(node: Node): void {
-  const par = parentOf(node) as SceneNode | null;
+  const par = parentOf(node);
   if (!par) return;
   const d = cloneShift(node);
   par.children.splice(par.children.indexOf(node) + 1, 0, d);
@@ -164,24 +170,33 @@ export function duplicateNode(node: Node): void {
   save();
 }
 export function deleteNode(node: Node): void {
-  const par = parentOf(node) as SceneNode | null;
+  const par = parentOf(node);
   if (!par) return;
   par.children = par.children.filter((c) => c !== node);
   S.selection.delete(node.id);
   if (S.editObject === node) S.editObject = null;
   commit();
 }
-export function addObjectIn(group: SceneNode): void { // new empty object inside a group (enter it)
-  const o = newObject();
-  o.pos = { x: Math.round(goal.target.x), y: 0, z: Math.round(goal.target.z) };
-  group.children.push(o);
-  S.collapsed.delete(group.id);
-  enterNode(o); // no fit: it's empty, so leave the viewport where it is
-  save();
+// dissolve a group: lift its children into its parent (in place, world pose
+// preserved), then drop the now-empty group. Root has no parent to lift into.
+export function ungroupNode(node: SceneNode): void {
+  const par = parentOf(node);
+  if (!par) return;
+  const kids = [...node.children]; // snapshot; reparentNode mutates the lists
+  let at = par.children.indexOf(node); // land the children in the group's slot
+  for (const ch of kids) {
+    reparentNode(ch, par, at);
+    at = par.children.indexOf(ch) + 1; // keep them contiguous and in order
+  }
+  par.children = par.children.filter((c) => c !== node);
+  S.selection = new Set(kids.map((k) => k.id));
+  commit();
+}
+export function addObjectIn(group: SceneNode): void { // new empty object inside a group
+  spawnObject(group, false);
 }
 export function addGroupIn(group: SceneNode): void { // new empty group inside a group
-  const g = newScene();
-  g.name = "Group";
+  const g = newScene("Group");
   group.children.push(g);
   S.collapsed.delete(group.id);
   selectNode(g);
@@ -189,16 +204,13 @@ export function addGroupIn(group: SceneNode): void { // new empty group inside a
 }
 export function rotateSelectionBy(steps: number): void { // rotate selection in 90° steps about each piece's own centre
   const dir = steps < 0 ? -1 : 1;
+  // invariant across the loop: we rotate context children, not the path that
+  // defines the context frame, so the context transform never changes here
+  const x = contextXform();
+  // world AABB of a context child under the current context transform
+  const childWorldBox = (ch: Node) =>
+    nodeBox(ch, addv(x.off, rotY(ch.pos, x.rot)), (x.rot + ch.rot) & 3, emptyBox());
   for (let n = 0; n < Math.abs(steps); n++) {
-    const x = contextXform();
-    // world AABB of a context child under the current context transform
-    const childWorldBox = (ch: Node) =>
-      nodeBox(
-        ch,
-        addv(x.off, rotY(ch.pos, x.rot)),
-        (x.rot + ch.rot) & 3,
-        emptyBox(),
-      );
     for (const id of S.selection) {
       const ch = childById(id);
       if (!ch) continue;

@@ -16,6 +16,7 @@ import {
   worldBox,
 } from "./boxes.ts";
 import {
+  camera,
   col,
   dimCol,
   dir,
@@ -23,11 +24,13 @@ import {
   matGlass,
   matGlassDepth,
   matSurf,
+  ndc,
   overlay,
+  raycaster,
   scene,
   wake,
 } from "./scene-env.ts";
-import { contextXform, emptyBox, nodeBox, VIS } from "./model.ts";
+import { boxEmpty, contextXform, emptyBox, nodeBox, VIS } from "./model.ts";
 import { invalidateField } from "./measure.ts";
 import type { Box, Box3, Node, ObjectNode, Region, Rot, Vec } from "./types.ts";
 
@@ -38,7 +41,7 @@ import type { Box, Box3, Node, ObjectNode, Region, Rot, Vec } from "./types.ts";
 // kept (same azimuth) so cube faces still shade with clear light/dark sides.
 const LIGHT_DIR = new THREE.Vector3(40, 150, 30).normalize();
 function fitShadow(box: Box): void {
-  if (box.max.x < box.min.x) return; // empty scene: keep the prior frustum
+  if (boxEmpty(box)) return; // empty scene: keep the prior frustum
   const cx = (box.min.x + box.max.x) / 2,
     cy = (box.min.y + box.max.y) / 2,
     cz = (box.min.z + box.max.z) / 2;
@@ -72,11 +75,15 @@ function fitShadow(box: Box): void {
   dir.shadow.normalBias = 4 * R / dir.shadow.mapSize.x;
 }
 
+// every scene mesh added by the current rebuild (incl. the edit mesh and glass
+// depth-prepass siblings). Render-internal: only this module adds/disposes them,
+// so it lives here, not in the shared S object.
+let meshes: THREE.Mesh[] = [];
 function disposeMeshes(): void {
   // a glass surface and its depth-prepass sibling share one geometry, so track
   // what's been freed to dispose each BufferGeometry exactly once
   const freed = new Set<THREE.BufferGeometry>();
-  for (const m of S.meshes) {
+  for (const m of meshes) {
     scene.remove(m);
     const g = m.geometry;
     if (g && !freed.has(g)) {
@@ -84,14 +91,20 @@ function disposeMeshes(): void {
       freed.add(g);
     }
   }
-  S.meshes = [];
+  meshes = [];
   editGroup.clear();
-  if (S.editRemesh) {
-    cancelAnimationFrame(S.editRemesh);
-    S.editRemesh = 0;
+  if (editRemesh) {
+    cancelAnimationFrame(editRemesh);
+    editRemesh = 0;
   }
-  S.editMesh = null;
+  editMesh = null;
 }
+
+// The edited object's surface mesh and its pending rAF id. Render-internal scratch
+// (rebuilt on edit, see scheduleEditRemesh) — never read outside this module, and
+// not document state, so it lives here rather than in the shared S object.
+let editMesh: THREE.Mesh | null = null;
+let editRemesh = 0; // pending requestAnimationFrame id, 0 when none
 
 // Greedy box-face mesher: one merged quad per exposed face rectangle, so cost is
 // O(boxes), not O(surface cells) — a 1000³ box is six quads, not six million.
@@ -106,20 +119,43 @@ const FACE6 = [
   { a: 2, hi: false, u: 1, v: 0, n: [0, 0, -1] },
 ] as const;
 type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
-// Smooth, spread-out ambient occlusion baked into the mesh. A face vertex
-// accumulates occlusion from the solid outside-layer cells within AO_R cells of
-// it, each weighted by a linear distance falloff, so a wall or corner casts a
-// soft shadow that fades over several voxels instead of a one-cell dark rim.
-// Gouraud-interpolated; an interior vertex ≥ AO_R from every edge has no occluder
-// in range -> brightness 1, so flat masses split into boxes stay seamless.
-const AO_R = 4; // occlusion spread radius, in cells
-const AO_DARK = 0.38; // brightness of a fully-occluded (rim/corner) vertex
-// sample kernel: outside-layer cell offsets within AO_R + linear falloff weight
-const AO_KERNEL: [number, number, number][] = [];
-for (let du = -AO_R; du < AO_R; du++) {
-  for (let dv = -AO_R; dv < AO_R; dv++) {
-    const d = Math.hypot(du + 0.5, dv + 0.5);
-    if (d < AO_R) AO_KERNEL.push([du, dv, 1 - d / AO_R]);
+// Smooth, spread-out ambient occlusion baked into the mesh. Per exposed face we
+// build a 2D occupancy field of the outside cell layer (1 = solid occluder) over
+// the face's span plus an AO_R margin, then blur it with a few separable box
+// passes — a 3-pass box blur closely approximates a Gaussian. A vertex's
+// occlusion is the blurred (0..1) field at its position: the Gaussian-weighted
+// fraction of its neighbourhood that is solid, so the shadow fades smoothly
+// across the whole radius. The blur uses running sums, so its cost is
+// independent of AO_R — the spread can be widened freely. Gouraud-interpolated;
+// an interior vertex ≥ AO_R from every edge sees no occluder -> brightness 1, so
+// flat masses split into boxes stay seamless.
+const AO_PASSES = 3; // box-blur passes; 3 ≈ a Gaussian
+const AO_BOX = 2; // box radius per pass
+const AO_R = AO_PASSES * AO_BOX; // total blur half-width = spread radius, in cells
+const AO_DARK = 0.5; // brightness of a fully-occluded (rim/corner) vertex
+// One separable box-blur pass with zero padding (out-of-field reads as open),
+// dividing by the full window so each occluder spreads over 2·AO_BOX+1 cells.
+// Blurs `count` lines of `len` elements; line k starts at k·lineStride with
+// elements elemStride apart — call once per axis with the strides swapped.
+function aoBlur1D(
+  src: Float32Array,
+  dst: Float32Array,
+  count: number,
+  len: number,
+  lineStride: number,
+  elemStride: number,
+): void {
+  const div = 2 * AO_BOX + 1;
+  for (let k = 0; k < count; k++) {
+    const base = k * lineStride;
+    let sum = 0;
+    for (let t = 0; t <= AO_BOX && t < len; t++) sum += src[base + t * elemStride];
+    for (let p = 0; p < len; p++) {
+      dst[base + p * elemStride] = sum / div;
+      const add = p + AO_BOX + 1, rem = p - AO_BOX;
+      if (add < len) sum += src[base + add * elemStride];
+      if (rem >= 0) sum -= src[base + rem * elemStride];
+    }
   }
 }
 function boxFaceGeo(
@@ -175,19 +211,40 @@ function boxFaceGeo(
         o[v] = vv;
         return [o[0], o[1], o[2]];
       };
-      // AO brightness at a face vertex: solid outside-layer cells within AO_R
-      // darken it, weighted by distance — vis is the product of (1 - weight).
-      const vbright = (vu: number, vv: number): number => {
-        if (!has) return 1;
-        let vis = 1;
+      // AO at a face vertex: read the blurred outside-layer occupancy field (see
+      // the note by AO_PASSES). The field is built lazily and shared by every
+      // vertex of the face, so fully-covered faces (no exposed pieces) cost
+      // nothing, and each vertex is a single array read.
+      let field: Float32Array | null = null;
+      let fu0 = 0, fv0 = 0, fh = 0; // field origin (u,v) and v-row stride
+      const buildField = (): Float32Array => {
+        fu0 = blo[u] - AO_R;
+        fv0 = blo[v] - AO_R;
+        const fw = bhi[u] - blo[u] + 2 * AO_R + 1;
+        fh = bhi[v] - blo[v] + 2 * AO_R + 1;
+        const s = new Float32Array(fw * fh); // outside-layer occupancy (0/1)
         const cell = aoCell; // {a,u,v} permute 0..2, so all 3 slots are written
         cell[a] = wo;
-        for (const [du, dv, w] of AO_KERNEL) {
-          cell[u] = vu + du;
-          cell[v] = vv + dv;
-          if (has(cell[0], cell[1], cell[2])) vis *= 1 - w;
+        for (let i2 = 0; i2 < fw; i2++) {
+          cell[u] = fu0 + i2;
+          const col = i2 * fh;
+          for (let j2 = 0; j2 < fh; j2++) {
+            cell[v] = fv0 + j2;
+            if (has!(cell[0], cell[1], cell[2])) s[col + j2] = 1;
+          }
         }
-        return AO_DARK + (1 - AO_DARK) * vis;
+        const d = new Float32Array(fw * fh); // ping-pong scratch
+        for (let p = 0; p < AO_PASSES; p++) { // each pass blurs both axes
+          aoBlur1D(s, d, fw, fh, fh, 1); // along v (contiguous rows)
+          aoBlur1D(d, s, fh, fw, 1, fh); // along u (strided columns)
+        }
+        return (field = s); // both sweeps land the result back in s
+      };
+      const vbright = (vu: number, vv: number): number => {
+        if (!has) return 1;
+        const f = field ?? buildField();
+        const occ = f[(vu - fu0) * fh + (vv - fv0)]; // blurred solid fraction
+        return AO_DARK + (1 - AO_DARK) * (1 - occ);
       };
       // one quad with per-vertex AO baked into the vertex colours (Gouraud)
       const quad = (qu0: number, qv0: number, qu1: number, qv1: number) => {
@@ -217,9 +274,9 @@ function boxFaceGeo(
           quad(pu0, pv0, pu1, pv1);
           continue;
         }
-        // AO only varies within AO_R of an edge, so mesh a per-cell band that
-        // deep around the rim (vertices for the gradient) and leave the interior
-        // — where every vertex is ≥ AO_R from any edge, so AO == 1 — as one quad.
+        // AO only varies within AO_R of an edge, so mesh a per-cell band AO_R
+        // deep around the rim (the gradient needs the vertices) and leave the
+        // interior — every vertex ≥ AO_R from any edge, so AO == 1 — as one quad.
         const iu0 = pu0 + AO_R, iu1 = pu1 - AO_R;
         const iv0 = pv0 + AO_R, iv1 = pv1 - AO_R;
         if (iu0 >= iu1 || iv0 >= iv1) { // too small to have a bright interior
@@ -253,10 +310,9 @@ function boxFaceGeo(
 function meshSurface(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
-  { transparent = false, pick = false, childId = null }: {
+  { transparent = false, childId }: {
     transparent?: boolean;
-    pick?: boolean;
-    childId?: string | null;
+    childId?: string; // present => pickable, tagged with this context-child id
   } = {},
 ): void {
   if (!boxes.length) return;
@@ -266,7 +322,7 @@ function meshSurface(
   m.castShadow = true;
   m.receiveShadow = true;
   scene.add(m);
-  S.meshes.push(m);
+  meshes.push(m);
   if (transparent) {
     // depth-only sibling: lays down the nearest-glass depth before the colour pass
     m.renderOrder = 2;
@@ -275,12 +331,12 @@ function meshSurface(
     dp.castShadow = false;
     dp.receiveShadow = false;
     scene.add(dp);
-    S.meshes.push(dp);
+    meshes.push(dp);
   }
-  if (pick) {
+  if (childId != null) {
     m.userData.childId = childId;
     S.pickMeshes.push(m);
-    (S.childMeshes[childId!] || (S.childMeshes[childId!] = [])).push(m);
+    (S.childMeshes[childId] || (S.childMeshes[childId] = [])).push(m);
   }
 }
 
@@ -335,25 +391,25 @@ function buildEditMesh(): void {
   editGroup.position.set(off.x, off.y, off.z);
   editGroup.rotation.set(0, -rot * Math.PI / 2, 0); // rotY(v,rot) == Y-rotation by -rot·90°
   editGroup.updateMatrixWorld(true);
-  if (S.editMesh) {
-    editGroup.remove(S.editMesh);
-    S.editMesh.geometry.dispose();
-    const i = S.meshes.indexOf(S.editMesh);
-    if (i >= 0) S.meshes.splice(i, 1);
+  if (editMesh) {
+    editGroup.remove(editMesh);
+    editMesh.geometry.dispose();
+    const i = meshes.indexOf(editMesh);
+    if (i >= 0) meshes.splice(i, 1);
   }
   const g = boxFaceGeo(S.editObject!.boxes, col, true);
-  S.editMesh = g ? new THREE.Mesh(g, matSurf) : null;
-  if (S.editMesh) {
-    S.editMesh.castShadow = S.editMesh.receiveShadow = true;
-    editGroup.add(S.editMesh);
-    S.meshes.push(S.editMesh);
+  editMesh = g ? new THREE.Mesh(g, matSurf) : null;
+  if (editMesh) {
+    editMesh.castShadow = editMesh.receiveShadow = true;
+    editGroup.add(editMesh);
+    meshes.push(editMesh);
   }
-  S.pickMeshes = S.editMesh ? [S.editMesh] : [];
+  S.pickMeshes = editMesh ? [editMesh] : [];
 }
 function scheduleEditRemesh(): void {
-  if (S.editRemesh) return;
-  S.editRemesh = requestAnimationFrame(() => {
-    S.editRemesh = 0;
+  if (editRemesh) return;
+  editRemesh = requestAnimationFrame(() => {
+    editRemesh = 0;
     buildEditMesh();
     wake();
   });
@@ -379,6 +435,41 @@ export function editFill(cell: Vec, c: number): void {
   if (!next) return; // empty seed cell or already that colour — nothing to do
   S.editObject!.boxes = next;
   afterEdit();
+}
+// Eyedropper: the colour of the voxel under the pointer, picking from ANY visible
+// solid (the edited object or other scene objects), or null when over empty space.
+// We raycast every current mesh, step half a voxel along the view ray into the
+// front-most surface to land inside its cell, then look that world cell up against
+// every visible object's world boxes.
+export function eyedropColor(): number | null {
+  if (!meshes.length) return null;
+  raycaster.setFromCamera(ndc, camera);
+  const h = raycaster.intersectObjects(meshes, false)[0];
+  if (!h) return null;
+  const d = raycaster.ray.direction;
+  const cx = Math.floor(h.point.x + d.x * 0.5),
+    cy = Math.floor(h.point.y + d.y * 0.5),
+    cz = Math.floor(h.point.z + d.z * 0.5);
+  const colorAt = (boxes: Box3[], off: Vec, rot: Rot): number | null => {
+    for (const b of boxes) {
+      const w = worldBox(b, rot, off);
+      if (
+        cx >= w.x0 && cx < w.x1 && cy >= w.y0 && cy < w.y1 &&
+        cz >= w.z0 && cz < w.z1
+      ) return w.c;
+    }
+    return null;
+  };
+  // edited object first (it's the opaque front surface), then everyone else
+  if (S.editObject) {
+    const c = colorAt(S.editObject.boxes, S.editXform.off, S.editXform.rot);
+    if (c != null) return c;
+  }
+  let result: number | null = null;
+  eachObject(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (n, off, rot) => {
+    if (result == null) result = colorAt(n.boxes, off, rot);
+  });
+  return result;
 }
 
 export function rebuild(): void {
@@ -428,7 +519,7 @@ export function rebuild(): void {
     for (const id of new Set([...gE.keys(), ...gT.keys()])) {
       const e = gE.get(id);
       if (e) {
-        meshSurface(e, col, { pick: true, childId: id });
+        meshSurface(e, col, { childId: id });
       }
       const t = gT.get(id);
       if (t) meshSurface(t, col, { transparent: true }); // not pickable
@@ -464,6 +555,6 @@ export function refreshOverlay(): void {
     const b = S.childBox[id];
     // skip the empty-box sentinel (a selected object with no voxels) — its
     // min>max would build a degenerate scene-spanning wireframe
-    if (b && b.max.x >= b.min.x) overlay.add(boxLines(b.min, b.max, 0xf0e6d2));
+    if (b && !boxEmpty(b)) overlay.add(boxLines(b.min, b.max, 0xf0e6d2));
   }
 }
