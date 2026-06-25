@@ -121,18 +121,24 @@ const FACE6 = [
 type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
 // Smooth, spread-out ambient occlusion baked into the mesh. A face vertex
 // accumulates occlusion from the solid outside-layer cells within AO_R cells of
-// it, each weighted by a linear distance falloff, so a wall or corner casts a
+// it, each weighted by a smooth distance falloff, so a wall or corner casts a
 // soft shadow that fades over several voxels instead of a one-cell dark rim.
 // Gouraud-interpolated; an interior vertex ≥ AO_R from every edge has no occluder
 // in range -> brightness 1, so flat masses split into boxes stay seamless.
-const AO_R = 4; // occlusion spread radius, in cells
-const AO_DARK = 0.38; // brightness of a fully-occluded (rim/corner) vertex
-// sample kernel: outside-layer cell offsets within AO_R + linear falloff weight
+const AO_R = 6; // occlusion spread radius, in cells
+const AO_DARK = 0.45; // brightness of a fully-occluded (rim/corner) vertex
+// sample kernel: outside-layer cell offsets within AO_R, each with a smoothstep
+// distance falloff. The eased S-curve (vs a straight 1 - d/R ramp) tapers the
+// weight gently at both ends, so a corner's occlusion builds up gradually across
+// the radius instead of jumping dark right at the rim.
 const AO_KERNEL: [number, number, number][] = [];
 for (let du = -AO_R; du < AO_R; du++) {
   for (let dv = -AO_R; dv < AO_R; dv++) {
     const d = Math.hypot(du + 0.5, dv + 0.5);
-    if (d < AO_R) AO_KERNEL.push([du, dv, 1 - d / AO_R]);
+    if (d < AO_R) {
+      const s = 1 - d / AO_R; // 1 at the occluder .. 0 at the radius edge
+      AO_KERNEL.push([du, dv, s * s * (3 - 2 * s)]); // smoothstep falloff
+    }
   }
 }
 function boxFaceGeo(
