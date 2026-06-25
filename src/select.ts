@@ -98,7 +98,9 @@ export function deleteSelection3d(): void {
   save();
 }
 export function copySelection3d(): void {
-  if (S.sel3d) setVoxClip(normalize(S.sel3d.boxes));
+  // only replace the clipboard when the selection actually holds voxels — an
+  // empty marquee is a no-op, not a clipboard clear
+  if (S.sel3d && S.sel3d.boxes.length) setVoxClip(normalize(S.sel3d.boxes));
 }
 export function cutSelection3d(): void {
   copySelection3d();
