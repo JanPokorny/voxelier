@@ -12,6 +12,7 @@ import {
   DEFAULT_COLORS,
   emptyBox,
   findById,
+  findPath,
   isDescendant,
   nodeBoxes,
   parentOf,
@@ -36,7 +37,7 @@ import {
   wrapInGroup,
   wrapNodeInGroup,
 } from "./commands.ts";
-import { refreshOverlay } from "./render.ts";
+import { rebuild, refreshOverlay } from "./render.ts";
 import { save } from "./persistence.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
@@ -603,7 +604,33 @@ function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
 function doDrop(): void {
   const dn = dragId && findById(dragId);
   if (dn && dropInfo) {
-    if (dropInfo.wrap) wrapInGroup(dropInfo.wrap, dn);
+    // when the dragged row is part of a multi-selection, move the whole
+    // selection into the target (preserving order + each node's world pose)
+    const multi = !S.editObject && dropInfo.parent &&
+        parentOf(dn) === S.context && S.selection.has(dn.id) &&
+        S.selection.size > 1
+      ? S.context.children.filter((c) => S.selection.has(c.id))
+      : null;
+    if (multi) {
+      const target = dropInfo.parent!;
+      let at = dropInfo.index!, moved = false;
+      for (const m of multi) {
+        if (reparentNode(m, target, at)) {
+          at = target.children.indexOf(m) + 1; // keep the moved set contiguous + ordered
+          moved = true;
+        }
+      }
+      if (moved) {
+        S.collapsed.delete(target.id);
+        const p = findPath(target); // make the target the context so the rows stay selected
+        if (p) S.path = p;
+        S.editObject = null;
+        S.selection = new Set(multi.map((m) => m.id));
+        rebuild();
+        updateChrome();
+        save();
+      }
+    } else if (dropInfo.wrap) wrapInGroup(dropInfo.wrap, dn);
     else if (
       dropInfo.parent &&
       reparentNode(dn, dropInfo.parent, dropInfo.index!)
