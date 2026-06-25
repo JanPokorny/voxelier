@@ -205,22 +205,45 @@ function boxFaceGeo(
       // outside-layer cells within AO_R and normalise by the total kernel weight,
       // so brightness tracks the open *fraction* of the neighbourhood and fades
       // gradually across the whole radius (see the coverage-model note above).
-      // Memoised per face: the rim band is meshed as 1×1 quads, so each lattice
-      // vertex is shared by up to four quads — without the cache its AO_KERNEL
-      // sweep would run that many times over (a multi-second remesh on big faces).
+      // Two layers of work-saving over the naive per-vertex grid sweep:
+      //  - a flat occluder mask over this face's (u,v) span + AO_R margin, built
+      //    once and shared by every vertex, so each kernel tap is an array read
+      //    rather than a has() grid query (the dominant cost on big faces);
+      //  - memoisation, because the rim band is meshed as 1×1 quads so each
+      //    lattice vertex is shared by up to four of them.
       const aoMemo = new Map<number, number>();
+      let mask: Uint8Array | null = null; // lazy: skip fully-covered faces
+      let mu0 = 0, mv0 = 0, mh = 0; // mask origin (u,v) and row stride
+      const buildMask = (): Uint8Array => {
+        mu0 = blo[u] - AO_R;
+        mv0 = blo[v] - AO_R;
+        const mw = bhi[u] - blo[u] + 2 * AO_R + 1;
+        mh = bhi[v] - blo[v] + 2 * AO_R + 1;
+        const m = new Uint8Array(mw * mh);
+        const cell = aoCell; // {a,u,v} permute 0..2, so all 3 slots are written
+        cell[a] = wo;
+        for (let i2 = 0; i2 < mw; i2++) {
+          cell[u] = mu0 + i2;
+          const col = i2 * mh;
+          for (let j2 = 0; j2 < mh; j2++) {
+            cell[v] = mv0 + j2;
+            if (has!(cell[0], cell[1], cell[2])) m[col + j2] = 1;
+          }
+        }
+        return (mask = m);
+      };
       const vbright = (vu: number, vv: number): number => {
         if (!has) return 1;
         const key = vu * 1e6 + vv; // face coords are small ints; |vv| << 1e6
         const hit = aoMemo.get(key);
         if (hit !== undefined) return hit;
+        const m = mask ?? buildMask();
+        // base index of (vu,vv) in the mask; +(du,dv) stays in bounds by the
+        // AO_R margin, and du,dv ∈ [-AO_R, AO_R-1], so no per-tap bounds check
+        const bu = vu - mu0, bv = vv - mv0;
         let occ = 0;
-        const cell = aoCell; // {a,u,v} permute 0..2, so all 3 slots are written
-        cell[a] = wo;
         for (const [du, dv, w] of AO_KERNEL) {
-          cell[u] = vu + du;
-          cell[v] = vv + dv;
-          if (has(cell[0], cell[1], cell[2])) occ += w;
+          if (m[(bu + du) * mh + (bv + dv)]) occ += w;
         }
         const vis = 1 - occ / AO_WSUM; // open fraction of the neighbourhood
         const b = AO_DARK + (1 - AO_DARK) * vis;
