@@ -36,14 +36,14 @@ import {
   refreshOverlay,
 } from "./render.ts";
 import { boxesOverlap, worldBox } from "./boxes.ts";
-import { childById, contextXform } from "./model.ts";
+import { childById, clone, contextXform } from "./model.ts";
 import { orbitView, panCamera } from "./camera.ts";
 import { pointerMeasure, renderMeasure } from "./measure.ts";
 import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
 import { selectColor, toggleMeasure, updateChrome } from "./ui.ts";
 import { save } from "./persistence.ts";
-import type { Box3, Drag, Seg, Vec } from "./types.ts";
+import type { Box3, Drag, Node, Seg, Vec } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
@@ -167,7 +167,10 @@ function moveDragTo(e: PointerEvent): void {
   }
   overlay.position.set(d.dx!, d.dy!, d.dz!);
 }
-function commitMove(): void {
+// Finalise a move. With `copy` (Ctrl held at release) the dragged delta is baked
+// into fresh clones placed at the new spot and the originals are left untouched
+// (their meshes snap back on rebuild); otherwise the selection itself moves.
+function commitMove(copy: boolean): void {
   const d = S.drag!,
     x = contextXform(),
     dL = rotY(
@@ -175,12 +178,25 @@ function commitMove(): void {
       -x.rot, // world delta -> context-local (inverse rotation)
     ),
     dy = Math.round(d.dy!);
-  for (const id of S.selection) {
-    const c = childById(id);
-    if (c) {
-      c.pos.x += dL.x;
-      c.pos.y += dy;
-      c.pos.z += dL.z;
+  if (copy) {
+    const dups: Node[] = [];
+    for (const id of S.selection) {
+      const c = childById(id);
+      if (!c) continue;
+      const dup = clone(c);
+      dup.pos = { x: c.pos.x + dL.x, y: c.pos.y + dy, z: c.pos.z + dL.z };
+      dups.push(dup);
+    }
+    S.context.children.push(...dups);
+    S.selection = new Set(dups.map((n) => n.id));
+  } else {
+    for (const id of S.selection) {
+      const c = childById(id);
+      if (c) {
+        c.pos.x += dL.x;
+        c.pos.y += dy;
+        c.pos.z += dL.z;
+      }
     }
   }
   overlay.position.set(0, 0, 0);
@@ -490,7 +506,7 @@ canvas.addEventListener("pointerup", (e) => {
       } else if (!e.shiftKey) S.selection.clear();
       refreshOverlay();
       updateChrome();
-    } else if (S.drag.mode === "move") commitMove();
+    } else if (S.drag.mode === "move") commitMove(e.ctrlKey || e.metaKey);
     else if (S.drag.mode === "rotobj" && S.drag.dirty) {
       updateChrome(); // tree thumbnails track the new pose
       save();
