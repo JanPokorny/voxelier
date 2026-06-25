@@ -37,14 +37,6 @@ export function cycleVis(node: Node): void {
   node.vis = VIS_CYCLE[node.vis];
   commit();
 }
-export function renameNode(node: Node): void {
-  const n = prompt("Name", node.name || "");
-  if (n != null) {
-    node.name = n.trim();
-    updateChrome();
-    save();
-  }
-}
 
 // detached node clones for copy/paste — private to this module's clipboard flow
 let clipboard: Node[] = [];

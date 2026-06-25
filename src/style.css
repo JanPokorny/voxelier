@@ -247,6 +247,19 @@ h3 {
 .trow.dim .nm {
   color: var(--ink-dim);
 }
+/* inline rename field — sits where the .nm span was, filling the row */
+.trow .nminput {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  outline: none;
+}
 .trow.root .nm {
   font-weight: 600;
   color: var(--ink);

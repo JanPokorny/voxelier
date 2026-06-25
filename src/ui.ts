@@ -29,7 +29,6 @@ import {
   groupSelection,
   nudgeY,
   pasteClipboard,
-  renameNode,
   reparentNode,
   rotateSelection,
   ungroupNode,
@@ -354,6 +353,39 @@ function rowClick(node: Node, e: MouseEvent): void {
   else selectNode(node);
   pending = { node, timer: setTimeout(() => (pending = null), 300) };
 }
+// Inline rename: swap a row's name span for a text input, committing on Enter or
+// blur and cancelling on Escape. updateChrome() rebuilds the tree afterwards,
+// restoring the plain name span. Used by the name-click gesture and the menu.
+function startRename(node: Node): void {
+  closeItemMenu(); // when invoked from the context menu
+  const r = document.querySelector<HTMLElement>(`#tree .trow[data-id="${node.id}"]`);
+  const nm = r?.querySelector(".nm");
+  if (!nm) return;
+  const input = el("input", { className: "nminput", value: node.name });
+  input.placeholder = node === S.root
+    ? "Project"
+    : (node.type === "scene" ? "group" : "object");
+  let done = false;
+  const finish = (commit: boolean) => {
+    if (done) return; // blur fires again as updateChrome() tears the input down
+    done = true;
+    if (commit) {
+      node.name = input.value.trim();
+      save();
+    }
+    updateChrome();
+  };
+  input.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Enter") finish(true);
+    else if (ev.key === "Escape") finish(false);
+  });
+  input.addEventListener("blur", () => finish(true));
+  nm.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
 // the row's cached thumbnail; for a non-empty non-root group it doubles as the
 // collapse toggle (a stacked look = collapsed)
 function rowThumb(node: Node): HTMLCanvasElement {
@@ -417,6 +449,7 @@ function buildTree(): void {
         (!isRoot && v !== "visible" ? " dim" : ""),
     });
     r.style.paddingLeft = (4 + depth * 13) + "px";
+    r.dataset.id = node.id; // lets startRename() find this row to edit in place
     const th = rowThumb(node);
     const nm = el("span", { className: "nm" });
     if (isRoot) nm.textContent = node.name || "Project";
@@ -425,6 +458,17 @@ function buildTree(): void {
       nm.innerHTML = '<span class="ph">' +
         (node.type === "scene" ? "group" : "object") + "</span>";
     }
+    // clicking the name of the already-selected (sole) item, once the
+    // double-click window has passed, opens inline rename
+    nm.onclick = (e) => {
+      if (
+        !pending && !S.editObject && !isRoot && S.selection.size === 1 &&
+        S.selection.has(node.id)
+      ) {
+        e.stopPropagation();
+        startRename(node);
+      }
+    };
     r.append(th, nm);
     if (!isRoot) {
       r.append(el("button", {
@@ -499,7 +543,7 @@ function showItemMenu(node: Node, x: number, y: number): void {
   // multi-selection (>1) routes Copy/Duplicate/Delete/Group through the selection
   const multi = node !== S.root && parentOf(node) === S.context &&
     S.selection.size > 1 && S.selection.has(node.id);
-  add("Rename", () => renameNode(node));
+  add("Rename", () => startRename(node));
   add("Locate", () => fitNode(node));
   div();
   if (node !== S.root) {
