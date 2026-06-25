@@ -39,7 +39,7 @@ export type SceneNode = NodeBase & { type: "scene"; children: Node[] };
 export type Node = ObjectNode | SceneNode;
 
 // ---- editor tools ----
-export type Tool = "add" | "erase" | "paint" | "eyedropper" | "measure";
+export type Tool = "add" | "erase" | "paint" | "eyedropper";
 
 // ---- measurement ----
 // One labelled dimension segment between two world points.
@@ -61,10 +61,9 @@ export type MeasField = {
 };
 
 // ---- pointer drag ----
-// One loosely-shaped record covers every drag mode (pan/orbit/move/rotobj/box);
-// measurement has no mode of its own — it piggybacks on a pan/orbit drag via the
-// `meas` field below. Fields are populated per mode at pointerdown, kept
-// permissive on purpose so the pointer handlers stay terse.
+// One loosely-shaped record covers every drag mode (pan/orbit/move/rotobj/box).
+// Fields are populated per mode at pointerdown, kept permissive on purpose so the
+// pointer handlers stay terse.
 export type Drag = {
   mode: "pan" | "orbit" | "move" | "rotobj" | "box";
   x: number;
@@ -81,7 +80,7 @@ export type Drag = {
   steps?: number;
   dirty?: boolean; // rotobj: a rotation was applied during the drag (commit even if net steps == 0)
   clickId?: string | null;
-  meas?: "freeze" | "clear";
+  mid?: boolean; // middle-button drag: a non-moved release toggles measurement mode
   // in-progress box-brush footprint, oriented to the face the drag began on. `s`
   // is the start cell; the footprint lies in the plane perpendicular to axis `na`
   // (0/1/2) at s[na], its opposite corner tracked in `c` (na coord stays s[na]);

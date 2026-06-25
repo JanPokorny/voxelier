@@ -84,6 +84,11 @@ button.active {
   border-radius: 14px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
+/* the measurement group is pinned to the bottom of the rail whether or not the
+   voxel-tool group is present above it */
+.toolgroup.bottom {
+  margin-top: auto;
+}
 .tool {
   width: 50px;
   min-height: 48px;
@@ -148,10 +153,6 @@ button.active {
 }
 .mlab.empty {
   color: var(--ink-dim);
-}
-.mlab.frozen {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 #side {

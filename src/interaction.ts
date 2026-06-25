@@ -38,24 +38,24 @@ import {
 import { boxesOverlap, worldBox } from "./boxes.ts";
 import { childById, contextXform } from "./model.ts";
 import { orbitView, panCamera } from "./camera.ts";
-import {
-  clearMeasure,
-  freezeMeasure,
-  measureActive,
-  pointerMeasure,
-  renderMeasure,
-} from "./measure.ts";
+import { pointerMeasure, renderMeasure } from "./measure.ts";
 import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
-import { selectColor, updateChrome } from "./ui.ts";
+import { selectColor, toggleMeasure, updateChrome } from "./ui.ts";
 import { save } from "./persistence.ts";
 import type { Box3, Drag, Seg, Vec } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
-// sentinel start-x for non-click drags (middle-button pan): keeps moved() true so
-// the gesture is never finalised as a click in pointerup
-const NOT_A_CLICK = -1e9;
+
+// Refresh the floating dimension overlay. While measurement mode is on it reads
+// the runs through the cell under the pointer, in any mode and alongside any tool
+// — except the box brush, which already draws its own dimensions into liveMeas.
+function updateMeas(): void {
+  if (!S.measMode || S.painting) return;
+  if (S.drag && S.drag.mode === "box") return;
+  pointerMeasure();
+}
 
 // World-Y units per pixel of vertical pointer travel, for Shift height edits.
 // One screen pixel is `perPx` world units along the screen's vertical axis; world
@@ -405,10 +405,9 @@ canvas.addEventListener("pointerdown", (e) => {
   setNdc(e.clientX, e.clientY);
   const base = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY };
 
-  if (measureActive()) { // left-click freezes, right-click clears; drags still navigate
-    if (e.button === 0) S.drag = { ...base, mode: "pan", meas: "freeze" };
-    else if (e.button === 2) S.drag = { ...base, mode: "orbit", meas: "clear" };
-    else if (e.button === 1) S.drag = { ...base, mode: "pan", sx: NOT_A_CLICK };
+  // middle button: pan the view, but a non-moved release toggles measurement mode
+  if (e.button === 1) {
+    S.drag = { ...base, mode: "pan", mid: true };
     return;
   }
   if (S.editObject) {
@@ -423,7 +422,6 @@ canvas.addEventListener("pointerdown", (e) => {
         applyVoxel();
       }
     } else if (e.button === 2) S.drag = { ...base, mode: "orbit" };
-    else if (e.button === 1) S.drag = { ...base, mode: "pan" };
     return;
   }
 
@@ -445,42 +443,31 @@ canvas.addEventListener("pointerdown", (e) => {
   } else if (e.button === 2) {
     if (onSel) S.drag = { ...base, mode: "rotobj", steps: 0 };
     else S.drag = { ...base, mode: "orbit" };
-  } else if (e.button === 1) {
-    S.drag = { ...base, mode: "pan", sx: NOT_A_CLICK };
   }
 });
 
 canvas.addEventListener("pointermove", (e) => {
   setNdc(e.clientX, e.clientY);
-  if (measureActive()) {
-    dragPanOrbit(e);
-    pointerMeasure();
-    return;
-  }
   if (S.editObject && S.painting) {
     applyVoxel();
-    return;
-  }
-  if (!S.drag) {
+  } else if (!S.drag) {
     if (S.editObject) updateVoxHover();
     else hoverVox.visible = false;
-    return;
+  } else if (!dragPanOrbit(e)) {
+    if (S.drag.mode === "move") moveDragTo(e);
+    else if (S.drag.mode === "rotobj") rotDragTo(e);
+    else if (S.drag.mode === "box") boxDragTo(e);
   }
-  if (dragPanOrbit(e)) return;
-  if (S.drag.mode === "move") moveDragTo(e);
-  else if (S.drag.mode === "rotobj") rotDragTo(e);
-  else if (S.drag.mode === "box") boxDragTo(e);
+  updateMeas(); // floating dimensions, alongside whatever the active tool did
 });
 
 canvas.addEventListener("pointerup", (e) => {
   try {
     canvas.releasePointerCapture(e.pointerId);
   } catch (_) { /* not captured */ }
-  if (measureActive()) {
-    if (S.drag && !moved(e)) {
-      if (S.drag.meas === "freeze") freezeMeasure();
-      else if (S.drag.meas === "clear") clearMeasure();
-    }
+  // middle button: a click (no drag) toggles measurement mode; a drag just panned
+  if (S.drag && S.drag.mid) {
+    if (!moved(e)) toggleMeasure();
     S.drag = null;
     return;
   }
@@ -529,6 +516,10 @@ canvas.addEventListener("pointercancel", () => {
 });
 canvas.addEventListener("pointerleave", () => {
   hoverVox.visible = false;
+  if (S.measMode && !S.drag && !S.painting && S.liveMeas) {
+    S.liveMeas = null; // drop the floating dimensions once the pointer leaves
+    renderMeasure();
+  }
 });
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("wheel", (e) => {

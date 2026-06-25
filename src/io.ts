@@ -44,8 +44,8 @@ export function importScene(): void {
         S.path = [S.root];
         S.editObject = null;
         S.selection.clear();
-        S.measMode = false; // exit standalone measure mode for the new scene
-        clearMeasure(); // discard readings (liveMeas/frozenMeas) from the old one
+        S.measMode = false; // turn measurement off for the new scene
+        clearMeasure(); // discard the live reading from the old one
         rebuild();
         updateChrome();
         frameView();

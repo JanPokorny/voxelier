@@ -74,7 +74,6 @@ const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
   { id: "erase", ic: "－", label: "Erase" },
   { id: "paint", ic: "🪣", label: "Fill" },
   { id: "eyedropper", ic: "💧", label: "Pick" },
-  { id: "measure", ic: "📏", label: "Measure" },
 ];
 // tree visibility-toggle glyphs, by current vis state
 const VIS_GLYPH: Record<string, string> = {
@@ -96,30 +95,36 @@ const toolButton = (
     onclick,
   });
 
+// Measurement is a global toggle (works in any mode, alongside any tool); its
+// button lives in the bottom-left tool rail. Shared with the middle-click toggle
+// in interaction.ts.
+export function toggleMeasure(): void {
+  S.measMode = !S.measMode;
+  if (!S.measMode) clearMeasure();
+  updateChrome();
+}
+
 export function updateChrome(): void {
   const tw = document.getElementById("tools")!;
   tw.innerHTML = "";
-  // top group: the voxel tools while editing an object, else just Measure
-  // (scene actions live in the tree's right-click menu)
-  const top = el("div", { className: "toolgroup" });
+  // top group: the voxel tools while editing an object (scene actions live in the
+  // tree's right-click menu). Omitted entirely outside edit mode.
   if (S.editObject) {
+    const top = el("div", { className: "toolgroup" });
     for (const t of VOX_TOOLS) {
       top.appendChild(toolButton(t.ic, t.label, S.tool === t.id, () => {
         S.tool = t.id;
-        clearMeasure();
         hoverVox.visible = false;
         updateChrome();
       }));
     }
     top.appendChild(colorControl()); // draw-colour picker (only meaningful while editing)
-  } else {
-    top.appendChild(toolButton("📏", "Measure", S.measMode, () => {
-      S.measMode = !S.measMode;
-      if (!S.measMode) clearMeasure();
-      updateChrome();
-    }));
+    tw.append(top);
   }
-  tw.append(top);
+  // bottom group: the measurement toggle, available in every mode
+  const bottom = el("div", { className: "toolgroup bottom" });
+  bottom.appendChild(toolButton("📏", "Measure", S.measMode, toggleMeasure));
+  tw.append(bottom);
   buildTree();
 }
 
