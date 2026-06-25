@@ -119,28 +119,35 @@ const FACE6 = [
   { a: 2, hi: false, u: 1, v: 0, n: [0, 0, -1] },
 ] as const;
 type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
-// Smooth, spread-out ambient occlusion baked into the mesh. A face vertex
-// accumulates occlusion from the solid outside-layer cells within AO_R cells of
-// it, each weighted by a smooth distance falloff, so a wall or corner casts a
-// soft shadow that fades over several voxels instead of a one-cell dark rim.
-// Gouraud-interpolated; an interior vertex ≥ AO_R from every edge has no occluder
-// in range -> brightness 1, so flat masses split into boxes stay seamless.
-const AO_R = 6; // occlusion spread radius, in cells
-const AO_DARK = 0.45; // brightness of a fully-occluded (rim/corner) vertex
+// Smooth, spread-out ambient occlusion baked into the mesh. A face vertex's
+// brightness reflects how much of its surrounding neighbourhood is solid: we sum
+// the (distance-weighted) outside-layer cells within AO_R that are filled and
+// normalise by the total kernel weight, giving an occlusion *fraction* that
+// fades smoothly across the whole radius. This coverage model is deliberately
+// NOT a multiplicative product of per-cell visibility — that saturates to the
+// floor within a cell of any concave corner, collapsing the gradient into a hard
+// dark rim. Gouraud-interpolated; an interior vertex ≥ AO_R from every edge has
+// no occluder in range -> brightness 1, so flat masses split into boxes stay
+// seamless.
+const AO_R = 7; // occlusion spread radius, in cells
+const AO_DARK = 0.5; // brightness of a fully-occluded (rim/corner) vertex
 // sample kernel: outside-layer cell offsets within AO_R, each with a smoothstep
-// distance falloff. The eased S-curve (vs a straight 1 - d/R ramp) tapers the
-// weight gently at both ends, so a corner's occlusion builds up gradually across
-// the radius instead of jumping dark right at the rim.
+// distance falloff (eased at both ends). AO_WSUM is the total weight, so a vertex
+// whose whole neighbourhood is solid reaches occlusion 1 (brightness AO_DARK).
 const AO_KERNEL: [number, number, number][] = [];
+let aoWSum = 0;
 for (let du = -AO_R; du < AO_R; du++) {
   for (let dv = -AO_R; dv < AO_R; dv++) {
     const d = Math.hypot(du + 0.5, dv + 0.5);
     if (d < AO_R) {
-      const s = 1 - d / AO_R; // 1 at the occluder .. 0 at the radius edge
-      AO_KERNEL.push([du, dv, s * s * (3 - 2 * s)]); // smoothstep falloff
+      const s = 1 - d / AO_R, // 1 at the occluder .. 0 at the radius edge
+        w = s * s * (3 - 2 * s); // smoothstep falloff
+      AO_KERNEL.push([du, dv, w]);
+      aoWSum += w;
     }
   }
 }
+const AO_WSUM = aoWSum;
 function boxFaceGeo(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
@@ -194,18 +201,21 @@ function boxFaceGeo(
         o[v] = vv;
         return [o[0], o[1], o[2]];
       };
-      // AO brightness at a face vertex: solid outside-layer cells within AO_R
-      // darken it, weighted by distance — vis is the product of (1 - weight).
+      // AO brightness at a face vertex: sum the distance weights of the solid
+      // outside-layer cells within AO_R and normalise by the total kernel weight,
+      // so brightness tracks the open *fraction* of the neighbourhood and fades
+      // gradually across the whole radius (see the coverage-model note above).
       const vbright = (vu: number, vv: number): number => {
         if (!has) return 1;
-        let vis = 1;
+        let occ = 0;
         const cell = aoCell; // {a,u,v} permute 0..2, so all 3 slots are written
         cell[a] = wo;
         for (const [du, dv, w] of AO_KERNEL) {
           cell[u] = vu + du;
           cell[v] = vv + dv;
-          if (has(cell[0], cell[1], cell[2])) vis *= 1 - w;
+          if (has(cell[0], cell[1], cell[2])) occ += w;
         }
+        const vis = 1 - occ / AO_WSUM; // open fraction of the neighbourhood
         return AO_DARK + (1 - AO_DARK) * vis;
       };
       // one quad with per-vertex AO baked into the vertex colours (Gouraud)
