@@ -31,6 +31,7 @@ import {
   renameNode,
   reparentNode,
   rotateSelection,
+  ungroupNode,
   wrapInGroup,
   wrapNodeInGroup,
 } from "./commands.ts";
@@ -465,10 +466,11 @@ function showItemMenu(node: Node, x: number, y: number): void {
   div();
   if (node !== S.root) {
     add("Duplicate", () => duplicateNode(node));
-    add("Delete", () => deleteNode(node), "danger");
+    add("Delete objects", () => deleteNode(node), "danger");
     div();
   }
   if (node.type === "scene") {
+    if (node !== S.root) add("Ungroup", () => ungroupNode(node));
     add("New object", () => addObjectIn(node));
     add("New group", () => addGroupIn(node));
   } else add("New group", () => wrapNodeInGroup(node));

@@ -177,6 +177,21 @@ export function deleteNode(node: Node): void {
   if (S.editObject === node) S.editObject = null;
   commit();
 }
+// dissolve a group: lift its children into its parent (in place, world pose
+// preserved), then drop the now-empty group. Root has no parent to lift into.
+export function ungroupNode(node: SceneNode): void {
+  const par = parentOf(node);
+  if (!par) return;
+  const kids = [...node.children]; // snapshot; reparentNode mutates the lists
+  let at = par.children.indexOf(node); // land the children in the group's slot
+  for (const ch of kids) {
+    reparentNode(ch, par, at);
+    at = par.children.indexOf(ch) + 1; // keep them contiguous and in order
+  }
+  par.children = par.children.filter((c) => c !== node);
+  S.selection = new Set(kids.map((k) => k.id));
+  commit();
+}
 export function addObjectIn(group: SceneNode): void { // new empty object inside a group
   spawnObject(group, false);
 }
