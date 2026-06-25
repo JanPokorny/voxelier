@@ -2,8 +2,8 @@
 // the object/scene tree (thumbnails, row clicks, context menu, drag & drop) and
 // the global keyboard shortcuts. Attaches its window/tree listeners on import.
 import { S } from "./state.ts";
-import { addv, hex, rotY } from "./math.ts";
-import { colorCounts, growBounds, worldBox } from "./boxes.ts";
+import { hex } from "./math.ts";
+import { colorCounts, growBounds } from "./boxes.ts";
 import { hoverVox } from "./scene-env.ts";
 import { clearMeasure } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
@@ -13,6 +13,7 @@ import {
   emptyBox,
   findById,
   isDescendant,
+  nodeBoxes,
   parentOf,
 } from "./model.ts";
 import {
@@ -46,16 +47,8 @@ import {
   deleteSelection3d,
   pasteVox,
 } from "./select.ts";
-import { getVoxClip } from "./clipboard.ts";
-import type {
-  Box3,
-  DropInfo,
-  Node,
-  Pending,
-  Rot,
-  Tool,
-  Vec,
-} from "./types.ts";
+import { clipKind, getNodeClip, getVoxClip } from "./clipboard.ts";
+import type { Box3, DropInfo, Node, Pending, Tool } from "./types.ts";
 
 // Tree drag&drop, context-menu, and row-click transient state — all owned and
 // used only here, so they live as module locals rather than in the shared S.
@@ -228,18 +221,6 @@ function openColorPicker(): void {
 }
 
 // ---- object/scene tree ----
-// flatten a subtree's boxes under an accumulated transform; callers pass
-// identity off/rot so the result is in the node's own frame (for the thumbnail)
-function localBoxes(node: Node, off: Vec, rot: Rot, out: Box3[]): Box3[] {
-  if (node.type === "object") {
-    for (const b of node.boxes) out.push(worldBox(b, rot, off));
-  } else {
-    for (const ch of node.children) {
-      localBoxes(ch, addv(off, rotY(ch.pos, rot)), (rot + ch.rot) & 3, out);
-    }
-  }
-  return out;
-}
 const shade = (c: number, f: number): string => {
   const r = Math.min(255, ((c >> 16) & 255) * f) | 0,
     g = Math.min(255, ((c >> 8) & 255) * f) | 0,
@@ -272,7 +253,7 @@ function thumbFor(node: Node): HTMLCanvasElement {
   const g = cv.getContext("2d")!;
   g.fillStyle = "#0f1115";
   g.fillRect(0, 0, 52, 52);
-  const boxes = localBoxes(node, { x: 0, y: 0, z: 0 }, 0, []);
+  const boxes = nodeBoxes(node, { x: 0, y: 0, z: 0 }, 0, []);
   if (boxes.length) {
     const bb = emptyBox();
     growBounds(boxes, bb);
@@ -722,12 +703,16 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-// Paste voxel data into the open object as a selection. Pasting switches to the
-// select tool so the result can be moved straight away.
+// Paste into the open object as a voxel selection. Copied scene nodes are
+// flattened to voxels first, so an object/group from the tree pastes as voxels.
+// Pasting switches to the select tool so the result can be moved straight away.
 function pasteInEditor(): void {
-  const v = getVoxClip();
-  if (!v.length) return;
+  const boxes: Box3[] = [];
+  if (clipKind() === "node") {
+    for (const n of getNodeClip()) nodeBoxes(n, n.pos, n.rot, boxes);
+  } else boxes.push(...getVoxClip());
+  if (!boxes.length) return;
   S.tool = "select";
-  pasteVox(v);
+  pasteVox(boxes);
   updateChrome();
 }

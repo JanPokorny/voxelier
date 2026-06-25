@@ -20,6 +20,7 @@ import { rebuild } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { enterNode, selectNode } from "./navigation.ts";
 import { save } from "./persistence.ts";
+import { clipKind, getNodeClip, getVoxClip, setNodeClip } from "./clipboard.ts";
 import type { Node, SceneNode } from "./types.ts";
 
 // re-mesh the scene, refresh the chrome and persist — the tail of most edits
@@ -38,8 +39,6 @@ export function cycleVis(node: Node): void {
   commit();
 }
 
-// detached node clones for copy/paste — private to this module's clipboard flow
-let clipboard: Node[] = [];
 // selected context children, resolved to live nodes (dropping stale ids)
 const selectedNodes = (): Node[] =>
   [...S.selection].map((id) => childById(id)).filter((n): n is Node => !!n);
@@ -76,17 +75,37 @@ export function duplicateSelection(): void {
   commit();
 }
 export function copySelection(): void {
-  clipboard = selectedNodes().map(clone);
+  setNodeClip(selectedNodes().map(clone));
 }
 export function cutSelection(): void {
   copySelection();
   deleteSelection();
 }
+// Paste into the scene. If voxel data was the last thing copied (from the object
+// editor's select tool), it lands as a fresh object containing those voxels;
+// otherwise the copied nodes are pasted as siblings.
 export function pasteClipboard(): void {
-  if (!clipboard.length) return;
-  const ns = clipboard.map(cloneShift);
+  if (clipKind() === "vox") {
+    pasteVoxAsObject();
+    return;
+  }
+  const ns = getNodeClip().map(cloneShift);
+  if (!ns.length) return;
   S.context.children.push(...ns);
   S.selection = new Set(ns.map((d) => d.id));
+  commit();
+}
+// Create a new object from the voxel clipboard (normalised, min at the origin)
+// at the camera focus, and select it.
+function pasteVoxAsObject(): void {
+  const v = getVoxClip();
+  if (!v.length) return;
+  const o = newObject();
+  o.boxes = v.map((b) => ({ ...b }));
+  o.pos = { x: Math.round(goal.target.x), y: 0, z: Math.round(goal.target.z) };
+  S.context.children.push(o);
+  S.collapsed.delete(S.context.id);
+  S.selection = new Set([o.id]);
   commit();
 }
 
