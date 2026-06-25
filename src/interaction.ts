@@ -591,8 +591,11 @@ canvas.addEventListener("pointerup", (e) => {
       } else if (!e.shiftKey) S.selection.clear();
       refreshOverlay();
       updateChrome();
-    } else if (S.drag.mode === "move") commitMove(e.ctrlKey || e.metaKey);
-    else if (S.drag.mode === "rotobj" && S.drag.dirty) {
+    } else if (S.drag.mode === "move") {
+      // only copy on a real drag — a Ctrl+click without movement must not
+      // silently duplicate the object in place
+      commitMove(moved(e) && (e.ctrlKey || e.metaKey));
+    } else if (S.drag.mode === "rotobj" && S.drag.dirty) {
       updateChrome(); // tree thumbnails track the new pose
       save();
     }
