@@ -210,6 +210,7 @@ function commitMove(copy: boolean): void {
   }
   overlay.position.set(0, 0, 0);
   rebuild();
+  updateChrome(); // refresh tree rows (copies add nodes) + group thumbnails
   save();
 }
 function rotDragTo(e: PointerEvent): void {
