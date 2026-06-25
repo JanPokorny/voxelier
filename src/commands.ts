@@ -75,7 +75,8 @@ export function duplicateSelection(): void {
   commit();
 }
 export function copySelection(): void {
-  setNodeClip(selectedNodes().map(clone));
+  const ns = selectedNodes().map(clone);
+  if (ns.length) setNodeClip(ns); // copying nothing is a no-op, not a clipboard clear
 }
 export function cutSelection(): void {
   copySelection();

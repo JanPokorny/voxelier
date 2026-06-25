@@ -570,9 +570,29 @@ function clearDropInd(): void {
   dropRow = null;
   dropInfo = null;
 }
+// the set being dragged when the grabbed row is part of a multi-selection (the
+// whole selection moves together), in tree order; null for a plain single drag
+function dragMovers(): Node[] | null {
+  const dn = dragId && findById(dragId);
+  if (
+    !dn || S.editObject || parentOf(dn) !== S.context ||
+    !S.selection.has(dn.id) || S.selection.size <= 1
+  ) return null;
+  return S.context.children.filter((c) => S.selection.has(c.id));
+}
 function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
   const dn = dragId && findById(dragId);
-  if (!dn || dn === node || isDescendant(dn, node)) {
+  if (!dn || dn === node) {
+    clearDropInd();
+    return;
+  }
+  // reject dropping onto/inside any node being moved (the whole selection when
+  // multi-dragging) — that would be a cycle or a silent partial move
+  const movers = dragMovers();
+  const blocked = movers
+    ? movers.some((m) => m === node || isDescendant(m, node))
+    : isDescendant(dn, node);
+  if (blocked) {
     clearDropInd();
     return;
   }
@@ -588,7 +608,9 @@ function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
     h = rect.height;
   const par = parentOf(node),
     idx = par ? par.children.indexOf(node) : 0;
-  if (y > h * 0.28 && y < h * 0.72) {
+  // object-onto-object wrap is a single-drag affordance; a multi-drag over an
+  // object's middle falls through to before/after instead
+  if (y > h * 0.28 && y < h * 0.72 && (node.type === "scene" || !movers)) {
     if (node.type === "scene") {
       dropInfo = { parent: node, index: node.children.length }; // nest inside the group
     } else dropInfo = { wrap: node }; // object onto object -> new group
@@ -605,12 +627,11 @@ function doDrop(): void {
   const dn = dragId && findById(dragId);
   if (dn && dropInfo) {
     // when the dragged row is part of a multi-selection, move the whole
-    // selection into the target (preserving order + each node's world pose)
-    const multi = !S.editObject && dropInfo.parent &&
-        parentOf(dn) === S.context && S.selection.has(dn.id) &&
-        S.selection.size > 1
-      ? S.context.children.filter((c) => S.selection.has(c.id))
-      : null;
+    // selection into the target (preserving order + each node's world pose).
+    // dropOver only ever yields a parent-based drop (never wrap) for a
+    // multi-drag, and rejects targets inside the moving set, so the loop below
+    // always moves every node cleanly.
+    const multi = dropInfo.parent ? dragMovers() : null;
     if (multi) {
       const target = dropInfo.parent!;
       let at = dropInfo.index!, moved = false;
