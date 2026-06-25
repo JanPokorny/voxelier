@@ -129,7 +129,7 @@ type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
 // dark rim. Gouraud-interpolated; an interior vertex ≥ AO_R from every edge has
 // no occluder in range -> brightness 1, so flat masses split into boxes stay
 // seamless.
-const AO_R = 7; // occlusion spread radius, in cells
+const AO_R = 6; // occlusion spread radius, in cells
 const AO_DARK = 0.5; // brightness of a fully-occluded (rim/corner) vertex
 // sample kernel: outside-layer cell offsets within AO_R, each with a smoothstep
 // distance falloff (eased at both ends). AO_WSUM is the total weight, so a vertex
@@ -205,8 +205,15 @@ function boxFaceGeo(
       // outside-layer cells within AO_R and normalise by the total kernel weight,
       // so brightness tracks the open *fraction* of the neighbourhood and fades
       // gradually across the whole radius (see the coverage-model note above).
+      // Memoised per face: the rim band is meshed as 1×1 quads, so each lattice
+      // vertex is shared by up to four quads — without the cache its AO_KERNEL
+      // sweep would run that many times over (a multi-second remesh on big faces).
+      const aoMemo = new Map<number, number>();
       const vbright = (vu: number, vv: number): number => {
         if (!has) return 1;
+        const key = vu * 1e6 + vv; // face coords are small ints; |vv| << 1e6
+        const hit = aoMemo.get(key);
+        if (hit !== undefined) return hit;
         let occ = 0;
         const cell = aoCell; // {a,u,v} permute 0..2, so all 3 slots are written
         cell[a] = wo;
@@ -216,7 +223,9 @@ function boxFaceGeo(
           if (has(cell[0], cell[1], cell[2])) occ += w;
         }
         const vis = 1 - occ / AO_WSUM; // open fraction of the neighbourhood
-        return AO_DARK + (1 - AO_DARK) * vis;
+        const b = AO_DARK + (1 - AO_DARK) * vis;
+        aoMemo.set(key, b);
+        return b;
       };
       // one quad with per-vertex AO baked into the vertex colours (Gouraud)
       const quad = (qu0: number, qv0: number, qu1: number, qv1: number) => {
