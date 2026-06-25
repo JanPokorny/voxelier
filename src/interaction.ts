@@ -541,7 +541,8 @@ canvas.addEventListener("pointermove", (e) => {
   if (S.editObject && S.painting) {
     applyVoxel();
   } else if (!S.drag) {
-    if (S.editObject) updateVoxHover();
+    // the add/erase/paint hover cube isn't meaningful for the select tool
+    if (S.editObject && S.tool !== "select") updateVoxHover();
     else hoverVox.visible = false;
   } else if (!dragPanOrbit(e)) {
     if (S.drag.mode === "move") moveDragTo(e);

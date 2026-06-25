@@ -13,7 +13,7 @@ import { editErase, editStamp, scheduleEditRemesh } from "./render.ts";
 import { clipBoxes, growBounds } from "./boxes.ts";
 import { emptyBox } from "./model.ts";
 import { setVoxClip } from "./clipboard.ts";
-import { save } from "./persistence.ts";
+import { flush, save } from "./persistence.ts";
 import type { Box3, Region, Vec } from "./types.ts";
 
 const PASTE_GAP = 2; // cells left between a paste and the object's existing voxels
@@ -56,10 +56,14 @@ export function captureSelection(region: Region): void {
   };
   scheduleEditRemesh(); // draw the marquee wireframe
 }
-// carve the content out of the object so it floats (move/rotate act on it)
+// carve the content out of the object so it floats (move/rotate act on it).
+// Flush first: this commits any pending debounced save as a clean snapshot while
+// the content is still in the object, so a save firing mid-drag (or the tab
+// closing) can never persist or record the carved-out, content-missing state.
 export function liftSelection(): void {
   const s = S.sel3d;
   if (!s || s.lifted) return;
+  flush();
   s.lifted = true;
   editErase(s.region); // remeshes; floating content is re-added by buildEditMesh
 }
