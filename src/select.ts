@@ -69,6 +69,7 @@ export function liftSelection(): void {
 }
 // stamp floating content back into the object and re-capture in place (a merge)
 export function dropSelection(): void {
+  endRotate(); // end any rotate gesture's snapshot
   const s = S.sel3d;
   if (!s || !s.lifted) return;
   s.lifted = false;
@@ -181,20 +182,42 @@ function horizAxis(): number {
   const lr = rotY({ x: m[0], y: 0, z: m[2] }, -S.editXform.rot); // world -> object-local
   return Math.abs(lr.x) >= Math.abs(lr.z) ? 0 : 2;
 }
-export function rotateSelection3d(steps: number, horizontal: boolean): void {
+// Rotation snapshot, taken when a rotate gesture begins (beginRotate). Rotating
+// always works from this ORIGINAL block by the total angle, re-centred once —
+// rather than re-rotating the already-rotated result each step, which ratchets a
+// mixed-parity footprint (e.g. any 1-cell-thick slab) half a cell per turn. With
+// this, a full turn is the exact identity and there is no drift.
+let rotBase: { boxes: Box3[]; cx: number; cy: number; cz: number } | null = null;
+export function beginRotate(): void {
   const s = S.sel3d;
-  if (!s || !s.boxes.length) return;
-  const r = ((steps % 4) + 4) % 4;
-  if (!r) return;
-  const axis = horizontal ? horizAxis() : 1; // Shift -> a horizontal axis, else Y
+  if (!s) return;
   const a = bounds(s.boxes);
-  const cx = (a.mn.x + a.mx.x) / 2, cy = (a.mn.y + a.mx.y) / 2, cz = (a.mn.z + a.mx.z) / 2;
-  let rot = s.boxes.map((b) => rotBox(b, axis, r));
-  const n = bounds(rot);
-  const ncx = (n.mn.x + n.mx.x) / 2, ncy = (n.mn.y + n.mx.y) / 2, ncz = (n.mn.z + n.mx.z) / 2;
-  // re-centre on the old centre so the selection spins in place
-  const tx = rndSym(cx - ncx), ty = rndSym(cy - ncy), tz = rndSym(cz - ncz);
-  rot = rot.map((b) => shift(b, tx, ty, tz));
+  rotBase = {
+    boxes: s.boxes.map((b) => ({ ...b })),
+    cx: (a.mn.x + a.mx.x) / 2,
+    cy: (a.mn.y + a.mx.y) / 2,
+    cz: (a.mn.z + a.mx.z) / 2,
+  };
+}
+function endRotate(): void {
+  rotBase = null;
+}
+export function rotateSelectionTo(steps: number, horizontal: boolean): void {
+  const s = S.sel3d, base = rotBase;
+  if (!s || !base || !base.boxes.length) return;
+  const r = ((steps % 4) + 4) % 4;
+  let rot: Box3[];
+  if (!r) {
+    rot = base.boxes.map((b) => ({ ...b })); // every full turn is exactly identity
+  } else {
+    const axis = horizontal ? horizAxis() : 1; // Shift -> a horizontal axis, else Y
+    rot = base.boxes.map((b) => rotBox(b, axis, r));
+    const n = bounds(rot); // re-centre the rotated block on the original centre
+    const tx = rndSym(base.cx - (n.mn.x + n.mx.x) / 2),
+      ty = rndSym(base.cy - (n.mn.y + n.mx.y) / 2),
+      tz = rndSym(base.cz - (n.mn.z + n.mx.z) / 2);
+    rot = rot.map((b) => shift(b, tx, ty, tz));
+  }
   s.boxes = rot;
   s.region = regionOf(rot);
   scheduleEditRemesh();

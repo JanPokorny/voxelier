@@ -40,11 +40,12 @@ import { childById, clone, contextXform } from "./model.ts";
 import { orbitView, panCamera } from "./camera.ts";
 import { pointerMeasure, renderMeasure } from "./measure.ts";
 import {
+  beginRotate,
   captureSelection,
   clearSelection,
   dropSelection,
   liftSelection,
-  rotateSelection3d,
+  rotateSelectionTo,
   selectionHit,
   translateSelection,
 } from "./select.ts";
@@ -423,8 +424,9 @@ function renderBox(): void {
 }
 
 // ---- select tool: grab/move/rotate the marquee selection ----
+// The content is lifted (carved out of the object) lazily, on the first actual
+// move/rotate, so a plain click on the selection neither edits nor records undo.
 function startSelMove(base: { x: number; y: number; sx: number; sy: number }): void {
-  liftSelection();
   const y0 = S.sel3d!.region.y0; // drag on the selection's floor plane
   S.drag = {
     ...base,
@@ -437,7 +439,6 @@ function startSelMove(base: { x: number; y: number; sx: number; sy: number }): v
   };
 }
 function startSelRot(base: { x: number; y: number; sx: number; sy: number }): void {
-  liftSelection();
   S.drag = { ...base, mode: "selrot", steps: 0 };
 }
 function selMoveTo(e: PointerEvent): void {
@@ -457,18 +458,24 @@ function selMoveTo(e: PointerEvent): void {
       tz = g.z - d.start!.z;
     }
   }
-  translateSelection(tx - d.dx!, ty - d.dy!, tz - d.dz!);
-  d.dx = tx;
-  d.dy = ty;
-  d.dz = tz;
+  if (tx !== d.dx! || ty !== d.dy! || tz !== d.dz!) {
+    if (!S.sel3d!.lifted) liftSelection(); // carve out on first movement
+    translateSelection(tx - d.dx!, ty - d.dy!, tz - d.dz!);
+    d.dx = tx;
+    d.dy = ty;
+    d.dz = tz;
+  }
 }
 function selRotTo(e: PointerEvent): void {
   const d = S.drag!;
   const steps = Math.round((d.sx - e.clientX) / 70);
-  if (steps !== d.steps) {
-    rotateSelection3d(steps - d.steps!, e.shiftKey); // Shift -> horizontal axis
-    d.steps = steps;
+  if (steps === d.steps) return;
+  if (!S.sel3d!.lifted) { // carve out + snapshot the base orientation on first turn
+    liftSelection();
+    beginRotate();
   }
+  d.steps = steps;
+  rotateSelectionTo(steps, e.shiftKey); // absolute turn from the base; Shift -> horizontal
 }
 // finalise a marquee drag: a real drag captures the box, a click just deselects
 function commitMarquee(didMove: boolean): void {
