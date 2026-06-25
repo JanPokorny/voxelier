@@ -119,13 +119,15 @@ export function updateChrome(): void {
       updateChrome();
     }));
   }
-  // bottom group: import / export
-  const bottom = el("div", { className: "toolgroup" });
-  bottom.appendChild(toolButton("📂", "Import", false, importScene));
-  bottom.appendChild(toolButton("💾", "Export", false, exportScene));
-  tw.append(top, bottom);
+  tw.append(top);
   buildTree();
 }
+
+// Save (export) / Load (import) live at the top of the scene tree panel. Wired
+// once on import — the buttons are static in index.html, not rebuilt per chrome
+// refresh, so the listeners never need re-attaching.
+document.getElementById("btn-save")!.onclick = exportScene;
+document.getElementById("btn-load")!.onclick = importScene;
 
 // distinct colours used in the scene, most-used (by cell volume) first. Cached by
 // S.voxVer so it isn't recomputed on every chrome refresh.

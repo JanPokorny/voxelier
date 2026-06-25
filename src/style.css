@@ -169,6 +169,23 @@ h3 {
   color: var(--ink-dim);
   font-weight: 600;
 }
+/* Save / Load row at the top of the scene panel (was the toolbar's import/export) */
+#iobar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+#iobar button {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  padding: 7px 6px;
+  font-size: 12px;
+}
+#iobar button:hover {
+  background: #2b3140;
+  border-color: #3a4252;
+}
 #tree {
   display: flex;
   flex-direction: column;
