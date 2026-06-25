@@ -6,6 +6,7 @@
 // gesture ends or the selection is cleared.
 import * as THREE from "three";
 import { S } from "./state.ts";
+import { rotY } from "./math.ts";
 import { camera, ndc, raycaster } from "./scene-env.ts";
 import { locToW } from "./picking.ts";
 import { editErase, editStamp, scheduleEditRemesh } from "./render.ts";
@@ -167,12 +168,19 @@ function rotBox(b: Box3, axis: number, r: number): Box3 {
     c: b.c,
   };
 }
-export function rotateSelection3d(steps: number): void {
+// the object-local horizontal axis (X or Z) closest to screen-right — the one a
+// Shift rotation tips the selection about
+function horizAxis(): number {
+  const m = camera.matrixWorld.elements; // column 0 = camera right
+  const lr = rotY({ x: m[0], y: 0, z: m[2] }, -S.editXform.rot); // world -> object-local
+  return Math.abs(lr.x) >= Math.abs(lr.z) ? 0 : 2;
+}
+export function rotateSelection3d(steps: number, horizontal: boolean): void {
   const s = S.sel3d;
   if (!s || !s.boxes.length) return;
   const r = ((steps % 4) + 4) % 4;
   if (!r) return;
-  const axis = 1; // rotate about the vertical (Y) axis
+  const axis = horizontal ? horizAxis() : 1; // Shift -> a horizontal axis, else Y
   const a = bounds(s.boxes);
   const cx = (a.mn.x + a.mx.x) / 2, cy = (a.mn.y + a.mx.y) / 2, cz = (a.mn.z + a.mx.z) / 2;
   let rot = s.boxes.map((b) => rotBox(b, axis, r));

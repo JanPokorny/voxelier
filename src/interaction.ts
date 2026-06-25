@@ -465,7 +465,7 @@ function selRotTo(e: PointerEvent): void {
   const d = S.drag!;
   const steps = Math.round((d.sx - e.clientX) / 70);
   if (steps !== d.steps) {
-    rotateSelection3d(steps - d.steps!);
+    rotateSelection3d(steps - d.steps!, e.shiftKey); // Shift -> horizontal axis
     d.steps = steps;
   }
 }
