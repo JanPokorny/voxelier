@@ -159,6 +159,22 @@ export function wrapNodeInGroup(node: Node): void {
   selectNode(g);
   save();
 }
+// Group the whole selection into one fresh group that takes `anchor`'s slot and
+// pose (the right-clicked item), then reparent each selected sibling into it with
+// its world pose preserved. The anchor must itself be part of the selection.
+export function groupSelection(anchor: Node): void {
+  const nodes = selectedNodes();
+  if (nodes.length < 2) return; // a single node groups via wrapNodeInGroup
+  const g = newScene("Group");
+  g.pos = { ...anchor.pos };
+  g.rot = anchor.rot;
+  const idx = S.context.children.indexOf(anchor);
+  S.context.children.splice(Math.max(0, idx), 0, g); // g must be in the tree before reparenting
+  for (const n of nodes) reparentNode(n, g, g.children.length);
+  S.collapsed.delete(g.id);
+  S.selection = new Set([g.id]);
+  commit();
+}
 
 // ---- right-click (context-menu) actions on a tree node ----
 export function duplicateNode(node: Node): void {

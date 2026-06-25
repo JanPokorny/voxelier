@@ -26,6 +26,7 @@ import {
   deleteSelection,
   duplicateNode,
   duplicateSelection,
+  groupSelection,
   nudgeY,
   pasteClipboard,
   renameNode,
@@ -35,6 +36,7 @@ import {
   wrapInGroup,
   wrapNodeInGroup,
 } from "./commands.ts";
+import { refreshOverlay } from "./render.ts";
 import { save } from "./persistence.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
@@ -317,7 +319,28 @@ function thumbFor(node: Node): HTMLCanvasElement {
 // two independent click events (not a native dblclick) so the immediate select
 // can rebuild the row DOM without breaking double-click detection — the same
 // node's row reoccupies the same spot. Rename lives only in the right-click menu.
-function rowClick(node: Node): void {
+// Shift-click extends the selection (multi-select) within the current context.
+// Selection is per-context, so a Shift-click on a node in a different context (or
+// while editing an object) can't extend — it falls back to a plain single select.
+function extendSelect(node: Node): void {
+  if (node === S.root || parentOf(node) !== S.context || S.editObject) {
+    selectNode(node);
+    return;
+  }
+  if (S.selection.has(node.id)) S.selection.delete(node.id);
+  else S.selection.add(node.id);
+  refreshOverlay();
+  updateChrome();
+}
+function rowClick(node: Node, e: MouseEvent): void {
+  if (e.shiftKey) { // extend the selection; never enters/edits
+    if (pending) {
+      clearTimeout(pending.timer);
+      pending = null;
+    }
+    extendSelect(node);
+    return;
+  }
   if (pending && pending.node === node) { // second click within the window
     clearTimeout(pending.timer);
     pending = null;
@@ -414,11 +437,15 @@ function buildTree(): void {
         },
       }));
     }
-    r.onclick = () => rowClick(node);
+    r.onclick = (e) => rowClick(node, e);
     r.oncontextmenu = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (!isRoot) selectNode(node);
+      // keep an existing multi-selection if the right-clicked row is part of it,
+      // so the menu can act on the whole group; otherwise select just this row
+      const inSel = !isRoot && !S.editObject && parentOf(node) === S.context &&
+        S.selection.has(node.id);
+      if (!isRoot && !inSel) selectNode(node);
       showItemMenu(node, e.clientX, e.clientY);
     };
     wireRowDnd(r, node);
@@ -468,15 +495,22 @@ function showItemMenu(node: Node, x: number, y: number): void {
       },
     }));
   const div = () => m.appendChild(el("div", { className: "ctxdiv" }));
+  // the right-click handler guarantees `node` is part of the selection, so a
+  // multi-selection (>1) routes Copy/Duplicate/Delete/Group through the selection
+  const multi = node !== S.root && parentOf(node) === S.context &&
+    S.selection.size > 1 && S.selection.has(node.id);
   add("Rename", () => renameNode(node));
   add("Locate", () => fitNode(node));
   div();
   if (node !== S.root) {
-    add("Duplicate", () => duplicateNode(node));
-    add("Delete objects", () => deleteNode(node), "danger");
+    add("Copy", () => copySelection());
+    add("Duplicate", () => multi ? duplicateSelection() : duplicateNode(node));
+    add("Delete objects", () => multi ? deleteSelection() : deleteNode(node), "danger");
     div();
   }
-  if (node.type === "scene") {
+  if (multi) {
+    add("Group", () => groupSelection(node)); // new group takes this item's pose
+  } else if (node.type === "scene") {
     if (node !== S.root) add("Ungroup", () => ungroupNode(node));
     add("New object", () => addObjectIn(node));
     add("New group", () => addGroupIn(node));
