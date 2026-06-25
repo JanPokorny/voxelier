@@ -304,28 +304,24 @@ function thumbFor(node: Node): HTMLCanvasElement {
   return cv;
 }
 // tree-row clicks mirror clicking the object in the scene: a single click
-// selects, a double click zooms to the node and starts editing it (descend into
-// a group, or open an object for voxel edits). The browser rebuilds the row DOM
-// on select, which would break a native dblclick, so we disambiguate with a
-// short timer instead. Rename lives only in the right-click menu.
+// selects immediately; a second click soon after zooms to the node and starts
+// editing it (descend into a group, or open an object for voxel edits). We use
+// two independent click events (not a native dblclick) so the immediate select
+// can rebuild the row DOM without breaking double-click detection — the same
+// node's row reoccupies the same spot. Rename lives only in the right-click menu.
 function rowClick(node: Node): void {
-  if (pending && pending.node === node) { // second click within the window: double-click
+  if (pending && pending.node === node) { // second click within the window
     clearTimeout(pending.timer);
     pending = null;
     enterNode(node, true); // zoom to view + start editing
     return;
   }
   if (pending) clearTimeout(pending.timer);
-  pending = {
-    node,
-    timer: setTimeout(() => {
-      pending = null;
-      // root can't be "selected" (selection lives within a context) — clicking it
-      // just returns to the top-level context
-      if (node === S.root) enterNode(node);
-      else selectNode(node);
-    }, 300),
-  };
+  // root can't be "selected" (selection lives within a context) -> just return
+  // to the top-level context; any other node selects right away
+  if (node === S.root) enterNode(node);
+  else selectNode(node);
+  pending = { node, timer: setTimeout(() => (pending = null), 300) };
 }
 // the row's cached thumbnail; for a non-empty non-root group it doubles as the
 // collapse toggle (a stacked look = collapsed)
