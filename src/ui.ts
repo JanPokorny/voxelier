@@ -461,7 +461,7 @@ function showItemMenu(node: Node, x: number, y: number): void {
     }));
   const div = () => m.appendChild(el("div", { className: "ctxdiv" }));
   add("Rename", () => renameNode(node));
-  add("Fit", () => fitNode(node));
+  add("Locate", () => fitNode(node));
   div();
   if (node !== S.root) {
     add("Duplicate", () => duplicateNode(node));
