@@ -39,7 +39,18 @@ export type SceneNode = NodeBase & { type: "scene"; children: Node[] };
 export type Node = ObjectNode | SceneNode;
 
 // ---- editor tools ----
-export type Tool = "add" | "erase" | "paint" | "eyedropper";
+export type Tool = "add" | "erase" | "paint" | "eyedropper" | "select";
+
+// ---- voxel selection (the object-editor "select" tool) ----
+// A MSPaint-style marquee over object-local voxels. `region` is the current
+// placement (half-open cell box); `boxes` is the captured content in object-local
+// coords aligned to `region`. `lifted` is true once the content has been carved
+// out of the object and is floating (during a move/rotate or a fresh paste).
+export type VoxSel = {
+  region: Region;
+  boxes: Box3[];
+  lifted: boolean;
+};
 
 // ---- measurement ----
 // One labelled dimension segment between two world points.
@@ -65,7 +76,7 @@ export type MeasField = {
 // Fields are populated per mode at pointerdown, kept permissive on purpose so the
 // pointer handlers stay terse.
 export type Drag = {
-  mode: "pan" | "orbit" | "move" | "rotobj" | "box";
+  mode: "pan" | "orbit" | "move" | "rotobj" | "box" | "selmove" | "selrot";
   x: number;
   y: number;
   sx: number;

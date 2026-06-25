@@ -39,6 +39,14 @@ import { refreshOverlay } from "./render.ts";
 import { save } from "./persistence.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
+import {
+  clearSelection,
+  copySelection3d,
+  cutSelection3d,
+  deleteSelection3d,
+  pasteVox,
+} from "./select.ts";
+import { getVoxClip } from "./clipboard.ts";
 import type {
   Box3,
   DropInfo,
@@ -75,6 +83,7 @@ const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
   { id: "erase", ic: "－", label: "Erase" },
   { id: "paint", ic: "🪣", label: "Fill" },
   { id: "eyedropper", ic: "💧", label: "Pick" },
+  { id: "select", ic: "⬚", label: "Select" },
 ];
 // tree visibility-toggle glyphs, by current vis state
 const VIS_GLYPH: Record<string, string> = {
@@ -114,6 +123,7 @@ export function updateChrome(): void {
     const top = el("div", { className: "toolgroup" });
     for (const t of VOX_TOOLS) {
       top.appendChild(toolButton(t.ic, t.label, S.tool === t.id, () => {
+        if (S.tool !== t.id) clearSelection(); // switching tools drops the marquee
         S.tool = t.id;
         hoverVox.visible = false;
         updateChrome();
@@ -658,14 +668,27 @@ window.addEventListener("keydown", (e) => {
       redo();
       return;
     }
-    // clipboard / duplicate — only outside voxel-edit mode
+    if (S.editObject) { // voxel-selection clipboard (the "select" tool)
+      if (k === "c") {
+        copySelection3d();
+        e.preventDefault();
+      } else if (k === "x") {
+        cutSelection3d();
+        e.preventDefault();
+      } else if (k === "v") {
+        pasteInEditor();
+        e.preventDefault();
+      }
+      return;
+    }
+    // clipboard / duplicate — scene-tree nodes
     const clip = {
       c: copySelection,
       x: cutSelection,
       v: pasteClipboard,
       d: duplicateSelection,
     }[k];
-    if (clip && !S.editObject) {
+    if (clip) {
       clip();
       e.preventDefault();
     }
@@ -692,10 +715,19 @@ window.addEventListener("keydown", (e) => {
       break;
     case "delete":
     case "backspace":
-      if (!S.editObject) {
-        e.preventDefault();
-        deleteSelection();
-      }
+      e.preventDefault();
+      if (S.editObject) deleteSelection3d();
+      else deleteSelection();
       break;
   }
 });
+
+// Paste voxel data into the open object as a selection. Pasting switches to the
+// select tool so the result can be moved straight away.
+function pasteInEditor(): void {
+  const v = getVoxClip();
+  if (!v.length) return;
+  S.tool = "select";
+  pasteVox(v);
+  updateChrome();
+}

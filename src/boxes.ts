@@ -106,6 +106,22 @@ export function fillBox(
   return boxes.map((b, i) => comp.has(i) ? { ...b, c } : b);
 }
 
+// Intersect every box with region `r`, keeping colour — the part of a box list
+// that lies inside `r`. Used to capture a voxel selection's content.
+export function clipBoxes(boxes: Box3[], r: Region): Box3[] {
+  const out: Box3[] = [];
+  for (const b of boxes) {
+    const x0 = Math.max(b.x0, r.x0),
+      y0 = Math.max(b.y0, r.y0),
+      z0 = Math.max(b.z0, r.z0);
+    const x1 = Math.min(b.x1, r.x1),
+      y1 = Math.min(b.y1, r.y1),
+      z1 = Math.min(b.z1, r.z1);
+    if (x0 < x1 && y0 < y1 && z0 < z1) out.push({ x0, y0, z0, x1, y1, z1, c: b.c });
+  }
+  return out;
+}
+
 export function colorCounts(boxes: Box3[], into: Map<number, number>): void {
   for (const b of boxes) {
     const v = (b.x1 - b.x0) * (b.y1 - b.y0) * (b.z1 - b.z0);

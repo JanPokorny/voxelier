@@ -39,6 +39,15 @@ import { boxesOverlap, worldBox } from "./boxes.ts";
 import { childById, clone, contextXform } from "./model.ts";
 import { orbitView, panCamera } from "./camera.ts";
 import { pointerMeasure, renderMeasure } from "./measure.ts";
+import {
+  captureSelection,
+  clearSelection,
+  dropSelection,
+  liftSelection,
+  rotateSelection3d,
+  selectionHit,
+  translateSelection,
+} from "./select.ts";
 import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
 import { selectColor, toggleMeasure, updateChrome } from "./ui.ts";
@@ -412,6 +421,62 @@ function renderBox(): void {
   renderMeasure();
 }
 
+// ---- select tool: grab/move/rotate the marquee selection ----
+function startSelMove(base: { x: number; y: number; sx: number; sy: number }): void {
+  liftSelection();
+  const y0 = S.sel3d!.region.y0; // drag on the selection's floor plane
+  S.drag = {
+    ...base,
+    mode: "selmove",
+    start: localGroundCell(y0) ?? { x: 0, y: y0, z: 0 },
+    dx: 0,
+    dy: 0,
+    dz: 0,
+    shiftAnchorY: null,
+  };
+}
+function startSelRot(base: { x: number; y: number; sx: number; sy: number }): void {
+  liftSelection();
+  S.drag = { ...base, mode: "selrot", steps: 0 };
+}
+function selMoveTo(e: PointerEvent): void {
+  const d = S.drag!;
+  let tx = d.dx!, ty = d.dy!, tz = d.dz!; // total delta from the drag start
+  if (e.shiftKey) { // vertical only (local Y == world Y under a Y-rotation)
+    if (d.shiftAnchorY == null) {
+      d.shiftAnchorY = e.clientY;
+      d.dyBase = ty;
+    }
+    ty = d.dyBase! + Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
+  } else { // slide on the start floor plane
+    d.shiftAnchorY = null;
+    const g = localGroundCell(d.start!.y);
+    if (g) {
+      tx = g.x - d.start!.x;
+      tz = g.z - d.start!.z;
+    }
+  }
+  translateSelection(tx - d.dx!, ty - d.dy!, tz - d.dz!);
+  d.dx = tx;
+  d.dy = ty;
+  d.dz = tz;
+}
+function selRotTo(e: PointerEvent): void {
+  const d = S.drag!;
+  const steps = Math.round((d.sx - e.clientX) / 70);
+  if (steps !== d.steps) {
+    rotateSelection3d(steps - d.steps!);
+    d.steps = steps;
+  }
+}
+// finalise a marquee drag: a real drag captures the box, a click just deselects
+function commitMarquee(didMove: boolean): void {
+  S.liveMeas = null; // drop the marquee wireframe/dimensions
+  renderMeasure();
+  if (didMove) captureSelection(boxRegion(S.drag!.box!));
+  updateChrome();
+}
+
 canvas.addEventListener("pointerdown", (e) => {
   // a gesture is single-button: ignore extra buttons pressed while one is held
   // (mouse buttons share a pointerId). Replacing S.drag/ignoring S.painting here
@@ -428,16 +493,25 @@ canvas.addEventListener("pointerdown", (e) => {
   }
   if (S.editObject) {
     if (e.button === 0) {
-      // add/erase drag out a box footprint; eyedropper picks a colour (one-shot);
-      // paint floods the cell under the cursor
-      if (S.tool === "add" || S.tool === "erase") startBox(base);
+      // select grabs/extends the marquee; add/erase drag out a box footprint;
+      // eyedropper picks a colour (one-shot); paint floods the hovered cell
+      if (S.tool === "select") {
+        if (S.sel3d && selectionHit()) startSelMove(base);
+        else {
+          clearSelection(); // clicking outside the selection deselects it
+          startBox(base); // drag out a fresh marquee
+        }
+      } else if (S.tool === "add" || S.tool === "erase") startBox(base);
       else if (S.tool === "eyedropper") eyedrop();
       else {
         S.painting = true;
         S.lastVox = null;
         applyVoxel();
       }
-    } else if (e.button === 2) S.drag = { ...base, mode: "orbit" };
+    } else if (e.button === 2) {
+      if (S.tool === "select" && S.sel3d && selectionHit()) startSelRot(base);
+      else S.drag = { ...base, mode: "orbit" };
+    }
     return;
   }
 
@@ -473,6 +547,8 @@ canvas.addEventListener("pointermove", (e) => {
     if (S.drag.mode === "move") moveDragTo(e);
     else if (S.drag.mode === "rotobj") rotDragTo(e);
     else if (S.drag.mode === "box") boxDragTo(e);
+    else if (S.drag.mode === "selmove") selMoveTo(e);
+    else if (S.drag.mode === "selrot") selRotTo(e);
   }
   updateMeas(); // floating dimensions, alongside whatever the active tool did
 });
@@ -492,7 +568,14 @@ canvas.addEventListener("pointerup", (e) => {
       S.painting = false;
       updateChrome();
       save();
-    } else if (S.drag && S.drag.mode === "box") commitBox();
+    } else if (S.drag && S.drag.mode === "box") {
+      if (S.tool === "select") commitMarquee(moved(e));
+      else commitBox();
+    } else if (
+      S.drag && (S.drag.mode === "selmove" || S.drag.mode === "selrot")
+    ) {
+      dropSelection(); // stamp the moved/rotated content back into the object
+    }
     S.drag = null;
     return;
   }

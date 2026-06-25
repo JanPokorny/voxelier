@@ -76,6 +76,7 @@ function restore(snap: Snap): void {
   );
   S.collapsed = new Set(snap.collapsed);
   S.drag = null;
+  S.sel3d = null;
   S.painting = false;
   S.lastVox = null;
   rebuild();

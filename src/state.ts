@@ -10,6 +10,7 @@ import type {
   SceneNode,
   Seg,
   Tool,
+  VoxSel,
   Xform,
 } from "./types.ts";
 
@@ -20,6 +21,7 @@ export type State = {
   readonly context: SceneNode; // derived: tail of path (the deepest entered group)
   editObject: ObjectNode | null; // object being voxel-edited, or null
   selection: Set<string>; // selected child ids within context
+  sel3d: VoxSel | null; // active voxel selection (object-editor "select" tool)
   tool: Tool; // voxel tool when editing an object
   selColor: number; // current draw colour (any 0xRRGGBB)
   collapsed: Set<string>; // tree: ids of collapsed groups
@@ -52,6 +54,7 @@ export const S: State = {
   },
   editObject: null,
   selection: new Set(),
+  sel3d: null,
   tool: "add",
   selColor: 0xd4a373,
   collapsed: new Set(),

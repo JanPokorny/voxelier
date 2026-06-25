@@ -92,6 +92,7 @@ function disposeMeshes(): void {
     }
   }
   meshes = [];
+  disposeSelWire();
   editGroup.clear();
   if (editRemesh) {
     cancelAnimationFrame(editRemesh);
@@ -105,6 +106,16 @@ function disposeMeshes(): void {
 // not document state, so it lives here rather than in the shared S object.
 let editMesh: THREE.Mesh | null = null;
 let editRemesh = 0; // pending requestAnimationFrame id, 0 when none
+// the voxel-selection box wireframe (object-local, under editGroup so it inherits
+// the edit pose). Rebuilt by buildEditMesh alongside the surface mesh.
+let selWire: THREE.LineSegments | null = null;
+function disposeSelWire(): void {
+  if (!selWire) return;
+  editGroup.remove(selWire);
+  selWire.geometry.dispose();
+  (selWire.material as THREE.Material).dispose();
+  selWire = null;
+}
 
 // Greedy box-face mesher: one merged quad per exposed face rectangle, so cost is
 // O(boxes), not O(surface cells) — a 1000³ box is six quads, not six million.
@@ -397,7 +408,13 @@ function buildEditMesh(): void {
     const i = meshes.indexOf(editMesh);
     if (i >= 0) meshes.splice(i, 1);
   }
-  const g = boxFaceGeo(S.editObject!.boxes, col, true);
+  // mesh the object's voxels, plus a lifted (floating) selection's content so it
+  // stays visible while it is dragged/rotated out of the object
+  const sel = S.sel3d;
+  const meshBoxes = sel && sel.lifted
+    ? S.editObject!.boxes.concat(sel.boxes)
+    : S.editObject!.boxes;
+  const g = boxFaceGeo(meshBoxes, col, true);
   editMesh = g ? new THREE.Mesh(g, matSurf) : null;
   if (editMesh) {
     editMesh.castShadow = editMesh.receiveShadow = true;
@@ -405,8 +422,24 @@ function buildEditMesh(): void {
     meshes.push(editMesh);
   }
   S.pickMeshes = editMesh ? [editMesh] : [];
+  if (sel) buildSelWire(sel.region);
+  else disposeSelWire();
 }
-function scheduleEditRemesh(): void {
+// the selection marquee as a box wireframe in object-local space
+function buildSelWire(r: Region): void {
+  disposeSelWire();
+  const bg = new THREE.BoxGeometry(r.x1 - r.x0, r.y1 - r.y0, r.z1 - r.z0);
+  const w = new THREE.LineSegments(
+    new THREE.EdgesGeometry(bg),
+    new THREE.LineBasicMaterial({ color: 0xffd479, depthTest: false }),
+  );
+  bg.dispose();
+  w.position.set((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, (r.z0 + r.z1) / 2);
+  w.renderOrder = 1000;
+  editGroup.add(w);
+  selWire = w;
+}
+export function scheduleEditRemesh(): void {
   if (editRemesh) return;
   editRemesh = requestAnimationFrame(() => {
     editRemesh = 0;
@@ -427,6 +460,14 @@ export function editAdd(r: Region, c: number): void {
 }
 export function editErase(r: Region): void {
   S.editObject!.boxes = eraseBox(S.editObject!.boxes, r);
+  afterEdit();
+}
+// Lay a whole box list (each with its own colour) onto the edited object — the
+// paste/drop side of the selection tool.
+export function editStamp(boxes: Box3[]): void {
+  let bs = S.editObject!.boxes;
+  for (const b of boxes) bs = addBox(bs, b, b.c);
+  S.editObject!.boxes = bs;
   afterEdit();
 }
 // Flood-fill the connected same-colour region containing `cell` with colour `c`.

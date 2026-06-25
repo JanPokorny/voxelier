@@ -43,6 +43,7 @@ export function importScene(): void {
         }
         S.path = [S.root];
         S.editObject = null;
+        S.sel3d = null;
         S.selection.clear();
         S.measMode = false; // turn measurement off for the new scene
         clearMeasure(); // discard the live reading from the old one
