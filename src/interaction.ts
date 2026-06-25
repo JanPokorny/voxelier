@@ -303,20 +303,31 @@ function boxDragTo(e: PointerEvent): void {
       d.hyBase = b.hy;
     }
     // Map pointer travel onto the extrude axis as it appears ON SCREEN, so the
-    // box grows in the direction you drag (not always "up"). Project a one-cell
-    // step along na to a pixel vector; the extrude depth is how many of those
-    // steps the pointer has moved along that direction since Shift engaged.
-    const s0 = locToW(b.s[0], b.s[1], b.s[2]).project(camera);
+    // box grows in the direction you drag (not always "up"). Take the world
+    // direction of a one-cell +na step, resolve it against the camera's right/up
+    // axes to get its on-screen direction, then scale by the ortho pixels-per-
+    // world-unit so one screen-cell of pointer travel == one cell of depth (the
+    // extruded face tracks the cursor).
+    const w0 = locToW(b.s[0], b.s[1], b.s[2]);
     const sN = b.s.slice() as [number, number, number];
     sN[b.na] += 1;
-    const s1 = locToW(sN[0], sN[1], sN[2]).project(camera);
-    const stepX = (s1.x - s0.x) * 0.5 * viewport.w; // pixels per +1 cell (x)
-    const stepY = -(s1.y - s0.y) * 0.5 * viewport.h; // pixels per +1 cell (y, down +)
-    const len2 = stepX * stepX + stepY * stepY;
+    const w1 = locToW(sN[0], sN[1], sN[2]);
+    const wx = w1.x - w0.x, wy = w1.y - w0.y, wz = w1.z - w0.z; // unit (one cell)
+    const m = camera.matrixWorld.elements; // columns 0..2 = right, 4..6 = up
+    const aR = wx * m[0] + wy * m[1] + wz * m[2]; // axis along screen-right
+    const aU = wx * m[4] + wy * m[5] + wz * m[6]; // axis along screen-up
+    // sin²(angle between the axis and the view direction): how much of the axis
+    // lies in the screen plane, independent of zoom. Near 0 only when the axis
+    // points almost straight at/away from the camera (no usable screen direction)
+    // — NOT merely when the model is small on screen, which a pixel threshold
+    // would wrongly trip, dropping side faces back to the vertical mapping.
+    const sin2 = aR * aR + aU * aU;
+    const px = viewport.h / (camera.top - camera.bottom); // pixels per world unit
+    const stepX = aR * px, stepY = -aU * px; // px per +1 cell (y down +)
     const dxp = e.clientX - d.shiftAnchorX!, dyp = e.clientY - d.shiftAnchorY!;
-    const hy = d.hyBase! + (len2 > 4 // axis visible on screen -> project onto it
-      ? Math.round((dxp * stepX + dyp * stepY) / len2)
-      // axis is edge-on (nearly along the view): fall back to vertical travel
+    const hy = d.hyBase! + (sin2 > 0.02 // axis usably on screen -> project onto it
+      ? Math.round((dxp * stepX + dyp * stepY) / (stepX * stepX + stepY * stepY))
+      // axis ~along the view: no on-screen direction, fall back to vertical travel
       : Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel()));
     if (clear(b.c[ua], b.c[va], hy)) b.hy = hy; // else stop at the last clear depth
   } else { // drag the footprint in the face's plane
