@@ -97,6 +97,7 @@ export type Drag = {
   minY?: number; // move: lowest world y0 of the selection at drag start (ground clamp)
   hgt?: number; // move: selection world height (caps the collision hop to 10%)
   dyUser?: number; // move: vertical offset the user set via Shift (the hop adds to it)
+  shiftAnchorX?: number | null; // box Shift-extrude: pointer x where Shift engaged
 };
 
 // Pending drop target while dragging a tree row.

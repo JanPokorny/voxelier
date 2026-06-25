@@ -298,11 +298,26 @@ function boxDragTo(e: PointerEvent): void {
     !boxesOverlap([boxRegionAt(b, cu, cv, hy)], d.occ ?? [], 0, 0, 0);
   if (e.shiftKey) { // extrude along the face normal (Shift)
     if (d.shiftAnchorY === null) {
+      d.shiftAnchorX = e.clientX;
       d.shiftAnchorY = e.clientY;
       d.hyBase = b.hy;
     }
-    const hy = d.hyBase! +
-      Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel());
+    // Map pointer travel onto the extrude axis as it appears ON SCREEN, so the
+    // box grows in the direction you drag (not always "up"). Project a one-cell
+    // step along na to a pixel vector; the extrude depth is how many of those
+    // steps the pointer has moved along that direction since Shift engaged.
+    const s0 = locToW(b.s[0], b.s[1], b.s[2]).project(camera);
+    const sN = b.s.slice() as [number, number, number];
+    sN[b.na] += 1;
+    const s1 = locToW(sN[0], sN[1], sN[2]).project(camera);
+    const stepX = (s1.x - s0.x) * 0.5 * viewport.w; // pixels per +1 cell (x)
+    const stepY = -(s1.y - s0.y) * 0.5 * viewport.h; // pixels per +1 cell (y, down +)
+    const len2 = stepX * stepX + stepY * stepY;
+    const dxp = e.clientX - d.shiftAnchorX!, dyp = e.clientY - d.shiftAnchorY!;
+    const hy = d.hyBase! + (len2 > 4 // axis visible on screen -> project onto it
+      ? Math.round((dxp * stepX + dyp * stepY) / len2)
+      // axis is edge-on (nearly along the view): fall back to vertical travel
+      : Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel()));
     if (clear(b.c[ua], b.c[va], hy)) b.hy = hy; // else stop at the last clear depth
   } else { // drag the footprint in the face's plane
     d.shiftAnchorY = null;
