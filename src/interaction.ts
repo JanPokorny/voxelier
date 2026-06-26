@@ -501,9 +501,11 @@ canvas.addEventListener("pointerdown", (e) => {
   }
   if (S.editObject) {
     if (e.button === 0) {
-      // select grabs/extends the marquee; add/erase drag out a box footprint;
-      // eyedropper picks a colour (one-shot); paint floods the hovered cell
-      if (S.tool === "select") {
+      // view pans the camera (non-destructive, the default); select grabs/extends
+      // the marquee; add/erase drag out a box footprint; eyedropper picks a colour
+      // (one-shot); paint floods the hovered cell
+      if (S.tool === "view") S.drag = { ...base, mode: "pan" };
+      else if (S.tool === "select") {
         if (S.sel3d && selectionHit()) startSelMove(base);
         else {
           clearSelection(); // clicking outside the selection deselects it
@@ -549,8 +551,8 @@ canvas.addEventListener("pointermove", (e) => {
   if (S.editObject && S.painting) {
     applyVoxel();
   } else if (!S.drag) {
-    // the add/erase/paint hover cube isn't meaningful for the select tool
-    if (S.editObject && S.tool !== "select") updateVoxHover();
+    // the hover cube is only meaningful for the editing tools, not view/select
+    if (S.editObject && S.tool !== "select" && S.tool !== "view") updateVoxHover();
     else hoverVox.visible = false;
   } else if (!dragPanOrbit(e)) {
     if (S.drag.mode === "move") moveDragTo(e);

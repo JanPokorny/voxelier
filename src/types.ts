@@ -39,7 +39,7 @@ export type SceneNode = NodeBase & { type: "scene"; children: Node[] };
 export type Node = ObjectNode | SceneNode;
 
 // ---- editor tools ----
-export type Tool = "add" | "erase" | "paint" | "eyedropper" | "select";
+export type Tool = "view" | "add" | "erase" | "paint" | "eyedropper" | "select";
 
 // ---- voxel selection (the object-editor "select" tool) ----
 // A MSPaint-style marquee over object-local voxels. `region` is the current

@@ -73,6 +73,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 }
 
 const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
+  { id: "view", ic: "👁", label: "View" },
   { id: "add", ic: "＋", label: "Add" },
   { id: "erase", ic: "－", label: "Erase" },
   { id: "paint", ic: "🪣", label: "Fill" },

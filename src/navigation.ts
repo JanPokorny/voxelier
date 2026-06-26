@@ -63,7 +63,7 @@ export function enterNode(node: Node, fit?: boolean): void { // dbl-click in tre
     S.editObject = node;
   }
   S.selection.clear();
-  S.tool = "add";
+  S.tool = "view"; // open objects in the non-destructive View (pan) tool
   clearMeasure();
   rebuild(); // entering always changes the context or edit object -> re-mesh
   updateChrome();

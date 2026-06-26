@@ -55,7 +55,7 @@ export const S: State = {
   editObject: null,
   selection: new Set(),
   sel3d: null,
-  tool: "add",
+  tool: "view",
   selColor: 0xd4a373,
   collapsed: new Set(),
 
