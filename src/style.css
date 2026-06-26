@@ -396,13 +396,19 @@ h3 {
   cursor: pointer;
 }
 .sw {
-  width: 50px; /* match the tool / current-colour icon size */
+  width: 50px; /* default (the eyedropper button) matches a tool icon */
   height: 50px;
   border-radius: 8px;
   cursor: pointer;
   border: 2px solid transparent;
   outline: 1px solid rgba(0, 0, 0, 0.35);
   outline-offset: -1px;
+}
+/* recent-colour swatches are small squares (six of them, under the sliders) */
+.swrow .sw {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
 }
 .sw.active {
   border-color: var(--ink);

@@ -51,7 +51,13 @@ import {
 } from "./select.ts";
 import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
-import { selectColor, setSelAnchor, toggleMeasure, updateChrome } from "./ui.ts";
+import {
+  recordRecent,
+  selectColor,
+  setSelAnchor,
+  toggleMeasure,
+  updateChrome,
+} from "./ui.ts";
 import { save } from "./persistence.ts";
 import type { Box3, Drag, Node, Seg, Vec } from "./types.ts";
 
@@ -232,7 +238,7 @@ function eyedrop(): void { // pick the draw colour from the voxel under the curs
     S.tool = S.eyedropReturn;
     S.eyedropReturn = null;
   }
-  selectColor(c); // routes through the recent-colours list + chrome refresh
+  selectColor(c); // sets the draw colour + chrome refresh (recents track use, not picks)
 }
 
 function applyVoxel(): void { // bucket: flood-fill the connected same-colour region under the cursor
@@ -242,6 +248,7 @@ function applyVoxel(): void { // bucket: flood-fill the connected same-colour re
   const k = key(c.x, c.y, c.z);
   if (k !== S.lastVox) {
     editFill(c, S.selColor); // recolours the whole face-connected same-colour run
+    recordRecent(S.selColor); // the colour was used to fill — remember it
     S.lastVox = k;
   }
   updateVoxHover(t);
@@ -376,8 +383,10 @@ function boxDragTo(e: PointerEvent): void {
 }
 function commitBox(): void {
   const r = boxRegion(S.drag!.box!);
-  if (S.tool === "add") editAdd(r, S.selColor);
-  else editErase(r);
+  if (S.tool === "add") {
+    editAdd(r, S.selColor);
+    recordRecent(S.selColor); // the colour was used to add — remember it
+  } else editErase(r);
   S.liveMeas = null;
   renderMeasure();
   updateChrome();

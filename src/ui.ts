@@ -156,25 +156,25 @@ function sceneColors(): number[] {
   };
   return _scCache.cols;
 }
-// recently-picked draw colours, most-recent first (capped at 4). Drives the
-// color flyout; padded from scene/default colours when fewer than 4 picks exist.
+// colours actually used to add/fill voxels, most-recent first (capped at 6).
+// Drives the colour flyout; padded from scene/default colours when fewer exist.
+// Recorded only on actual use (see recordRecent calls in interaction.ts), not on
+// merely selecting/dialing a colour.
 let recentColors: number[] = [];
-let recentSettle: number | undefined; // debounce for recording slider-dialed colours
-function recordRecent(c: number): void {
-  recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, 4);
+export function recordRecent(c: number): void {
+  recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, 6);
 }
 export function selectColor(c: number): void {
   S.selColor = c;
-  recordRecent(c);
   updateChrome();
 }
-// the 4 colours shown in the flyout: recent picks first, then padded with the
+// the 6 colours shown in the flyout: recently-used first, then padded with the
 // scene's used colours and the default palette (deduped)
-function recentFour(): number[] {
+function recentSix(): number[] {
   const out: number[] = [];
   for (const c of [...recentColors, ...sceneColors(), ...DEFAULT_COLORS]) {
     if (!out.includes(c)) out.push(c);
-    if (out.length >= 4) break;
+    if (out.length >= 6) break;
   }
   return out;
 }
@@ -237,7 +237,6 @@ const SLIDERS: { key: "h" | "s" | "v"; max: number; label: string; title: string
 // reveals a flyout — one row of recent colours, then H/S/V sliders that edit the
 // draw colour, with the eyedropper alongside the sliders
 function colorControl(): HTMLElement {
-  clearTimeout(recentSettle); // a rebuild supersedes any pending slider settle
   const ctl = el("div", { className: "colorctl" });
   const icon = el("div", {
     className: "colorbtn",
@@ -246,13 +245,7 @@ function colorControl(): HTMLElement {
   icon.style.background = hex(S.selColor);
   const fly = el("div", { className: "colorflyout" });
 
-  const row = el("div", { className: "swrow" }); // recent colours, matched to icon size
-  const fillRow = () => {
-    row.innerHTML = "";
-    for (const c of recentFour()) row.appendChild(colorSwatch(c));
-  };
-  fillRow();
-
+  // --- sliders (top) ---
   const sliders = el("div", { className: "sliders" });
   const inp: Record<string, HTMLInputElement> = {};
   // sliders are integer-stepped, so the starting positions are S.selColor's HSV
@@ -268,8 +261,8 @@ function colorControl(): HTMLElement {
   };
   // Preview the draw colour live without any DOM rebuild — a full updateChrome()
   // would destroy the slider being dragged or keyboard-stepped (range inputs fire
-  // events on every keystroke). Recording into the recents is debounced and only
-  // refreshes the swatch row in place, so the live sliders are never torn down.
+  // events on every keystroke). Sliders never touch the recents; a colour is only
+  // recorded when it's actually used to add/fill a voxel (see interaction.ts).
   const onSlide = () => {
     val.h = +inp.h.value;
     val.s = +inp.s.value;
@@ -277,11 +270,6 @@ function colorControl(): HTMLElement {
     S.selColor = hsvToRgb(val.h, val.s, val.v);
     icon.style.background = hex(S.selColor);
     repaint();
-    clearTimeout(recentSettle);
-    recentSettle = setTimeout(() => {
-      recordRecent(S.selColor);
-      fillRow();
-    }, 400);
   };
   for (const def of SLIDERS) {
     const line = el("div", { className: "sliderline" });
@@ -297,7 +285,6 @@ function colorControl(): HTMLElement {
   inp.h.style.background = // fixed rainbow
     "linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)";
   repaint();
-
   const body = el("div", { className: "sliderrow" });
   body.append(
     sliders,
@@ -308,7 +295,12 @@ function colorControl(): HTMLElement {
       onclick: activateEyedropper,
     }),
   );
-  fly.append(row, body);
+
+  // --- recent colours (bottom): six small squares ---
+  const row = el("div", { className: "swrow" });
+  for (const c of recentSix()) row.appendChild(colorSwatch(c));
+
+  fly.append(body, row);
   ctl.append(icon, fly);
   return ctl;
 }
