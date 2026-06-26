@@ -368,8 +368,9 @@ h3 {
   color: var(--ink);
   border-color: #3a4252;
 }
-/* full-screen veil shown while the native colour picker is open, so the click
-   that dismisses the picker lands here instead of on the canvas */
+/* full-screen semi-transparent scrim shown while the native colour picker is
+   open: it deliberately dims the app and catches the dismissing click so it
+   can't fall through to the canvas (which would place a voxel) */
 .pickerveil {
   position: fixed;
   inset: 0;

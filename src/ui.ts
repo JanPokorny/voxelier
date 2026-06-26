@@ -223,8 +223,9 @@ function colorControl(): HTMLElement {
   return ctl;
 }
 // the colour picker: pick any RGB; the chosen colour becomes the draw colour. A
-// full-screen veil sits under the native picker popup so the click that dismisses
-// it lands on the veil instead of the canvas (which would place a voxel).
+// full-screen semi-transparent veil dims the app under the native picker popup so
+// the click that dismisses it lands on the veil instead of the canvas (which
+// would place a voxel).
 function openColorPicker(): void {
   const inp = el("input", { type: "color", value: hex(S.selColor) });
   inp.style.cssText = "position:fixed;left:-9999px;top:0";
