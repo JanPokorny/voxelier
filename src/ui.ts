@@ -313,23 +313,48 @@ function thumbFor(node: Node): HTMLCanvasElement {
 // Shift-click extends the selection (multi-select) within the current context.
 // Selection is per-context, so a Shift-click on a node in a different context (or
 // while editing an object) can't extend — it falls back to a plain single select.
-function extendSelect(node: Node): void {
+// pivot row for Shift range-select; set by every plain/Ctrl single pick (tree or
+// 3D scene, via setSelAnchor). Selection is per-context, so a range only spans
+// siblings of the current context.
+let selAnchor: string | null = null;
+export function setSelAnchor(id: string | null): void {
+  selAnchor = id;
+}
+// Ctrl/Cmd-click: add/remove a single row to/from the selection.
+function toggleSelect(node: Node): void {
   if (node === S.root || parentOf(node) !== S.context || S.editObject) {
-    selectNode(node);
+    selectNode(node); // can't multi-select across contexts / out of edit mode
+  } else {
+    if (S.selection.has(node.id)) S.selection.delete(node.id);
+    else S.selection.add(node.id);
+    refreshOverlay();
+    updateChrome();
+  }
+  selAnchor = node.id;
+}
+// Shift-click: select the contiguous run of siblings between the pivot and here.
+function rangeSelect(node: Node): void {
+  const kids = S.context.children;
+  const ai = selAnchor ? kids.findIndex((c) => c.id === selAnchor) : -1;
+  const bi = kids.findIndex((c) => c.id === node.id);
+  if (node === S.root || S.editObject || ai < 0 || bi < 0) {
+    selectNode(node); // no usable pivot in this context — single select
+    selAnchor = node.id;
     return;
   }
-  if (S.selection.has(node.id)) S.selection.delete(node.id);
-  else S.selection.add(node.id);
-  refreshOverlay();
+  const lo = Math.min(ai, bi), hi = Math.max(ai, bi);
+  S.selection = new Set(kids.slice(lo, hi + 1).map((c) => c.id));
+  refreshOverlay(); // keep the pivot so further Shift-clicks extend from it
   updateChrome();
 }
 function rowClick(node: Node, e: MouseEvent): void {
-  if (e.shiftKey) { // extend the selection; never enters/edits
+  if (e.shiftKey || e.ctrlKey || e.metaKey) { // modifier-click never enters/edits
     if (pending) {
       clearTimeout(pending.timer);
       pending = null;
     }
-    extendSelect(node);
+    if (e.shiftKey) rangeSelect(node);
+    else toggleSelect(node);
     return;
   }
   if (pending && pending.node === node) { // second click within the window
@@ -343,6 +368,7 @@ function rowClick(node: Node, e: MouseEvent): void {
   // to the top-level context; any other node selects right away
   if (node === S.root) enterNode(node);
   else selectNode(node);
+  selAnchor = node === S.root ? null : node.id; // pivot for a later Shift range
   pending = { node, timer: setTimeout(() => (pending = null), 300) };
 }
 // Inline rename: swap a row's name span for a text input, committing on Enter or

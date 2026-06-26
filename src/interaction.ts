@@ -51,7 +51,7 @@ import {
 } from "./select.ts";
 import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
-import { selectColor, toggleMeasure, updateChrome } from "./ui.ts";
+import { selectColor, setSelAnchor, toggleMeasure, updateChrome } from "./ui.ts";
 import { save } from "./persistence.ts";
 import type { Box3, Drag, Node, Seg, Vec } from "./types.ts";
 
@@ -591,11 +591,17 @@ canvas.addEventListener("pointerup", (e) => {
   if (S.drag) {
     if (S.drag.mode === "pan" && !moved(e)) { // a click -> select / deselect
       const id = S.drag.clickId;
+      // no range in 3D, so Shift behaves like Ctrl here: add/remove a single item
+      const add = e.shiftKey || e.ctrlKey || e.metaKey;
       if (id) {
-        if (e.shiftKey) {
+        if (add) {
           S.selection.has(id) ? S.selection.delete(id) : S.selection.add(id);
         } else S.selection = new Set([id]);
-      } else if (!e.shiftKey) S.selection.clear();
+        setSelAnchor(id); // pivot for a later Shift range-select in the tree
+      } else if (!add) {
+        S.selection.clear();
+        setSelAnchor(null);
+      }
       refreshOverlay();
       updateChrome();
     } else if (S.drag.mode === "move") {
