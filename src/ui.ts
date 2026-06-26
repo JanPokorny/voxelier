@@ -561,9 +561,11 @@ function showItemMenu(node: Node, x: number, y: number): void {
   // multi-selection (>1) routes Copy/Duplicate/Delete/Group through the selection
   const multi = node !== S.root && parentOf(node) === S.context &&
     S.selection.size > 1 && S.selection.has(node.id);
-  add("Rename", () => startRename(node));
-  add("Locate", () => fitNode(node));
-  div();
+  if (!multi) { // Rename/Locate act on one item — hide them for a multi-selection
+    add("Rename", () => startRename(node));
+    add("Locate", () => fitNode(node));
+    div();
+  }
   if (node !== S.root) {
     add("Copy", () => copySelection());
     add("Duplicate", () => multi ? duplicateSelection() : duplicateNode(node));
