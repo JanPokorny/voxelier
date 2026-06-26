@@ -313,17 +313,16 @@ h3 {
   outline-offset: -2px;
   cursor: pointer;
 }
-/* a 3-col x 2-row grid: four recent colours fill the first two columns, the
-   picker and eyedropper stack in the last column. Cells are ~half a tool icon. */
+/* a column flyout: one row of recent colours, then the H/S/V sliders with the
+   eyedropper alongside them */
 .colorflyout {
   position: absolute;
   left: 100%;
   top: 0;
   display: none;
-  grid-template-columns: repeat(3, 25px);
-  grid-auto-rows: 24px;
-  gap: 4px;
-  padding: 6px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
   margin-left: 8px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -340,12 +339,66 @@ h3 {
   width: 8px;
 }
 .colorctl:hover .colorflyout {
-  display: grid;
+  display: flex;
+}
+.swrow {
+  display: flex;
+  gap: 6px;
+}
+.sliderrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sliderline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sliderline .lbl {
+  width: 9px;
+  font-size: 10px;
+  color: var(--ink-dim);
+  text-align: center;
+}
+.csl {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 150px;
+  height: 12px;
+  margin: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: 1px solid rgba(0, 0, 0, 0.35);
+  outline-offset: -1px;
+}
+.csl::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--ink);
+  border: 1px solid var(--bg);
+  cursor: pointer;
+}
+.csl::-moz-range-thumb {
+  width: 10px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--ink);
+  border: 1px solid var(--bg);
+  cursor: pointer;
 }
 .sw {
-  width: 25px; /* half the 50px tool-icon width */
-  height: 24px; /* half the tool-icon height */
-  border-radius: 5px;
+  width: 50px; /* match the tool / current-colour icon size */
+  height: 50px;
+  border-radius: 8px;
   cursor: pointer;
   border: 2px solid transparent;
   outline: 1px solid rgba(0, 0, 0, 0.35);
@@ -362,20 +415,11 @@ h3 {
   background: var(--panel-2);
   outline-color: var(--line);
   color: var(--ink-dim);
-  font-size: 13px;
+  font-size: 20px;
 }
 .sw.more:hover {
   color: var(--ink);
   border-color: #3a4252;
-}
-/* full-screen semi-transparent scrim shown while the native colour picker is
-   open: it deliberately dims the app and catches the dismissing click so it
-   can't fall through to the canvas (which would place a voxel) */
-.pickerveil {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(0, 0, 0, 0.4);
 }
 .ctxmenu {
   position: fixed;

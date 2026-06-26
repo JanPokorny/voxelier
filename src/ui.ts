@@ -184,9 +184,6 @@ const colorSwatch = (c: number): HTMLElement => {
   s.style.background = hex(c);
   return s;
 };
-// a flyout action button (picker / eyedropper), sized like a half-scale swatch
-const flyoutBtn = (glyph: string, title: string, onclick: () => void): HTMLElement =>
-  el("div", { className: "sw more", textContent: glyph, title, onclick });
 // switch to the eyedropper as a one-shot: the next voxel pick restores this tool
 function activateEyedropper(): void {
   if (S.tool !== "eyedropper") {
@@ -196,62 +193,110 @@ function activateEyedropper(): void {
     updateChrome();
   }
 }
+// ---- HSV <-> 0xRRGGBB (for the colour sliders) ----
+function rgbToHsv(c: number): [number, number, number] {
+  const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, b = (c & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d) {
+    if (mx === r) h = ((g - b) / d) % 6;
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h = (h * 60 + 360) % 360;
+  }
+  return [Math.round(h), Math.round((mx ? d / mx : 0) * 100), Math.round(mx * 100)];
+}
+function hsvToRgb(h: number, s: number, v: number): number {
+  s /= 100;
+  v /= 100;
+  const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+  const [r, g, b] = h < 60
+    ? [c, x, 0]
+    : h < 120
+    ? [x, c, 0]
+    : h < 180
+    ? [0, c, x]
+    : h < 240
+    ? [0, x, c]
+    : h < 300
+    ? [x, 0, c]
+    : [c, 0, x];
+  const to = (n: number) => Math.round((n + m) * 255);
+  return (to(r) << 16) | (to(g) << 8) | to(b);
+}
+const SLIDERS: { key: "h" | "s" | "v"; max: number; label: string; title: string }[] = [
+  { key: "h", max: 360, label: "H", title: "Hue" },
+  { key: "s", max: 100, label: "S", title: "Saturation" },
+  { key: "v", max: 100, label: "V", title: "Value" },
+];
 // toolbar draw-colour control: an icon showing the active colour; hovering it
-// reveals a flyout — a 2x2 grid of recent colours, with the picker and the
-// eyedropper stacked in the last column
+// reveals a flyout — one row of recent colours, then H/S/V sliders that edit the
+// draw colour, with the eyedropper alongside the sliders
 function colorControl(): HTMLElement {
   const ctl = el("div", { className: "colorctl" });
   const icon = el("div", {
     className: "colorbtn",
-    title: "Draw colour — hover for recent colours / picker",
+    title: "Draw colour — hover for recent colours / sliders",
   });
   icon.style.background = hex(S.selColor);
   const fly = el("div", { className: "colorflyout" });
-  const rec = recentFour();
-  // grid order, row-major over 3 columns x 2 rows:
-  //   recent0  recent1  picker
-  //   recent2  recent3  eyedropper
-  fly.append(
-    colorSwatch(rec[0]),
-    colorSwatch(rec[1]),
-    flyoutBtn("🎨", "Colour picker", openColorPicker),
-    colorSwatch(rec[2]),
-    colorSwatch(rec[3]),
-    flyoutBtn("💧", "Pick a colour from a voxel (eyedropper)", activateEyedropper),
+
+  const row = el("div", { className: "swrow" }); // recent colours, matched to icon size
+  for (const c of recentFour()) row.appendChild(colorSwatch(c));
+
+  const sliders = el("div", { className: "sliders" });
+  const inp: Record<string, HTMLInputElement> = {};
+  const [h0, s0, v0] = rgbToHsv(S.selColor);
+  const val = { h: h0, s: s0, v: v0 };
+  const repaint = () => { // S/V track gradients depend on the other channels
+    inp.s.style.background =
+      `linear-gradient(to right,${hex(hsvToRgb(val.h, 0, val.v))},${hex(hsvToRgb(val.h, 100, val.v))})`;
+    inp.v.style.background =
+      `linear-gradient(to right,${hex(hsvToRgb(val.h, val.s, 0))},${hex(hsvToRgb(val.h, val.s, 100))})`;
+  };
+  // commit=false previews live without a DOM rebuild (which would kill the drag);
+  // commit=true (slider release) records the colour into the recents
+  const onSlide = (commit: boolean) => {
+    val.h = +inp.h.value;
+    val.s = +inp.s.value;
+    val.v = +inp.v.value;
+    const c = hsvToRgb(val.h, val.s, val.v);
+    if (commit) selectColor(c);
+    else {
+      S.selColor = c;
+      icon.style.background = hex(c);
+      repaint();
+    }
+  };
+  for (const def of SLIDERS) {
+    const line = el("div", { className: "sliderline" });
+    const r = el("input", { type: "range", className: "csl", title: def.title });
+    r.min = "0";
+    r.max = String(def.max);
+    r.value = String(val[def.key]);
+    inp[def.key] = r;
+    r.addEventListener("input", () => onSlide(false));
+    r.addEventListener("change", () => onSlide(true));
+    line.append(el("span", { className: "lbl", textContent: def.label, title: def.title }), r);
+    sliders.appendChild(line);
+  }
+  inp.h.style.background = // fixed rainbow
+    "linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)";
+  repaint();
+
+  const body = el("div", { className: "sliderrow" });
+  body.append(
+    sliders,
+    el("div", {
+      className: "sw more",
+      textContent: "💧",
+      title: "Pick a colour from a voxel (eyedropper)",
+      onclick: activateEyedropper,
+    }),
   );
+  fly.append(row, body);
   ctl.append(icon, fly);
   return ctl;
-}
-// the colour picker: pick any RGB; the chosen colour becomes the draw colour. A
-// full-screen semi-transparent veil dims the app under the native picker popup so
-// the click that dismisses it lands on the veil instead of the canvas (which
-// would place a voxel).
-function openColorPicker(): void {
-  const inp = el("input", { type: "color", value: hex(S.selColor) });
-  inp.style.cssText = "position:fixed;left:-9999px;top:0";
-  const veil = el("div", { className: "pickerveil" });
-  let closed = false;
-  const close = () => {
-    if (closed) return;
-    closed = true;
-    inp.remove();
-    veil.remove();
-  };
-  // input fires continuously as the user drags in the native picker — preview the
-  // draw colour live, but only record it into the recents on commit (change), so
-  // the recent list isn't flooded with near-identical intermediate shades
-  inp.addEventListener("input", () => {
-    S.selColor = parseInt(inp.value.slice(1), 16);
-    updateChrome();
-  });
-  inp.addEventListener("change", () => {
-    selectColor(parseInt(inp.value.slice(1), 16));
-    close();
-  });
-  veil.addEventListener("pointerdown", close); // a click-away dismisses, harmlessly
-  window.addEventListener("focus", close, { once: true });
-  document.body.append(veil, inp);
-  inp.click();
 }
 
 // ---- object/scene tree ----
