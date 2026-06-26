@@ -471,11 +471,14 @@ export function editStamp(boxes: Box3[]): void {
   afterEdit();
 }
 // Flood-fill the connected same-colour region containing `cell` with colour `c`.
-export function editFill(cell: Vec, c: number): void {
+// Returns whether anything actually changed (false for an empty seed cell or a
+// region already that colour), so callers can skip side effects on a no-op.
+export function editFill(cell: Vec, c: number): boolean {
   const next = fillBox(S.editObject!.boxes, cell.x, cell.y, cell.z, c);
-  if (!next) return; // empty seed cell or already that colour — nothing to do
+  if (!next) return false; // empty seed cell or already that colour — nothing to do
   S.editObject!.boxes = next;
   afterEdit();
+  return true;
 }
 // Eyedropper: the colour of the voxel under the pointer, picking from ANY visible
 // solid (the edited object or other scene objects), or null when over empty space.

@@ -247,8 +247,8 @@ function applyVoxel(): void { // bucket: flood-fill the connected same-colour re
   if (!c) return;
   const k = key(c.x, c.y, c.z);
   if (k !== S.lastVox) {
-    editFill(c, S.selColor); // recolours the whole face-connected same-colour run
-    recordRecent(S.selColor); // the colour was used to fill — remember it
+    // recolours the whole face-connected same-colour run; record only on a real fill
+    if (editFill(c, S.selColor)) recordRecent(S.selColor);
     S.lastVox = k;
   }
   updateVoxHover(t);
