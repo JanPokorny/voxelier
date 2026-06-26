@@ -159,9 +159,13 @@ function sceneColors(): number[] {
 // recently-picked draw colours, most-recent first (capped at 4). Drives the
 // color flyout; padded from scene/default colours when fewer than 4 picks exist.
 let recentColors: number[] = [];
+let recentSettle: number | undefined; // debounce for recording slider-dialed colours
+function recordRecent(c: number): void {
+  recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, 4);
+}
 export function selectColor(c: number): void {
   S.selColor = c;
-  recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, 4);
+  recordRecent(c);
   updateChrome();
 }
 // the 4 colours shown in the flyout: recent picks first, then padded with the
@@ -233,6 +237,7 @@ const SLIDERS: { key: "h" | "s" | "v"; max: number; label: string; title: string
 // reveals a flyout — one row of recent colours, then H/S/V sliders that edit the
 // draw colour, with the eyedropper alongside the sliders
 function colorControl(): HTMLElement {
+  clearTimeout(recentSettle); // a rebuild supersedes any pending slider settle
   const ctl = el("div", { className: "colorctl" });
   const icon = el("div", {
     className: "colorbtn",
@@ -242,10 +247,17 @@ function colorControl(): HTMLElement {
   const fly = el("div", { className: "colorflyout" });
 
   const row = el("div", { className: "swrow" }); // recent colours, matched to icon size
-  for (const c of recentFour()) row.appendChild(colorSwatch(c));
+  const fillRow = () => {
+    row.innerHTML = "";
+    for (const c of recentFour()) row.appendChild(colorSwatch(c));
+  };
+  fillRow();
 
   const sliders = el("div", { className: "sliders" });
   const inp: Record<string, HTMLInputElement> = {};
+  // sliders are integer-stepped, so the starting positions are S.selColor's HSV
+  // rounded; moving a slider re-derives the colour from those integers, which can
+  // shift an untouched channel by up to ~3/255 — a small, one-time quantisation.
   const [h0, s0, v0] = rgbToHsv(S.selColor);
   const val = { h: h0, s: s0, v: v0 };
   const repaint = () => { // S/V track gradients depend on the other channels
@@ -254,19 +266,22 @@ function colorControl(): HTMLElement {
     inp.v.style.background =
       `linear-gradient(to right,${hex(hsvToRgb(val.h, val.s, 0))},${hex(hsvToRgb(val.h, val.s, 100))})`;
   };
-  // commit=false previews live without a DOM rebuild (which would kill the drag);
-  // commit=true (slider release) records the colour into the recents
-  const onSlide = (commit: boolean) => {
+  // Preview the draw colour live without any DOM rebuild — a full updateChrome()
+  // would destroy the slider being dragged or keyboard-stepped (range inputs fire
+  // events on every keystroke). Recording into the recents is debounced and only
+  // refreshes the swatch row in place, so the live sliders are never torn down.
+  const onSlide = () => {
     val.h = +inp.h.value;
     val.s = +inp.s.value;
     val.v = +inp.v.value;
-    const c = hsvToRgb(val.h, val.s, val.v);
-    if (commit) selectColor(c);
-    else {
-      S.selColor = c;
-      icon.style.background = hex(c);
-      repaint();
-    }
+    S.selColor = hsvToRgb(val.h, val.s, val.v);
+    icon.style.background = hex(S.selColor);
+    repaint();
+    clearTimeout(recentSettle);
+    recentSettle = setTimeout(() => {
+      recordRecent(S.selColor);
+      fillRow();
+    }, 400);
   };
   for (const def of SLIDERS) {
     const line = el("div", { className: "sliderline" });
@@ -275,8 +290,7 @@ function colorControl(): HTMLElement {
     r.max = String(def.max);
     r.value = String(val[def.key]);
     inp[def.key] = r;
-    r.addEventListener("input", () => onSlide(false));
-    r.addEventListener("change", () => onSlide(true));
+    r.addEventListener("input", onSlide);
     line.append(el("span", { className: "lbl", textContent: def.label, title: def.title }), r);
     sliders.appendChild(line);
   }
