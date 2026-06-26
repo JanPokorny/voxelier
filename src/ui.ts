@@ -77,9 +77,8 @@ const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
   { id: "add", ic: "＋", label: "Add" },
   { id: "erase", ic: "－", label: "Erase" },
   { id: "paint", ic: "🪣", label: "Fill" },
-  { id: "eyedropper", ic: "💧", label: "Pick" },
   { id: "select", ic: "⬚", label: "Select" },
-];
+]; // eyedropper lives in the colour flyout, not the rail
 // tree visibility-toggle glyphs, by current vis state
 const VIS_GLYPH: Record<string, string> = {
   visible: "◉",
@@ -120,6 +119,7 @@ export function updateChrome(): void {
       top.appendChild(toolButton(t.ic, t.label, S.tool === t.id, () => {
         if (S.tool !== t.id) clearSelection(); // switching tools drops the marquee
         S.tool = t.id;
+        S.eyedropReturn = null; // a manual switch cancels any pending eyedropper return
         hoverVox.visible = false;
         updateChrome();
       }));
@@ -184,8 +184,21 @@ const colorSwatch = (c: number): HTMLElement => {
   s.style.background = hex(c);
   return s;
 };
+// a flyout action button (picker / eyedropper), sized like a half-scale swatch
+const flyoutBtn = (glyph: string, title: string, onclick: () => void): HTMLElement =>
+  el("div", { className: "sw more", textContent: glyph, title, onclick });
+// switch to the eyedropper as a one-shot: the next voxel pick restores this tool
+function activateEyedropper(): void {
+  if (S.tool !== "eyedropper") {
+    S.eyedropReturn = S.tool;
+    clearSelection(); // a marquee can't survive the tool change
+    S.tool = "eyedropper";
+    updateChrome();
+  }
+}
 // toolbar draw-colour control: an icon showing the active colour; hovering it
-// reveals a horizontal flyout of the 4 recent colours plus the full picker
+// reveals a flyout — a 2x2 grid of recent colours, with the picker and the
+// eyedropper stacked in the last column
 function colorControl(): HTMLElement {
   const ctl = el("div", { className: "colorctl" });
   const icon = el("div", {
@@ -194,31 +207,49 @@ function colorControl(): HTMLElement {
   });
   icon.style.background = hex(S.selColor);
   const fly = el("div", { className: "colorflyout" });
-  for (const c of recentFour()) fly.appendChild(colorSwatch(c));
-  fly.appendChild(el("div", {
-    className: "sw more",
-    textContent: "🎨",
-    title: "Colour picker",
-    onclick: openColorPicker,
-  }));
+  const rec = recentFour();
+  // grid order, row-major over 3 columns x 2 rows:
+  //   recent0  recent1  picker
+  //   recent2  recent3  eyedropper
+  fly.append(
+    colorSwatch(rec[0]),
+    colorSwatch(rec[1]),
+    flyoutBtn("🎨", "Colour picker", openColorPicker),
+    colorSwatch(rec[2]),
+    colorSwatch(rec[3]),
+    flyoutBtn("💧", "Pick a colour from a voxel (eyedropper)", activateEyedropper),
+  );
   ctl.append(icon, fly);
   return ctl;
 }
-// the colour picker: pick any RGB; the chosen colour becomes the draw colour
+// the colour picker: pick any RGB; the chosen colour becomes the draw colour. A
+// full-screen veil sits under the native picker popup so the click that dismisses
+// it lands on the veil instead of the canvas (which would place a voxel).
 function openColorPicker(): void {
   const inp = el("input", { type: "color", value: hex(S.selColor) });
   inp.style.cssText = "position:fixed;left:-9999px;top:0";
-  const apply = () => selectColor(parseInt(inp.value.slice(1), 16));
-  // change fires when the dialog commits; a cancel fires no change but returns
-  // focus to the page, so remove the hidden input on that too (else it leaks)
-  const close = () => inp.remove();
-  inp.addEventListener("input", apply);
+  const veil = el("div", { className: "pickerveil" });
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    inp.remove();
+    veil.remove();
+  };
+  // input fires continuously as the user drags in the native picker — preview the
+  // draw colour live, but only record it into the recents on commit (change), so
+  // the recent list isn't flooded with near-identical intermediate shades
+  inp.addEventListener("input", () => {
+    S.selColor = parseInt(inp.value.slice(1), 16);
+    updateChrome();
+  });
   inp.addEventListener("change", () => {
-    apply();
+    selectColor(parseInt(inp.value.slice(1), 16));
     close();
   });
+  veil.addEventListener("pointerdown", close); // a click-away dismisses, harmlessly
   window.addEventListener("focus", close, { once: true });
-  document.body.appendChild(inp);
+  document.body.append(veil, inp);
   inp.click();
 }
 

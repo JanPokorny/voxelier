@@ -226,7 +226,13 @@ function rotDragTo(e: PointerEvent): void {
 
 function eyedrop(): void { // pick the draw colour from the voxel under the cursor (any object)
   const c = eyedropColor();
-  if (c != null) selectColor(c); // routes through the recent-colours list + chrome refresh
+  if (c == null) return;
+  // one-shot: return to the tool the eyedropper was invoked from (set in ui.ts)
+  if (S.eyedropReturn != null) {
+    S.tool = S.eyedropReturn;
+    S.eyedropReturn = null;
+  }
+  selectColor(c); // routes through the recent-colours list + chrome refresh
 }
 
 function applyVoxel(): void { // bucket: flood-fill the connected same-colour region under the cursor

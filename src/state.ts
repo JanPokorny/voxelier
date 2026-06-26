@@ -23,6 +23,7 @@ export type State = {
   selection: Set<string>; // selected child ids within context
   sel3d: VoxSel | null; // active voxel selection (object-editor "select" tool)
   tool: Tool; // voxel tool when editing an object
+  eyedropReturn: Tool | null; // tool to restore after a one-shot eyedropper pick
   selColor: number; // current draw colour (any 0xRRGGBB)
   collapsed: Set<string>; // tree: ids of collapsed groups
 
@@ -56,6 +57,7 @@ export const S: State = {
   selection: new Set(),
   sel3d: null,
   tool: "view",
+  eyedropReturn: null,
   selColor: 0xd4a373,
   collapsed: new Set(),
 
