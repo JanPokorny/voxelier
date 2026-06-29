@@ -50,7 +50,12 @@ import {
   translateSelection,
 } from "./select.ts";
 import { enterNode } from "./navigation.ts";
-import { rotateSelectionBy } from "./commands.ts";
+import {
+  beginFineRotate,
+  endFineRotate,
+  fineRotateSelectionTo,
+  rotateSelectionBy,
+} from "./commands.ts";
 import {
   recordRecent,
   selectColor,
@@ -243,13 +248,35 @@ function commitMove(copy: boolean): void {
   updateChrome(); // refresh tree rows (copies add nodes) + group thumbnails
   save();
 }
+const FINE_DEG_PER_PX = 0.5; // Alt fine-rotation: pointer travel -> angle
 function rotDragTo(e: PointerEvent): void {
   const d = S.drag!;
-  const steps = Math.round((d.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
-  if (steps !== d.steps) {
-    rotateSelectionBy(steps - d.steps!);
-    d.steps = steps;
-    d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
+  if (e.altKey) { // Alt: free 15° rotation, re-voxelised from the original via three shears
+    if (!d.fine) { // entering fine mode — snapshot, and measure the angle from here
+      beginFineRotate();
+      d.fine = true;
+      d.sx = e.clientX;
+      d.deg = 0;
+    }
+    const deg = Math.round((d.sx - e.clientX) * FINE_DEG_PER_PX / 15) * 15;
+    if (deg !== d.deg) {
+      fineRotateSelectionTo(deg);
+      d.deg = deg;
+      d.dirty = true;
+    }
+  } else { // 90°-snap rotation about the selection centre
+    if (d.fine) { // leaving fine mode — keep the baked result, restart the 90° count here
+      endFineRotate();
+      d.fine = false;
+      d.sx = e.clientX;
+      d.steps = 0;
+    }
+    const steps = Math.round((d.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
+    if (steps !== d.steps) {
+      rotateSelectionBy(steps - d.steps!);
+      d.steps = steps;
+      d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
+    }
   }
 }
 
@@ -660,9 +687,12 @@ canvas.addEventListener("pointerup", (e) => {
       // only copy on a real drag — a Ctrl+click without movement must not
       // silently duplicate the object in place
       commitMove(moved(e) && (e.ctrlKey || e.metaKey));
-    } else if (S.drag.mode === "rotobj" && S.drag.dirty) {
-      updateChrome(); // tree thumbnails track the new pose
-      save();
+    } else if (S.drag.mode === "rotobj") {
+      if (S.drag.fine) endFineRotate(); // drop the fine-rotation snapshot
+      if (S.drag.dirty) {
+        updateChrome(); // tree thumbnails track the new pose
+        save();
+      }
     }
   }
   S.drag = null;
@@ -678,6 +708,7 @@ canvas.addEventListener("pointercancel", () => {
   if (S.drag && (S.drag.mode === "selmove" || S.drag.mode === "selrot")) {
     dropSelection();
   }
+  if (S.drag && S.drag.mode === "rotobj" && S.drag.fine) endFineRotate();
   S.drag = null;
   S.painting = false;
   S.liveMeas = null; // drop any in-progress box-brush / measure wireframe

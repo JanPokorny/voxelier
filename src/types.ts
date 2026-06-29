@@ -90,6 +90,8 @@ export type Drag = {
   start?: Vec | null;
   steps?: number;
   dirty?: boolean; // rotobj: a rotation was applied during the drag (commit even if net steps == 0)
+  fine?: boolean; // rotobj: Alt fine-rotation (15° three-shear) mode engaged
+  deg?: number; // rotobj fine mode: the angle (°) currently baked from the snapshot
   clickId?: string | null;
   mid?: boolean; // middle-button drag: a non-moved release toggles measurement mode
   // in-progress box-brush footprint, oriented to the face the drag began on. `s`

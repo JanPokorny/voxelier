@@ -22,7 +22,8 @@ import { updateChrome } from "./ui.ts";
 import { enterNode, selectNode } from "./navigation.ts";
 import { save } from "./persistence.ts";
 import { clipKind, getNodeClip, getVoxClip, setNodeClip } from "./clipboard.ts";
-import type { Node, SceneNode } from "./types.ts";
+import { shearRotateY } from "./shear.ts";
+import type { Box3, Node, SceneNode } from "./types.ts";
 
 // re-mesh the scene, refresh the chrome and persist — the tail of most edits
 const commit = (): void => {
@@ -302,6 +303,30 @@ export function rotateSelection(): void {
     updateChrome();
     save();
   }
+}
+
+// ---- fine (Alt) rotation: bake an arbitrary Y angle into each selected
+// object's voxels via the three-shear algorithm. Always rotates the ORIGINAL
+// snapshot by the absolute angle (no compounding round-off), so a drag can swing
+// freely back and forth before being committed on release. ----
+let fineBase: Map<string, Box3[]> | null = null;
+export function beginFineRotate(): void {
+  fineBase = new Map();
+  for (const id of S.selection) {
+    const ch = childById(id);
+    if (ch && ch.type === "object") fineBase.set(id, ch.boxes.map((b) => ({ ...b })));
+  }
+}
+export function fineRotateSelectionTo(deg: number): void {
+  if (!fineBase || !fineBase.size) return;
+  for (const [id, base] of fineBase) {
+    const ch = childById(id);
+    if (ch && ch.type === "object") ch.boxes = shearRotateY(base, deg);
+  }
+  rebuild();
+}
+export function endFineRotate(): void { // drop the snapshot; the baked boxes stay
+  fineBase = null;
 }
 export function nudgeY(d: number): void {
   for (const id of S.selection) {
