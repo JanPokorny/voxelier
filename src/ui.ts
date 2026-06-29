@@ -822,6 +822,20 @@ function doDrop(): void {
   });
 }
 
+// Collapse / reveal the scene sidebar. Hiding gives the canvas the full width;
+// a "resize" event re-fits the renderer to the new stage size (the grid track
+// changes without the window itself resizing). The reveal button floats at the
+// top-right and is shown by CSS only while the panel is collapsed.
+{
+  const app = document.getElementById("app")!;
+  const setSidebar = (hidden: boolean) => {
+    app.classList.toggle("side-hidden", hidden);
+    window.dispatchEvent(new Event("resize"));
+  };
+  document.getElementById("btn-hide-side")!.onclick = () => setSidebar(true);
+  document.getElementById("btn-show-side")!.onclick = () => setSidebar(false);
+}
+
 // Clicking empty space in the side panel — anywhere that isn't a tree row,
 // button or input — clears the scene selection, an easy way to deselect all.
 document.getElementById("side")!.addEventListener("click", (e) => {

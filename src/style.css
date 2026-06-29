@@ -33,6 +33,20 @@ body {
   grid-template-columns: 1fr 200px;
   grid-template-areas: "stage right";
 }
+/* sidebar collapsed: the stage takes the whole width and the floating reveal
+   button replaces the in-panel hide button */
+#app.side-hidden {
+  grid-template-columns: 1fr 0;
+}
+#app.side-hidden #side {
+  display: none;
+}
+#btn-show-side {
+  display: none;
+}
+#app.side-hidden #btn-show-side {
+  display: block;
+}
 
 button {
   font: inherit;
@@ -167,12 +181,41 @@ button.active {
 
 #side {
   grid-area: right;
+  position: relative;
   background: var(--panel);
   border-left: 1px solid var(--line);
   padding: 12px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+/* show/hide-sidebar icon buttons: the hide one sits in the panel's top-right
+   corner; the show one floats at the screen's top-right when the panel is gone */
+.sidetoggle {
+  padding: 3px 7px;
+  font-size: 14px;
+  line-height: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink-dim);
+}
+.sidetoggle:hover {
+  color: var(--ink);
+  border-color: #3a4252;
+}
+#btn-hide-side {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+}
+#btn-show-side {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 20;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
 }
 h3 {
   margin: 0 0 8px;
