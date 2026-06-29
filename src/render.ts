@@ -20,9 +20,10 @@ import {
   col,
   dir,
   editGroup,
-  matGlass,
+  matDeemph,
   matGlassDepth,
   matSurf,
+  matTemp,
   ndc,
   overlay,
   raycaster,
@@ -91,8 +92,8 @@ function disposeMeshes(): void {
     }
   }
   meshes = [];
+  editPickExtra = [];
   disposeSelWire();
-  disposeGlow();
   editGroup.clear();
   if (editRemesh) {
     cancelAnimationFrame(editRemesh);
@@ -100,6 +101,10 @@ function disposeMeshes(): void {
   }
   editMesh = null;
 }
+// Extra surfaces the edit-mode pointer can pick besides the edited object: the
+// "temporarily deemphasized" (more-opaque) neighbours, so an Add can land on
+// them. Set each rebuild, kept across edit remeshes (which don't rebuild them).
+let editPickExtra: THREE.Mesh[] = [];
 
 // The edited object's surface mesh and its pending rAF id. Render-internal scratch
 // (rebuilt on edit, see scheduleEditRemesh) — never read outside this module, and
@@ -115,53 +120,6 @@ function disposeSelWire(): void {
   selWire.geometry.dispose();
   (selWire.material as THREE.Material).dispose();
   selWire = null;
-}
-
-// ---- focus glow: a white halo around the thing currently being edited (an
-// object, or the children of the group you've descended into) so it stands out
-// without dimming or see-through-glassing everything else. An inverted-hull
-// outline: the same surface, scaled out ~0.6 cell about its centre and drawn
-// back-faces-only; the opaque object (drawn first, writing depth) covers the
-// interior, leaving just the expanded rim showing as a white edge. ----
-const GLOW_OUT = 0.6; // how far the halo extends past the surface, in cells
-const glowMat = new THREE.MeshBasicMaterial({
-  color: 0xffffff,
-  side: THREE.BackSide,
-  transparent: true,
-  opacity: 0.85,
-  depthWrite: false, // a halo, not an occluder
-});
-let glowMeshes: THREE.Mesh[] = [];
-function disposeGlow(): void {
-  for (const m of glowMeshes) {
-    m.parent?.remove(m);
-    m.geometry.dispose();
-  }
-  glowMeshes = [];
-}
-// Build the halo from a box list (object-local for the edit case, world for the
-// group case) and add it under `parent` so it inherits that frame's pose.
-function buildGlow(boxes: Box3[], parent: THREE.Object3D): void {
-  if (!boxes.length) return;
-  const g = boxFaceGeo(boxes, col, false); // colours unused (glowMat is flat white)
-  if (!g) return;
-  g.computeBoundingBox();
-  const bb = g.boundingBox!;
-  const cx = (bb.min.x + bb.max.x) / 2,
-    cy = (bb.min.y + bb.max.y) / 2,
-    cz = (bb.min.z + bb.max.z) / 2;
-  const dim = Math.max(
-    bb.max.x - bb.min.x,
-    bb.max.y - bb.min.y,
-    bb.max.z - bb.min.z,
-    1,
-  );
-  const s = 1 + 2 * GLOW_OUT / dim; // uniform scale that pushes the rim out GLOW_OUT cells
-  const m = new THREE.Mesh(g, glowMat);
-  m.scale.setScalar(s);
-  m.position.set(cx * (1 - s), cy * (1 - s), cz * (1 - s)); // scale about the centre
-  parent.add(m);
-  glowMeshes.push(m);
 }
 
 // Greedy box-face mesher: one merged quad per exposed face rectangle, so cost is
@@ -363,26 +321,30 @@ function boxFaceGeo(
   return g;
 }
 
-// Mesh one solid (a world box list) as a surface; transparent ones read as glass
-// (and skip AO).
+// Mesh one solid (a world box list) at one of three render tiers and return its
+// surface mesh: "opaque" (full colour + AO), "temp" (more opaque, temporarily
+// deemphasized) or "deemph" (more transparent, explicitly deemphasized). The two
+// translucent tiers skip AO and get a depth-prepass sibling for clean ordering.
+type Tier = "opaque" | "temp" | "deemph";
 function meshSurface(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
-  { transparent = false, childId }: {
-    transparent?: boolean;
+  { tier = "opaque", childId }: {
+    tier?: Tier;
     childId?: string; // present => pickable, tagged with this context-child id
   } = {},
-): void {
-  if (!boxes.length) return;
-  const g = boxFaceGeo(boxes, colorOf, !transparent);
-  if (!g) return;
-  const m = new THREE.Mesh(g, transparent ? matGlass : matSurf);
+): THREE.Mesh | null {
+  if (!boxes.length) return null;
+  const translucent = tier !== "opaque";
+  const g = boxFaceGeo(boxes, colorOf, !translucent);
+  if (!g) return null;
+  const m = new THREE.Mesh(g, tier === "deemph" ? matDeemph : tier === "temp" ? matTemp : matSurf);
   m.castShadow = true;
   m.receiveShadow = true;
   scene.add(m);
   meshes.push(m);
-  if (transparent) {
-    // depth-only sibling: lays down the nearest-glass depth before the colour pass
+  if (translucent) {
+    // depth-only sibling: lays down the nearest-surface depth before the colour pass
     m.renderOrder = 2;
     const dp = new THREE.Mesh(g, matGlassDepth);
     dp.renderOrder = 1;
@@ -396,6 +358,7 @@ function meshSurface(
     S.pickMeshes.push(m);
     (S.childMeshes[childId] || (S.childMeshes[childId] = [])).push(m);
   }
+  return m;
 }
 
 // Visit every visible object (skipping the one being edited) with its accumulated
@@ -468,11 +431,9 @@ function buildEditMesh(): void {
     editGroup.add(editMesh);
     meshes.push(editMesh);
   }
-  S.pickMeshes = editMesh ? [editMesh] : [];
-  // white halo around the edited object so it reads as the focus (rebuilt here,
-  // alongside the surface mesh, so it tracks edits between full rebuilds)
-  disposeGlow();
-  buildGlow(meshBoxes, editGroup);
+  // the edited object plus the temporarily-deemphasized neighbours are pickable,
+  // so an Add can land against either (the more-transparent ones are excluded)
+  S.pickMeshes = editMesh ? [editMesh, ...editPickExtra] : [...editPickExtra];
   if (sel) buildSelWire(sel.region);
   else disposeSelWire();
 }
@@ -567,16 +528,16 @@ export function eyedropColor(): number | null {
   return result;
 }
 
-// context-child owner ids that render as glass (by visibility, independent of
+// context-child owner ids rendered deemphasized (explicitly, independent of
 // selection), refreshed every scene-mode rebuild. selectionRender() uses it to
-// decide whether a selection change needs a re-mesh (a selected glass object is
-// drawn solid) or just a cheap overlay refresh.
-const glassOwners = new Set<string>();
-// Reflect a selection change: re-mesh only when a glass owner's selected-state
-// flipped (so it switches between solid and glass); otherwise just redraw the
-// selection outlines. `prevSel` is the selection set before the change.
+// decide whether a selection change needs a re-mesh (a selected deemphasized
+// object is drawn opaque) or just a cheap overlay refresh.
+const deemphOwners = new Set<string>();
+// Reflect a selection change: re-mesh only when a deemphasized owner's selected-
+// state flipped (so it switches between opaque and translucent); otherwise just
+// redraw the selection outlines. `prevSel` is the selection set before the change.
 export function selectionRender(prevSel: Set<string>): void {
-  for (const id of glassOwners) {
+  for (const id of deemphOwners) {
     if (prevSel.has(id) !== S.selection.has(id)) {
       rebuild();
       return;
@@ -590,7 +551,7 @@ export function rebuild(): void {
   S.pickMeshes = [];
   S.childMeshes = {};
   S.childBox = {};
-  glassOwners.clear();
+  deemphOwners.clear();
   S.voxVer++;
   invalidateField();
   const O = { x: 0, y: 0, z: 0 };
@@ -601,59 +562,55 @@ export function rebuild(): void {
       off: S.editObject.pos,
       rot: S.editObject.rot,
     });
-    // other objects render normally (each keeping its own opaque/glass look),
-    // not forced to glass — the edited object is picked out by its white halo
-    const solidO: Box3[] = [], glassO: Box3[] = [];
+    // Everything else is outside the focus, so it's deemphasized: objects set to
+    // "deemphasized" go more transparent (and aren't pickable), the rest go
+    // "temporarily deemphasized" — more opaque, and still pickable so an Add can
+    // land against them.
+    const tempO: Box3[] = [], deemphO: Box3[] = [];
     eachObject(
       S.root,
       O,
       0,
       null,
       0,
-      (n, off, rot, _owner, tr) => worldBoxesInto(n, off, rot, tr ? glassO : solidO),
+      (n, off, rot, _owner, tr) => worldBoxesInto(n, off, rot, tr ? deemphO : tempO),
     );
-    growBounds(solidO, sceneBox);
-    growBounds(glassO, sceneBox);
-    meshSurface(solidO, col);
-    meshSurface(glassO, col, { transparent: true });
-    buildEditMesh(); // edited object: opaque, in 3D, with its focus halo
+    growBounds(tempO, sceneBox);
+    growBounds(deemphO, sceneBox);
+    meshSurface(deemphO, col, { tier: "deemph" });
+    const tm = meshSurface(tempO, col, { tier: "temp" });
+    editPickExtra = tm ? [tm] : [];
+    buildEditMesh(); // edited object: opaque, in 3D
     nodeBox(S.editObject, S.editXform.off, S.editXform.rot, sceneBox); // eachObject skips it
   } else {
-    // owner -> a current-context child; otherwise it's outside the open group
-    // (an ancestor's other branch). Both render in full colour — the open group
-    // is picked out by a white halo instead of by dimming everything else.
-    const gE = new Map<string, Box3[]>(), gT = new Map<string, Box3[]>();
-    const ctxE: Box3[] = [], ctxT: Box3[] = [];
-    const focus: Box3[] = []; // every context-child box, for the group halo
+    // owner -> a current-context child (in focus, full colour); otherwise it's
+    // outside the open group, so "temporarily deemphasized" (more opaque). An
+    // object explicitly set to "deemphasized" goes more transparent either way.
+    const gFocus = new Map<string, Box3[]>(), gFocusDim = new Map<string, Box3[]>();
+    const outTemp: Box3[] = [], outDeemph: Box3[] = [];
     eachObject(S.root, O, 0, null, 0, (n, off, rot, owner, tr) => {
       const wb = worldBoxesInto(n, off, rot, []);
       growBounds(wb, sceneBox);
       if (owner) {
-        if (tr) glassOwners.add(owner); // inherently transparent (selection-independent)
-        // a selected glass object renders solid so it stays pickable and its
-        // meshes are tracked (childMeshes) — otherwise it can't be clicked and
+        if (tr) deemphOwners.add(owner); // explicitly deemphasized (selection-independent)
+        // a selected deemphasized object renders opaque so it stays pickable and
+        // its meshes are tracked (childMeshes) — otherwise it can't be clicked and
         // doesn't follow the pointer while being dragged
-        const solid = !tr || S.selection.has(owner);
-        const m = solid ? gE : gT, arr = m.get(owner);
+        const opaque = !tr || S.selection.has(owner);
+        const m = opaque ? gFocus : gFocusDim, arr = m.get(owner);
         if (arr) arr.push(...wb);
         else m.set(owner, wb);
-        focus.push(...wb);
         growBounds(wb, S.childBox[owner] || (S.childBox[owner] = emptyBox()));
-      } else (tr ? ctxT : ctxE).push(...wb);
+      } else (tr ? outDeemph : outTemp).push(...wb);
     });
-    meshSurface(ctxE, col);
-    meshSurface(ctxT, col, { transparent: true });
-    for (const id of new Set([...gE.keys(), ...gT.keys()])) {
-      const e = gE.get(id);
-      if (e) {
-        meshSurface(e, col, { childId: id });
-      }
-      const t = gT.get(id);
-      if (t) meshSurface(t, col, { transparent: true }); // not pickable
+    meshSurface(outTemp, col, { tier: "temp" }); // outside the group: more opaque
+    meshSurface(outDeemph, col, { tier: "deemph" }); // explicitly deemphasized: more transparent
+    for (const id of new Set([...gFocus.keys(), ...gFocusDim.keys()])) {
+      const e = gFocus.get(id);
+      if (e) meshSurface(e, col, { childId: id }); // in focus: opaque + pickable
+      const t = gFocusDim.get(id);
+      if (t) meshSurface(t, col, { tier: "deemph" }); // in focus but deemphasized, not pickable
     }
-    // halo the open group's contents — but only once you've descended into one;
-    // at the root every object is a context child, so there's nothing to single out
-    if (S.context !== S.root) buildGlow(focus, scene);
   }
   S.sceneBox = sceneBox; // camera depth range reads this (see updateCamera)
   fitShadow(sceneBox); // anchor the light/shadow frustum to the scene, not the view

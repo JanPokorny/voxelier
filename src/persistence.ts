@@ -37,13 +37,18 @@ export function ser(n: Node): SerNode {
     }
     : { t: "s", ...b, c: n.children.map(ser) };
 }
+// older saves stored the pre-rename visibility names
+const VIS_MIGRATE: Record<string, Vis> = {
+  transparent: "deemphasized",
+  invisible: "hidden",
+};
 export function de(d: SerNode): Node {
   const b = {
     id: d.id,
     name: d.nm || "",
     pos: d.p,
     rot: d.r,
-    vis: d.vs || "visible",
+    vis: VIS_MIGRATE[d.vs] || d.vs || "visible",
   };
   return d.t === "o"
     ? {

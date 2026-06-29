@@ -12,7 +12,10 @@ export type Xform = { off: Vec; rot: Rot };
 export type Box = { min: Vec; max: Vec };
 
 // ---- the document model ----
-export type Vis = "visible" | "transparent" | "invisible";
+// An object's explicit visibility. "temporarily deemphasized" is NOT one of
+// these — it's a render-only state applied to anything outside the current focus
+// (the edited object, or the group you've entered); see render.ts.
+export type Vis = "visible" | "deemphasized" | "hidden";
 // An axis-aligned box of cells, half-open [x0,x1) x [y0,y1) x [z0,z1), with a
 // single 0xRRGGBB colour. An object's shape is a set of disjoint such boxes.
 export type Box3 = {

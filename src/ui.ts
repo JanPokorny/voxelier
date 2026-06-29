@@ -92,8 +92,8 @@ const VOX_TOOLS: { id: Tool; label: string }[] = [
 // tree visibility-toggle glyphs, by current vis state
 const VIS_GLYPH: Record<string, string> = {
   visible: "◉",
-  transparent: "◐",
-  invisible: "⦰",
+  deemphasized: "◐",
+  hidden: "⦰",
 };
 
 // a tool-rail button (rounded square with an icon glyph over a small label)
@@ -598,7 +598,7 @@ function buildTree(): void {
       r.append(el("button", {
         className: "tb" + (v === "visible" ? " on" : ""),
         textContent: VIS_GLYPH[v],
-        title: "visible → transparent → invisible",
+        title: "visible → deemphasized → hidden",
         onclick: (e) => {
           e.stopPropagation();
           cycleVis(node);
