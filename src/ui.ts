@@ -120,10 +120,12 @@ export function toggleMeasure(): void {
 export function updateChrome(): void {
   const tw = document.getElementById("tools")!;
   tw.innerHTML = "";
-  // top group: the voxel tools while editing an object (scene actions live in the
-  // tree's right-click menu). Omitted entirely outside edit mode.
+  // single top-left tool rail. While editing an object it holds the voxel tools
+  // (scene actions live in the tree's right-click menu); Measure sits alongside
+  // them as a tool of its own, and the colour picker trails the row. The rail is
+  // always present so Measure stays reachable outside edit mode too.
+  const top = el("div", { className: "toolgroup" });
   if (S.editObject) {
-    const top = el("div", { className: "toolgroup" });
     for (const t of VOX_TOOLS) {
       top.appendChild(toolButton(TOOL_ICON[t.id], t.label, S.tool === t.id, () => {
         if (S.tool !== t.id) clearSelection(); // switching tools drops the marquee
@@ -133,13 +135,10 @@ export function updateChrome(): void {
         updateChrome();
       }));
     }
-    top.appendChild(colorControl()); // draw-colour picker (only meaningful while editing)
-    tw.append(top);
   }
-  // bottom group: the measurement toggle, available in every mode
-  const bottom = el("div", { className: "toolgroup bottom" });
-  bottom.appendChild(toolButton("📏", "Measure", S.measMode, toggleMeasure));
-  tw.append(bottom);
+  top.appendChild(toolButton("📏", "Measure", S.measMode, toggleMeasure));
+  if (S.editObject) top.appendChild(colorControl()); // draw-colour picker (edit mode only)
+  tw.append(top);
   // the tool-cursor glyph is edit-mode only; hide it on the transition to scene
   // mode (a pointer move may not follow, e.g. exiting via the keyboard)
   if (!S.editObject) {

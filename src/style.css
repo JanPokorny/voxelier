@@ -68,9 +68,9 @@ button.active {
   font-weight: 600;
 }
 
-/* floating tool rail: a transparent full-height overlay on the stage's left edge
-   that pins one button group to the top and one to the bottom. The overlay itself
-   ignores pointer events so the canvas stays draggable between the groups. */
+/* floating tool rail: a transparent overlay pinning the tool group to the top
+   of the stage's left edge. The overlay itself ignores pointer events so the
+   canvas stays draggable around the group. */
 #tools {
   position: absolute;
   left: 0;
@@ -78,7 +78,6 @@ button.active {
   bottom: 0;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   padding: 10px;
   gap: 10px;
   pointer-events: none;
@@ -97,11 +96,6 @@ button.active {
   border: 1px solid var(--line);
   border-radius: 14px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-}
-/* the measurement group is pinned to the bottom of the rail whether or not the
-   voxel-tool group is present above it */
-.toolgroup.bottom {
-  margin-top: auto;
 }
 .tool {
   width: 50px;
