@@ -803,8 +803,10 @@ function doDrop(): void {
       clearDropInd();
       dropInfo = { parent: S.root, index: S.root.children.length };
       // show the same after-row insertion line under the last row, rather than a
-      // separate cue at the very bottom of the (panel-filling) tree
-      const rows = treeEl.querySelectorAll<HTMLElement>(".trow");
+      // separate cue at the very bottom of the (panel-filling) tree. Exclude the
+      // dragged row so the cue never lands on the item being moved.
+      const rows = [...treeEl.querySelectorAll<HTMLElement>(".trow")]
+        .filter((r) => r.dataset.id !== dragId);
       const last = rows[rows.length - 1];
       if (last) {
         last.classList.add("drop-after");
