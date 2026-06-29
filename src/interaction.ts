@@ -198,6 +198,10 @@ function moveDragTo(e: PointerEvent): void {
   for (const id of S.selection) {
     for (const m of (S.childMeshes[id] || [])) {
       m.position.set(d.dx!, d.dy!, d.dz!);
+      // the shadow frustum is fitted to the static scene, so a mesh dragged out
+      // of it casts a clipped shadow that snaps in only on drop. Drop the moving
+      // object's shadow entirely during the drag; rebuild() restores it on commit.
+      m.castShadow = false;
     }
   }
   overlay.position.set(d.dx!, d.dy!, d.dz!);

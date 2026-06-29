@@ -697,7 +697,6 @@ function clearDropInd(): void {
   if (dropRow) {
     dropRow.classList.remove("drop-into", "drop-before", "drop-after");
   }
-  document.getElementById("tree")?.classList.remove("drop-end");
   dropRow = null;
   dropInfo = null;
 }
@@ -803,7 +802,14 @@ function doDrop(): void {
       ev.preventDefault();
       clearDropInd();
       dropInfo = { parent: S.root, index: S.root.children.length };
-      treeEl.classList.add("drop-end"); // show the drop lands at the list end
+      // show the same after-row insertion line under the last row, rather than a
+      // separate cue at the very bottom of the (panel-filling) tree
+      const rows = treeEl.querySelectorAll<HTMLElement>(".trow");
+      const last = rows[rows.length - 1];
+      if (last) {
+        last.classList.add("drop-after");
+        dropRow = last;
+      }
     }
   });
   treeEl.addEventListener("drop", (ev) => {
