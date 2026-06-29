@@ -660,6 +660,7 @@ function showItemMenu(node: Node, x: number, y: number): void {
     add("Group", () => groupSelection(node)); // new group takes this item's pose
   } else if (node.type === "scene") {
     if (node !== S.root) add("Ungroup", () => ungroupNode(node));
+    if (clipKind()) add("Paste", () => pasteClipboard(node)); // paste into this group
     add("New object", () => addObjectIn(node));
     add("New group", () => addGroupIn(node));
   } else add("New group", () => wrapNodeInGroup(node));

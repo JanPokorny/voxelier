@@ -7,6 +7,7 @@ import {
   clone,
   contextXform,
   emptyBox,
+  findPath,
   isDescendant,
   newObject,
   newScene,
@@ -85,36 +86,48 @@ export function cutSelection(): void {
 // Paste into the scene. If voxel data was the last thing copied (from the object
 // editor's select tool), it lands as a fresh object containing those voxels;
 // otherwise the copied nodes are pasted as siblings.
-export function pasteClipboard(): void {
+// `into` is the target group (defaults to the current context, e.g. for Ctrl+V);
+// the tree menu passes the right-clicked group so a paste lands inside it.
+export function pasteClipboard(into: SceneNode = S.context): void {
   if (clipKind() === "vox") {
-    pasteVoxAsObject();
+    pasteVoxAsObject(into);
     return;
   }
   const ns = getNodeClip().map(cloneShift);
   if (!ns.length) return;
-  S.context.children.push(...ns);
+  into.children.push(...ns);
+  enterPasteTarget(into);
   S.selection = new Set(ns.map((d) => d.id));
   commit();
 }
 // Create a new object from the voxel clipboard (normalised, min at the origin)
 // at the camera focus, and select it.
-function pasteVoxAsObject(): void {
+function pasteVoxAsObject(into: SceneNode): void {
   const v = getVoxClip();
   if (!v.length) return;
   const o = newObject();
   o.boxes = v.map((b) => ({ ...b }));
   // place at the camera focus, converted from world to the (possibly
-  // transformed) context-local frame the new object lives in
-  const x = contextXform();
+  // transformed) local frame of the group the new object lives in
+  const x = worldXform(into);
   const l = rotY(
     { x: goal.target.x - x.off.x, y: 0, z: goal.target.z - x.off.z },
     -x.rot,
   );
   o.pos = { x: Math.round(l.x), y: 0, z: Math.round(l.z) };
-  S.context.children.push(o);
-  S.collapsed.delete(S.context.id);
+  into.children.push(o);
+  enterPasteTarget(into);
   S.selection = new Set([o.id]);
   commit();
+}
+// reveal the paste target and, if it isn't the current context, make it the
+// context so the freshly pasted (now context-child) nodes are selectable there
+function enterPasteTarget(into: SceneNode): void {
+  S.collapsed.delete(into.id);
+  if (into !== S.context) {
+    S.path = findPath(into) ?? S.path;
+    S.editObject = null;
+  }
 }
 
 // ---- tree reparenting (drag & drop) ----
