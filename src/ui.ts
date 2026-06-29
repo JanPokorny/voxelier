@@ -2,8 +2,8 @@
 // the object/scene tree (thumbnails, row clicks, context menu, drag & drop) and
 // the global keyboard shortcuts. Attaches its window/tree listeners on import.
 import { S } from "./state.ts";
-import { addv, hex, rotY } from "./math.ts";
-import { colorCounts, growBounds, worldBox } from "./boxes.ts";
+import { hex } from "./math.ts";
+import { colorCounts, growBounds } from "./boxes.ts";
 import { hoverVox } from "./scene-env.ts";
 import { clearMeasure } from "./measure.ts";
 import { fitNode, frameView } from "./camera.ts";
@@ -12,7 +12,9 @@ import {
   DEFAULT_COLORS,
   emptyBox,
   findById,
+  findPath,
   isDescendant,
+  nodeBoxes,
   parentOf,
 } from "./model.ts";
 import {
@@ -26,27 +28,28 @@ import {
   deleteSelection,
   duplicateNode,
   duplicateSelection,
+  groupSelection,
   nudgeY,
   pasteClipboard,
-  renameNode,
   reparentNode,
   rotateSelection,
   ungroupNode,
   wrapInGroup,
   wrapNodeInGroup,
 } from "./commands.ts";
+import { rebuild, selectionRender } from "./render.ts";
 import { save } from "./persistence.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
-import type {
-  Box3,
-  DropInfo,
-  Node,
-  Pending,
-  Rot,
-  Tool,
-  Vec,
-} from "./types.ts";
+import {
+  clearSelection,
+  copySelection3d,
+  cutSelection3d,
+  deleteSelection3d,
+  pasteVox,
+} from "./select.ts";
+import { clipKind, getNodeClip, getVoxClip } from "./clipboard.ts";
+import type { Box3, DropInfo, Node, Pending, Tool } from "./types.ts";
 
 // Tree drag&drop, context-menu, and row-click transient state — all owned and
 // used only here, so they live as module locals rather than in the shared S.
@@ -69,13 +72,22 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return e;
 }
 
-const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
-  { id: "add", ic: "＋", label: "Add" },
-  { id: "erase", ic: "－", label: "Erase" },
-  { id: "paint", ic: "🪣", label: "Fill" },
-  { id: "eyedropper", ic: "💧", label: "Pick" },
-  { id: "measure", ic: "📏", label: "Measure" },
-];
+// glyph per voxel tool (also drives the tool-cursor follower in interaction.ts)
+export const TOOL_ICON: Record<Tool, string> = {
+  view: "👁",
+  add: "＋",
+  erase: "－",
+  paint: "🪣",
+  eyedropper: "💧",
+  select: "⬚",
+};
+const VOX_TOOLS: { id: Tool; label: string }[] = [
+  { id: "view", label: "View" },
+  { id: "add", label: "Add" },
+  { id: "erase", label: "Erase" },
+  { id: "paint", label: "Fill" },
+  { id: "select", label: "Select" },
+]; // eyedropper lives in the colour flyout, not the rail
 // tree visibility-toggle glyphs, by current vis state
 const VIS_GLYPH: Record<string, string> = {
   visible: "◉",
@@ -96,36 +108,52 @@ const toolButton = (
     onclick,
   });
 
+// Measurement is a global toggle (works in any mode, alongside any tool); its
+// button lives in the bottom-left tool rail. Shared with the middle-click toggle
+// in interaction.ts.
+export function toggleMeasure(): void {
+  S.measMode = !S.measMode;
+  if (!S.measMode) clearMeasure();
+  updateChrome();
+}
+
 export function updateChrome(): void {
   const tw = document.getElementById("tools")!;
   tw.innerHTML = "";
-  // top group: the voxel tools while editing an object, else just Measure
-  // (scene actions live in the tree's right-click menu)
-  const top = el("div", { className: "toolgroup" });
+  // top group: the voxel tools while editing an object (scene actions live in the
+  // tree's right-click menu). Omitted entirely outside edit mode.
   if (S.editObject) {
+    const top = el("div", { className: "toolgroup" });
     for (const t of VOX_TOOLS) {
-      top.appendChild(toolButton(t.ic, t.label, S.tool === t.id, () => {
+      top.appendChild(toolButton(TOOL_ICON[t.id], t.label, S.tool === t.id, () => {
+        if (S.tool !== t.id) clearSelection(); // switching tools drops the marquee
         S.tool = t.id;
-        clearMeasure();
+        S.eyedropReturn = null; // a manual switch cancels any pending eyedropper return
         hoverVox.visible = false;
         updateChrome();
       }));
     }
     top.appendChild(colorControl()); // draw-colour picker (only meaningful while editing)
-  } else {
-    top.appendChild(toolButton("📏", "Measure", S.measMode, () => {
-      S.measMode = !S.measMode;
-      if (!S.measMode) clearMeasure();
-      updateChrome();
-    }));
+    tw.append(top);
   }
-  // bottom group: import / export
-  const bottom = el("div", { className: "toolgroup" });
-  bottom.appendChild(toolButton("📂", "Import", false, importScene));
-  bottom.appendChild(toolButton("💾", "Export", false, exportScene));
-  tw.append(top, bottom);
+  // bottom group: the measurement toggle, available in every mode
+  const bottom = el("div", { className: "toolgroup bottom" });
+  bottom.appendChild(toolButton("📏", "Measure", S.measMode, toggleMeasure));
+  tw.append(bottom);
+  // the tool-cursor glyph is edit-mode only; hide it on the transition to scene
+  // mode (a pointer move may not follow, e.g. exiting via the keyboard)
+  if (!S.editObject) {
+    const tc = document.getElementById("toolcursor");
+    if (tc) tc.style.display = "none";
+  }
   buildTree();
 }
+
+// Save (export) / Load (import) live at the top of the scene tree panel. Wired
+// once on import — the buttons are static in index.html, not rebuilt per chrome
+// refresh, so the listeners never need re-attaching.
+document.getElementById("btn-save")!.onclick = exportScene;
+document.getElementById("btn-load")!.onclick = importScene;
 
 // distinct colours used in the scene, most-used (by cell volume) first. Cached by
 // S.voxVer so it isn't recomputed on every chrome refresh.
@@ -143,21 +171,25 @@ function sceneColors(): number[] {
   };
   return _scCache.cols;
 }
-// recently-picked draw colours, most-recent first (capped at 4). Drives the
-// color flyout; padded from scene/default colours when fewer than 4 picks exist.
+// colours actually used to add/fill voxels, most-recent first (capped at 6).
+// Drives the colour flyout; padded from scene/default colours when fewer exist.
+// Recorded only on actual use (see recordRecent calls in interaction.ts), not on
+// merely selecting/dialing a colour.
 let recentColors: number[] = [];
+export function recordRecent(c: number): void {
+  recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, 6);
+}
 export function selectColor(c: number): void {
   S.selColor = c;
-  recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, 4);
   updateChrome();
 }
-// the 4 colours shown in the flyout: recent picks first, then padded with the
+// the 6 colours shown in the flyout: recently-used first, then padded with the
 // scene's used colours and the default palette (deduped)
-function recentFour(): number[] {
+function recentSix(): number[] {
   const out: number[] = [];
   for (const c of [...recentColors, ...sceneColors(), ...DEFAULT_COLORS]) {
     if (!out.includes(c)) out.push(c);
-    if (out.length >= 4) break;
+    if (out.length >= 6) break;
   }
   return out;
 }
@@ -171,57 +203,124 @@ const colorSwatch = (c: number): HTMLElement => {
   s.style.background = hex(c);
   return s;
 };
+// switch to the eyedropper as a one-shot: the next voxel pick restores this tool
+function activateEyedropper(): void {
+  if (S.tool !== "eyedropper") {
+    S.eyedropReturn = S.tool;
+    clearSelection(); // a marquee can't survive the tool change
+    S.tool = "eyedropper";
+    updateChrome();
+  }
+}
+// ---- HSV <-> 0xRRGGBB (for the colour sliders) ----
+function rgbToHsv(c: number): [number, number, number] {
+  const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, b = (c & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d) {
+    if (mx === r) h = ((g - b) / d) % 6;
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h = (h * 60 + 360) % 360;
+  }
+  return [Math.round(h), Math.round((mx ? d / mx : 0) * 100), Math.round(mx * 100)];
+}
+function hsvToRgb(h: number, s: number, v: number): number {
+  s /= 100;
+  v /= 100;
+  const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+  const [r, g, b] = h < 60
+    ? [c, x, 0]
+    : h < 120
+    ? [x, c, 0]
+    : h < 180
+    ? [0, c, x]
+    : h < 240
+    ? [0, x, c]
+    : h < 300
+    ? [x, 0, c]
+    : [c, 0, x];
+  const to = (n: number) => Math.round((n + m) * 255);
+  return (to(r) << 16) | (to(g) << 8) | to(b);
+}
+const SLIDERS: { key: "h" | "s" | "v"; max: number; label: string; title: string }[] = [
+  { key: "h", max: 360, label: "H", title: "Hue" },
+  { key: "s", max: 100, label: "S", title: "Saturation" },
+  { key: "v", max: 100, label: "V", title: "Value" },
+];
 // toolbar draw-colour control: an icon showing the active colour; hovering it
-// reveals a horizontal flyout of the 4 recent colours plus the full picker
+// reveals a flyout — one row of recent colours, then H/S/V sliders that edit the
+// draw colour, with the eyedropper alongside the sliders
 function colorControl(): HTMLElement {
   const ctl = el("div", { className: "colorctl" });
   const icon = el("div", {
     className: "colorbtn",
-    title: "Draw colour — hover for recent colours / picker",
+    title: "Draw colour — hover for recent colours / sliders",
   });
   icon.style.background = hex(S.selColor);
   const fly = el("div", { className: "colorflyout" });
-  for (const c of recentFour()) fly.appendChild(colorSwatch(c));
-  fly.appendChild(el("div", {
-    className: "sw more",
-    textContent: "🎨",
-    title: "Colour picker",
-    onclick: openColorPicker,
-  }));
+
+  // --- sliders (top) ---
+  const sliders = el("div", { className: "sliders" });
+  const inp: Record<string, HTMLInputElement> = {};
+  // sliders are integer-stepped, so the starting positions are S.selColor's HSV
+  // rounded; moving a slider re-derives the colour from those integers, which can
+  // shift an untouched channel by up to ~3/255 — a small, one-time quantisation.
+  const [h0, s0, v0] = rgbToHsv(S.selColor);
+  const val = { h: h0, s: s0, v: v0 };
+  const repaint = () => { // S/V track gradients depend on the other channels
+    inp.s.style.background =
+      `linear-gradient(to right,${hex(hsvToRgb(val.h, 0, val.v))},${hex(hsvToRgb(val.h, 100, val.v))})`;
+    inp.v.style.background =
+      `linear-gradient(to right,${hex(hsvToRgb(val.h, val.s, 0))},${hex(hsvToRgb(val.h, val.s, 100))})`;
+  };
+  // Preview the draw colour live without any DOM rebuild — a full updateChrome()
+  // would destroy the slider being dragged or keyboard-stepped (range inputs fire
+  // events on every keystroke). Sliders never touch the recents; a colour is only
+  // recorded when it's actually used to add/fill a voxel (see interaction.ts).
+  const onSlide = () => {
+    val.h = +inp.h.value;
+    val.s = +inp.s.value;
+    val.v = +inp.v.value;
+    S.selColor = hsvToRgb(val.h, val.s, val.v);
+    icon.style.background = hex(S.selColor);
+    repaint();
+  };
+  for (const def of SLIDERS) {
+    const line = el("div", { className: "sliderline" });
+    const r = el("input", { type: "range", className: "csl", title: def.title });
+    r.min = "0";
+    r.max = String(def.max);
+    r.value = String(val[def.key]);
+    inp[def.key] = r;
+    r.addEventListener("input", onSlide);
+    line.append(el("span", { className: "lbl", textContent: def.label, title: def.title }), r);
+    sliders.appendChild(line);
+  }
+  inp.h.style.background = // fixed rainbow
+    "linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)";
+  repaint();
+  const body = el("div", { className: "sliderrow" });
+  body.append(
+    sliders,
+    el("div", {
+      className: "sw more",
+      textContent: "💧",
+      title: "Pick a colour from a voxel (eyedropper)",
+      onclick: activateEyedropper,
+    }),
+  );
+
+  // --- recent colours (bottom): six small squares ---
+  const row = el("div", { className: "swrow" });
+  for (const c of recentSix()) row.appendChild(colorSwatch(c));
+
+  fly.append(body, row);
   ctl.append(icon, fly);
   return ctl;
 }
-// the colour picker: pick any RGB; the chosen colour becomes the draw colour
-function openColorPicker(): void {
-  const inp = el("input", { type: "color", value: hex(S.selColor) });
-  inp.style.cssText = "position:fixed;left:-9999px;top:0";
-  const apply = () => selectColor(parseInt(inp.value.slice(1), 16));
-  // change fires when the dialog commits; a cancel fires no change but returns
-  // focus to the page, so remove the hidden input on that too (else it leaks)
-  const close = () => inp.remove();
-  inp.addEventListener("input", apply);
-  inp.addEventListener("change", () => {
-    apply();
-    close();
-  });
-  window.addEventListener("focus", close, { once: true });
-  document.body.appendChild(inp);
-  inp.click();
-}
 
 // ---- object/scene tree ----
-// flatten a subtree's boxes under an accumulated transform; callers pass
-// identity off/rot so the result is in the node's own frame (for the thumbnail)
-function localBoxes(node: Node, off: Vec, rot: Rot, out: Box3[]): Box3[] {
-  if (node.type === "object") {
-    for (const b of node.boxes) out.push(worldBox(b, rot, off));
-  } else {
-    for (const ch of node.children) {
-      localBoxes(ch, addv(off, rotY(ch.pos, rot)), (rot + ch.rot) & 3, out);
-    }
-  }
-  return out;
-}
 const shade = (c: number, f: number): string => {
   const r = Math.min(255, ((c >> 16) & 255) * f) | 0,
     g = Math.min(255, ((c >> 8) & 255) * f) | 0,
@@ -254,7 +353,7 @@ function thumbFor(node: Node): HTMLCanvasElement {
   const g = cv.getContext("2d")!;
   g.fillStyle = "#0f1115";
   g.fillRect(0, 0, 52, 52);
-  const boxes = localBoxes(node, { x: 0, y: 0, z: 0 }, 0, []);
+  const boxes = nodeBoxes(node, { x: 0, y: 0, z: 0 }, 0, []);
   if (boxes.length) {
     const bb = emptyBox();
     growBounds(boxes, bb);
@@ -310,7 +409,55 @@ function thumbFor(node: Node): HTMLCanvasElement {
 // two independent click events (not a native dblclick) so the immediate select
 // can rebuild the row DOM without breaking double-click detection — the same
 // node's row reoccupies the same spot. Rename lives only in the right-click menu.
-function rowClick(node: Node): void {
+// Shift-click extends the selection (multi-select) within the current context.
+// Selection is per-context, so a Shift-click on a node in a different context (or
+// while editing an object) can't extend — it falls back to a plain single select.
+// pivot row for Shift range-select; set by every plain/Ctrl single pick (tree or
+// 3D scene, via setSelAnchor). Selection is per-context, so a range only spans
+// siblings of the current context.
+let selAnchor: string | null = null;
+export function setSelAnchor(id: string | null): void {
+  selAnchor = id;
+}
+// Ctrl/Cmd-click: add/remove a single row to/from the selection.
+function toggleSelect(node: Node): void {
+  if (node === S.root || parentOf(node) !== S.context || S.editObject) {
+    selectNode(node); // can't multi-select across contexts / out of edit mode
+  } else {
+    const prevSel = new Set(S.selection);
+    if (S.selection.has(node.id)) S.selection.delete(node.id);
+    else S.selection.add(node.id);
+    selectionRender(prevSel);
+    updateChrome();
+  }
+  selAnchor = node.id;
+}
+// Shift-click: select the contiguous run of siblings between the pivot and here.
+function rangeSelect(node: Node): void {
+  const kids = S.context.children;
+  const ai = selAnchor ? kids.findIndex((c) => c.id === selAnchor) : -1;
+  const bi = kids.findIndex((c) => c.id === node.id);
+  if (node === S.root || S.editObject || ai < 0 || bi < 0) {
+    selectNode(node); // no usable pivot in this context — single select
+    selAnchor = node.id;
+    return;
+  }
+  const prevSel = new Set(S.selection);
+  const lo = Math.min(ai, bi), hi = Math.max(ai, bi);
+  S.selection = new Set(kids.slice(lo, hi + 1).map((c) => c.id));
+  selectionRender(prevSel); // keep the pivot so further Shift-clicks extend from it
+  updateChrome();
+}
+function rowClick(node: Node, e: MouseEvent): void {
+  if (e.shiftKey || e.ctrlKey || e.metaKey) { // modifier-click never enters/edits
+    if (pending) {
+      clearTimeout(pending.timer);
+      pending = null;
+    }
+    if (e.shiftKey) rangeSelect(node);
+    else toggleSelect(node);
+    return;
+  }
   if (pending && pending.node === node) { // second click within the window
     clearTimeout(pending.timer);
     pending = null;
@@ -322,8 +469,42 @@ function rowClick(node: Node): void {
   // to the top-level context; any other node selects right away
   if (node === S.root) enterNode(node);
   else selectNode(node);
+  selAnchor = node === S.root ? null : node.id; // pivot for a later Shift range
   pending = { node, timer: setTimeout(() => (pending = null), 300) };
 }
+// Inline rename: swap a row's name span for a text input, committing on Enter or
+// blur and cancelling on Escape. updateChrome() rebuilds the tree afterwards,
+// restoring the plain name span. Used by the name-click gesture and the menu.
+function startRename(node: Node): void {
+  closeItemMenu(); // when invoked from the context menu
+  const r = document.querySelector<HTMLElement>(`#tree .trow[data-id="${node.id}"]`);
+  const nm = r?.querySelector(".nm");
+  if (!nm) return;
+  const input = el("input", { className: "nminput", value: node.name });
+  input.placeholder = node === S.root
+    ? "Project"
+    : (node.type === "scene" ? "group" : "object");
+  let done = false;
+  const finish = (commit: boolean) => {
+    if (done) return; // blur fires again as updateChrome() tears the input down
+    done = true;
+    if (commit) {
+      node.name = input.value.trim();
+      save();
+    }
+    updateChrome();
+  };
+  input.addEventListener("keydown", (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Enter") finish(true);
+    else if (ev.key === "Escape") finish(false);
+  });
+  input.addEventListener("blur", () => finish(true));
+  nm.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
 // the row's cached thumbnail; for a non-empty non-root group it doubles as the
 // collapse toggle (a stacked look = collapsed)
 function rowThumb(node: Node): HTMLCanvasElement {
@@ -387,6 +568,7 @@ function buildTree(): void {
         (!isRoot && v !== "visible" ? " dim" : ""),
     });
     r.style.paddingLeft = (4 + depth * 13) + "px";
+    r.dataset.id = node.id; // lets startRename() find this row to edit in place
     const th = rowThumb(node);
     const nm = el("span", { className: "nm" });
     if (isRoot) nm.textContent = node.name || "Project";
@@ -395,6 +577,17 @@ function buildTree(): void {
       nm.innerHTML = '<span class="ph">' +
         (node.type === "scene" ? "group" : "object") + "</span>";
     }
+    // clicking the name of the already-selected (sole) item, once the
+    // double-click window has passed, opens inline rename
+    nm.onclick = (e) => {
+      if (
+        !pending && !S.editObject && !isRoot && S.selection.size === 1 &&
+        S.selection.has(node.id)
+      ) {
+        e.stopPropagation();
+        startRename(node);
+      }
+    };
     r.append(th, nm);
     if (!isRoot) {
       r.append(el("button", {
@@ -407,11 +600,15 @@ function buildTree(): void {
         },
       }));
     }
-    r.onclick = () => rowClick(node);
+    r.onclick = (e) => rowClick(node, e);
     r.oncontextmenu = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (!isRoot) selectNode(node);
+      // keep an existing multi-selection if the right-clicked row is part of it,
+      // so the menu can act on the whole group; otherwise select just this row
+      const inSel = !isRoot && !S.editObject && parentOf(node) === S.context &&
+        S.selection.has(node.id);
+      if (!isRoot && !inSel) selectNode(node);
       showItemMenu(node, e.clientX, e.clientY);
     };
     wireRowDnd(r, node);
@@ -461,16 +658,26 @@ function showItemMenu(node: Node, x: number, y: number): void {
       },
     }));
   const div = () => m.appendChild(el("div", { className: "ctxdiv" }));
-  add("Rename", () => renameNode(node));
-  add("Locate", () => fitNode(node));
-  div();
-  if (node !== S.root) {
-    add("Duplicate", () => duplicateNode(node));
-    add("Delete objects", () => deleteNode(node), "danger");
+  // the right-click handler guarantees `node` is part of the selection, so a
+  // multi-selection (>1) routes Copy/Duplicate/Delete/Group through the selection
+  const multi = node !== S.root && parentOf(node) === S.context &&
+    S.selection.size > 1 && S.selection.has(node.id);
+  if (!multi) { // Rename/Locate act on one item — hide them for a multi-selection
+    add("Rename", () => startRename(node));
+    add("Locate", () => fitNode(node));
     div();
   }
-  if (node.type === "scene") {
+  if (node !== S.root) {
+    add("Copy", () => copySelection());
+    add("Duplicate", () => multi ? duplicateSelection() : duplicateNode(node));
+    add("Delete objects", () => multi ? deleteSelection() : deleteNode(node), "danger");
+    div();
+  }
+  if (multi) {
+    add("Group", () => groupSelection(node)); // new group takes this item's pose
+  } else if (node.type === "scene") {
     if (node !== S.root) add("Ungroup", () => ungroupNode(node));
+    if (clipKind()) add("Paste", () => pasteClipboard(node)); // paste into this group
     add("New object", () => addObjectIn(node));
     add("New group", () => addGroupIn(node));
   } else add("New group", () => wrapNodeInGroup(node));
@@ -493,9 +700,29 @@ function clearDropInd(): void {
   dropRow = null;
   dropInfo = null;
 }
+// the set being dragged when the grabbed row is part of a multi-selection (the
+// whole selection moves together), in tree order; null for a plain single drag
+function dragMovers(): Node[] | null {
+  const dn = dragId && findById(dragId);
+  if (
+    !dn || S.editObject || parentOf(dn) !== S.context ||
+    !S.selection.has(dn.id) || S.selection.size <= 1
+  ) return null;
+  return S.context.children.filter((c) => S.selection.has(c.id));
+}
 function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
   const dn = dragId && findById(dragId);
-  if (!dn || dn === node || isDescendant(dn, node)) {
+  if (!dn || dn === node) {
+    clearDropInd();
+    return;
+  }
+  // reject dropping onto/inside any node being moved (the whole selection when
+  // multi-dragging) — that would be a cycle or a silent partial move
+  const movers = dragMovers();
+  const blocked = movers
+    ? movers.some((m) => m === node || isDescendant(m, node))
+    : isDescendant(dn, node);
+  if (blocked) {
     clearDropInd();
     return;
   }
@@ -511,7 +738,9 @@ function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
     h = rect.height;
   const par = parentOf(node),
     idx = par ? par.children.indexOf(node) : 0;
-  if (y > h * 0.28 && y < h * 0.72) {
+  // object-onto-object wrap is a single-drag affordance; a multi-drag over an
+  // object's middle falls through to before/after instead
+  if (y > h * 0.28 && y < h * 0.72 && (node.type === "scene" || !movers)) {
     if (node.type === "scene") {
       dropInfo = { parent: node, index: node.children.length }; // nest inside the group
     } else dropInfo = { wrap: node }; // object onto object -> new group
@@ -527,7 +756,32 @@ function dropOver(ev: DragEvent, node: Node, row: HTMLElement): void {
 function doDrop(): void {
   const dn = dragId && findById(dragId);
   if (dn && dropInfo) {
-    if (dropInfo.wrap) wrapInGroup(dropInfo.wrap, dn);
+    // when the dragged row is part of a multi-selection, move the whole
+    // selection into the target (preserving order + each node's world pose).
+    // dropOver only ever yields a parent-based drop (never wrap) for a
+    // multi-drag, and rejects targets inside the moving set, so the loop below
+    // always moves every node cleanly.
+    const multi = dropInfo.parent ? dragMovers() : null;
+    if (multi) {
+      const target = dropInfo.parent!;
+      let at = dropInfo.index!, moved = false;
+      for (const m of multi) {
+        if (reparentNode(m, target, at)) {
+          at = target.children.indexOf(m) + 1; // keep the moved set contiguous + ordered
+          moved = true;
+        }
+      }
+      if (moved) {
+        S.collapsed.delete(target.id);
+        const p = findPath(target); // make the target the context so the rows stay selected
+        if (p) S.path = p;
+        S.editObject = null;
+        S.selection = new Set(multi.map((m) => m.id));
+        rebuild();
+        updateChrome();
+        save();
+      }
+    } else if (dropInfo.wrap) wrapInGroup(dropInfo.wrap, dn);
     else if (
       dropInfo.parent &&
       reparentNode(dn, dropInfo.parent, dropInfo.index!)
@@ -548,6 +802,16 @@ function doDrop(): void {
       ev.preventDefault();
       clearDropInd();
       dropInfo = { parent: S.root, index: S.root.children.length };
+      // show the same after-row insertion line under the last row, rather than a
+      // separate cue at the very bottom of the (panel-filling) tree. Exclude the
+      // dragged row so the cue never lands on the item being moved.
+      const rows = [...treeEl.querySelectorAll<HTMLElement>(".trow")]
+        .filter((r) => r.dataset.id !== dragId);
+      const last = rows[rows.length - 1];
+      if (last) {
+        last.classList.add("drop-after");
+        dropRow = last;
+      }
     }
   });
   treeEl.addEventListener("drop", (ev) => {
@@ -560,6 +824,10 @@ function doDrop(): void {
 
 window.addEventListener("keydown", (e) => {
   if ((e.target as HTMLElement).tagName === "INPUT") return;
+  // ignore shortcuts mid-gesture: undo/redo (and delete/clipboard) serialize the
+  // live model, which during a lifted-selection drag is in a transient
+  // content-carved-out state that must not be recorded or acted on
+  if (S.drag || S.painting) return;
   const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
   if (mod) {
     if (k === "z") {
@@ -573,14 +841,27 @@ window.addEventListener("keydown", (e) => {
       redo();
       return;
     }
-    // clipboard / duplicate — only outside voxel-edit mode
+    if (S.editObject) { // voxel-selection clipboard (the "select" tool)
+      if (k === "c") {
+        copySelection3d();
+        e.preventDefault();
+      } else if (k === "x") {
+        cutSelection3d();
+        e.preventDefault();
+      } else if (k === "v") {
+        pasteInEditor();
+        e.preventDefault();
+      }
+      return;
+    }
+    // clipboard / duplicate — scene-tree nodes
     const clip = {
       c: copySelection,
       x: cutSelection,
       v: pasteClipboard,
       d: duplicateSelection,
     }[k];
-    if (clip && !S.editObject) {
+    if (clip) {
       clip();
       e.preventDefault();
     }
@@ -607,10 +888,23 @@ window.addEventListener("keydown", (e) => {
       break;
     case "delete":
     case "backspace":
-      if (!S.editObject) {
-        e.preventDefault();
-        deleteSelection();
-      }
+      e.preventDefault();
+      if (S.editObject) deleteSelection3d();
+      else deleteSelection();
       break;
   }
 });
+
+// Paste into the open object as a voxel selection. Copied scene nodes are
+// flattened to voxels first, so an object/group from the tree pastes as voxels.
+// Pasting switches to the select tool so the result can be moved straight away.
+function pasteInEditor(): void {
+  const boxes: Box3[] = [];
+  if (clipKind() === "node") {
+    for (const n of getNodeClip()) nodeBoxes(n, n.pos, n.rot, boxes);
+  } else boxes.push(...getVoxClip());
+  if (!boxes.length) return;
+  S.tool = "select";
+  pasteVox(boxes);
+  updateChrome();
+}

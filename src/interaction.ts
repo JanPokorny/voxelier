@@ -33,29 +33,64 @@ import {
   editFill,
   eyedropColor,
   rebuild,
-  refreshOverlay,
+  selectionRender,
 } from "./render.ts";
 import { boxesOverlap, worldBox } from "./boxes.ts";
-import { childById, contextXform } from "./model.ts";
+import { childById, clone, contextXform } from "./model.ts";
 import { orbitView, panCamera } from "./camera.ts";
+import { pointerMeasure, renderMeasure } from "./measure.ts";
 import {
-  clearMeasure,
-  freezeMeasure,
-  measureActive,
-  pointerMeasure,
-  renderMeasure,
-} from "./measure.ts";
+  beginRotate,
+  captureSelection,
+  clearSelection,
+  dropSelection,
+  liftSelection,
+  rotateSelectionTo,
+  selectionHit,
+  translateSelection,
+} from "./select.ts";
 import { enterNode } from "./navigation.ts";
 import { rotateSelectionBy } from "./commands.ts";
-import { selectColor, updateChrome } from "./ui.ts";
+import {
+  recordRecent,
+  selectColor,
+  setSelAnchor,
+  toggleMeasure,
+  TOOL_ICON,
+  updateChrome,
+} from "./ui.ts";
 import { save } from "./persistence.ts";
-import type { Box3, Drag, Seg, Vec } from "./types.ts";
+import type { Box3, Drag, Node, Seg, Vec } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
-// sentinel start-x for non-click drags (middle-button pan): keeps moved() true so
-// the gesture is never finalised as a click in pointerup
-const NOT_A_CLICK = -1e9;
+
+// A small glyph that follows the pointer to show the active voxel tool while
+// editing an object (the native cursor stays for precision). Hidden in scene
+// mode and whenever the pointer leaves the canvas.
+const toolCursor = document.createElement("div");
+toolCursor.id = "toolcursor";
+toolCursor.style.display = "none";
+document.body.appendChild(toolCursor);
+function updateToolCursor(e: PointerEvent): void {
+  if (!S.editObject) {
+    toolCursor.style.display = "none";
+    return;
+  }
+  toolCursor.textContent = TOOL_ICON[S.tool];
+  toolCursor.style.left = e.clientX + "px";
+  toolCursor.style.top = e.clientY + "px";
+  toolCursor.style.display = "block";
+}
+
+// Refresh the floating dimension overlay. While measurement mode is on it reads
+// the runs through the cell under the pointer, in any mode and alongside any tool
+// — except the box brush, which already draws its own dimensions into liveMeas.
+function updateMeas(): void {
+  if (!S.measMode || S.painting) return;
+  if (S.drag && S.drag.mode === "box") return;
+  pointerMeasure();
+}
 
 // World-Y units per pixel of vertical pointer travel, for Shift height edits.
 // One screen pixel is `perPx` world units along the screen's vertical axis; world
@@ -163,11 +198,18 @@ function moveDragTo(e: PointerEvent): void {
   for (const id of S.selection) {
     for (const m of (S.childMeshes[id] || [])) {
       m.position.set(d.dx!, d.dy!, d.dz!);
+      // the shadow frustum is fitted to the static scene, so a mesh dragged out
+      // of it casts a clipped shadow that snaps in only on drop. Drop the moving
+      // object's shadow entirely during the drag; rebuild() restores it on commit.
+      m.castShadow = false;
     }
   }
   overlay.position.set(d.dx!, d.dy!, d.dz!);
 }
-function commitMove(): void {
+// Finalise a move. With `copy` (Ctrl held at release) the dragged delta is baked
+// into fresh clones placed at the new spot and the originals are left untouched
+// (their meshes snap back on rebuild); otherwise the selection itself moves.
+function commitMove(copy: boolean): void {
   const d = S.drag!,
     x = contextXform(),
     dL = rotY(
@@ -175,16 +217,30 @@ function commitMove(): void {
       -x.rot, // world delta -> context-local (inverse rotation)
     ),
     dy = Math.round(d.dy!);
-  for (const id of S.selection) {
-    const c = childById(id);
-    if (c) {
-      c.pos.x += dL.x;
-      c.pos.y += dy;
-      c.pos.z += dL.z;
+  if (copy) {
+    const dups: Node[] = [];
+    for (const id of S.selection) {
+      const c = childById(id);
+      if (!c) continue;
+      const dup = clone(c);
+      dup.pos = { x: c.pos.x + dL.x, y: c.pos.y + dy, z: c.pos.z + dL.z };
+      dups.push(dup);
+    }
+    S.context.children.push(...dups);
+    S.selection = new Set(dups.map((n) => n.id));
+  } else {
+    for (const id of S.selection) {
+      const c = childById(id);
+      if (c) {
+        c.pos.x += dL.x;
+        c.pos.y += dy;
+        c.pos.z += dL.z;
+      }
     }
   }
   overlay.position.set(0, 0, 0);
   rebuild();
+  updateChrome(); // refresh tree rows (copies add nodes) + group thumbnails
   save();
 }
 function rotDragTo(e: PointerEvent): void {
@@ -199,7 +255,13 @@ function rotDragTo(e: PointerEvent): void {
 
 function eyedrop(): void { // pick the draw colour from the voxel under the cursor (any object)
   const c = eyedropColor();
-  if (c != null) selectColor(c); // routes through the recent-colours list + chrome refresh
+  if (c == null) return;
+  // one-shot: return to the tool the eyedropper was invoked from (set in ui.ts)
+  if (S.eyedropReturn != null) {
+    S.tool = S.eyedropReturn;
+    S.eyedropReturn = null;
+  }
+  selectColor(c); // sets the draw colour + chrome refresh (recents track use, not picks)
 }
 
 function applyVoxel(): void { // bucket: flood-fill the connected same-colour region under the cursor
@@ -208,7 +270,8 @@ function applyVoxel(): void { // bucket: flood-fill the connected same-colour re
   if (!c) return;
   const k = key(c.x, c.y, c.z);
   if (k !== S.lastVox) {
-    editFill(c, S.selColor); // recolours the whole face-connected same-colour run
+    // recolours the whole face-connected same-colour run; record only on a real fill
+    if (editFill(c, S.selColor)) recordRecent(S.selColor);
     S.lastVox = k;
   }
   updateVoxHover(t);
@@ -343,8 +406,10 @@ function boxDragTo(e: PointerEvent): void {
 }
 function commitBox(): void {
   const r = boxRegion(S.drag!.box!);
-  if (S.tool === "add") editAdd(r, S.selColor);
-  else editErase(r);
+  if (S.tool === "add") {
+    editAdd(r, S.selColor);
+    recordRecent(S.selColor); // the colour was used to add — remember it
+  } else editErase(r);
   S.liveMeas = null;
   renderMeasure();
   updateChrome();
@@ -396,6 +461,68 @@ function renderBox(): void {
   renderMeasure();
 }
 
+// ---- select tool: grab/move/rotate the marquee selection ----
+// The content is lifted (carved out of the object) lazily, on the first actual
+// move/rotate, so a plain click on the selection neither edits nor records undo.
+function startSelMove(base: { x: number; y: number; sx: number; sy: number }): void {
+  const y0 = S.sel3d!.region.y0; // drag on the selection's floor plane
+  S.drag = {
+    ...base,
+    mode: "selmove",
+    start: localGroundCell(y0) ?? { x: 0, y: y0, z: 0 },
+    dx: 0,
+    dy: 0,
+    dz: 0,
+    shiftAnchorY: null,
+  };
+}
+function startSelRot(base: { x: number; y: number; sx: number; sy: number }): void {
+  S.drag = { ...base, mode: "selrot", steps: 0 };
+}
+function selMoveTo(e: PointerEvent): void {
+  const d = S.drag!;
+  let tx = d.dx!, ty = d.dy!, tz = d.dz!; // total delta from the drag start
+  if (e.shiftKey) { // vertical only (local Y == world Y under a Y-rotation)
+    if (d.shiftAnchorY == null) {
+      d.shiftAnchorY = e.clientY;
+      d.dyBase = ty;
+    }
+    ty = d.dyBase! + Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
+  } else { // slide on the start floor plane
+    d.shiftAnchorY = null;
+    const g = localGroundCell(d.start!.y);
+    if (g) {
+      tx = g.x - d.start!.x;
+      tz = g.z - d.start!.z;
+    }
+  }
+  if (tx !== d.dx! || ty !== d.dy! || tz !== d.dz!) {
+    if (!S.sel3d!.lifted) liftSelection(); // carve out on first movement
+    translateSelection(tx - d.dx!, ty - d.dy!, tz - d.dz!);
+    d.dx = tx;
+    d.dy = ty;
+    d.dz = tz;
+  }
+}
+function selRotTo(e: PointerEvent): void {
+  const d = S.drag!;
+  const steps = Math.round((d.sx - e.clientX) / 70);
+  if (steps === d.steps) return;
+  if (!S.sel3d!.lifted) { // carve out + snapshot the base orientation on first turn
+    liftSelection();
+    beginRotate();
+  }
+  d.steps = steps;
+  rotateSelectionTo(steps, e.shiftKey); // absolute turn from the base; Shift -> horizontal
+}
+// finalise a marquee drag: a real drag captures the box, a click just deselects
+function commitMarquee(didMove: boolean): void {
+  S.liveMeas = null; // drop the marquee wireframe/dimensions
+  renderMeasure();
+  if (didMove) captureSelection(boxRegion(S.drag!.box!));
+  updateChrome();
+}
+
 canvas.addEventListener("pointerdown", (e) => {
   // a gesture is single-button: ignore extra buttons pressed while one is held
   // (mouse buttons share a pointerId). Replacing S.drag/ignoring S.painting here
@@ -405,25 +532,34 @@ canvas.addEventListener("pointerdown", (e) => {
   setNdc(e.clientX, e.clientY);
   const base = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY };
 
-  if (measureActive()) { // left-click freezes, right-click clears; drags still navigate
-    if (e.button === 0) S.drag = { ...base, mode: "pan", meas: "freeze" };
-    else if (e.button === 2) S.drag = { ...base, mode: "orbit", meas: "clear" };
-    else if (e.button === 1) S.drag = { ...base, mode: "pan", sx: NOT_A_CLICK };
+  // middle button: pan the view, but a non-moved release toggles measurement mode
+  if (e.button === 1) {
+    S.drag = { ...base, mode: "pan", mid: true };
     return;
   }
   if (S.editObject) {
     if (e.button === 0) {
-      // add/erase drag out a box footprint; eyedropper picks a colour (one-shot);
-      // paint floods the cell under the cursor
-      if (S.tool === "add" || S.tool === "erase") startBox(base);
+      // view pans the camera (non-destructive, the default); select grabs/extends
+      // the marquee; add/erase drag out a box footprint; eyedropper picks a colour
+      // (one-shot); paint floods the hovered cell
+      if (S.tool === "view") S.drag = { ...base, mode: "pan" };
+      else if (S.tool === "select") {
+        if (S.sel3d && selectionHit()) startSelMove(base);
+        else {
+          clearSelection(); // clicking outside the selection deselects it
+          startBox(base); // drag out a fresh marquee
+        }
+      } else if (S.tool === "add" || S.tool === "erase") startBox(base);
       else if (S.tool === "eyedropper") eyedrop();
       else {
         S.painting = true;
         S.lastVox = null;
         applyVoxel();
       }
-    } else if (e.button === 2) S.drag = { ...base, mode: "orbit" };
-    else if (e.button === 1) S.drag = { ...base, mode: "pan" };
+    } else if (e.button === 2) {
+      if (S.tool === "select" && S.sel3d && selectionHit()) startSelRot(base);
+      else S.drag = { ...base, mode: "orbit" };
+    }
     return;
   }
 
@@ -445,42 +581,35 @@ canvas.addEventListener("pointerdown", (e) => {
   } else if (e.button === 2) {
     if (onSel) S.drag = { ...base, mode: "rotobj", steps: 0 };
     else S.drag = { ...base, mode: "orbit" };
-  } else if (e.button === 1) {
-    S.drag = { ...base, mode: "pan", sx: NOT_A_CLICK };
   }
 });
 
 canvas.addEventListener("pointermove", (e) => {
   setNdc(e.clientX, e.clientY);
-  if (measureActive()) {
-    dragPanOrbit(e);
-    pointerMeasure();
-    return;
-  }
   if (S.editObject && S.painting) {
     applyVoxel();
-    return;
-  }
-  if (!S.drag) {
-    if (S.editObject) updateVoxHover();
+  } else if (!S.drag) {
+    // the hover cube is only meaningful for the editing tools, not view/select
+    if (S.editObject && S.tool !== "select" && S.tool !== "view") updateVoxHover();
     else hoverVox.visible = false;
-    return;
+  } else if (!dragPanOrbit(e)) {
+    if (S.drag.mode === "move") moveDragTo(e);
+    else if (S.drag.mode === "rotobj") rotDragTo(e);
+    else if (S.drag.mode === "box") boxDragTo(e);
+    else if (S.drag.mode === "selmove") selMoveTo(e);
+    else if (S.drag.mode === "selrot") selRotTo(e);
   }
-  if (dragPanOrbit(e)) return;
-  if (S.drag.mode === "move") moveDragTo(e);
-  else if (S.drag.mode === "rotobj") rotDragTo(e);
-  else if (S.drag.mode === "box") boxDragTo(e);
+  updateMeas(); // floating dimensions, alongside whatever the active tool did
+  updateToolCursor(e); // the tool glyph that trails the pointer in edit mode
 });
 
 canvas.addEventListener("pointerup", (e) => {
   try {
     canvas.releasePointerCapture(e.pointerId);
   } catch (_) { /* not captured */ }
-  if (measureActive()) {
-    if (S.drag && !moved(e)) {
-      if (S.drag.meas === "freeze") freezeMeasure();
-      else if (S.drag.meas === "clear") clearMeasure();
-    }
+  // middle button: a click (no drag) toggles measurement mode; a drag just panned
+  if (S.drag && S.drag.mid) {
+    if (!moved(e)) toggleMeasure();
     S.drag = null;
     return;
   }
@@ -489,22 +618,39 @@ canvas.addEventListener("pointerup", (e) => {
       S.painting = false;
       updateChrome();
       save();
-    } else if (S.drag && S.drag.mode === "box") commitBox();
+    } else if (S.drag && S.drag.mode === "box") {
+      if (S.tool === "select") commitMarquee(moved(e));
+      else commitBox();
+    } else if (
+      S.drag && (S.drag.mode === "selmove" || S.drag.mode === "selrot")
+    ) {
+      dropSelection(); // stamp the moved/rotated content back into the object
+    }
     S.drag = null;
     return;
   }
   if (S.drag) {
     if (S.drag.mode === "pan" && !moved(e)) { // a click -> select / deselect
       const id = S.drag.clickId;
+      // no range in 3D, so Shift behaves like Ctrl here: add/remove a single item
+      const add = e.shiftKey || e.ctrlKey || e.metaKey;
+      const prevSel = new Set(S.selection);
       if (id) {
-        if (e.shiftKey) {
+        if (add) {
           S.selection.has(id) ? S.selection.delete(id) : S.selection.add(id);
         } else S.selection = new Set([id]);
-      } else if (!e.shiftKey) S.selection.clear();
-      refreshOverlay();
+        setSelAnchor(id); // pivot for a later Shift range-select in the tree
+      } else if (!add) {
+        S.selection.clear();
+        setSelAnchor(null);
+      }
+      selectionRender(prevSel); // re-mesh if a glass object's selection flipped
       updateChrome();
-    } else if (S.drag.mode === "move") commitMove();
-    else if (S.drag.mode === "rotobj" && S.drag.dirty) {
+    } else if (S.drag.mode === "move") {
+      // only copy on a real drag — a Ctrl+click without movement must not
+      // silently duplicate the object in place
+      commitMove(moved(e) && (e.ctrlKey || e.metaKey));
+    } else if (S.drag.mode === "rotobj" && S.drag.dirty) {
       updateChrome(); // tree thumbnails track the new pose
       save();
     }
@@ -517,6 +663,11 @@ canvas.addEventListener("pointerup", (e) => {
 canvas.addEventListener("pointercancel", () => {
   if (!S.drag && !S.painting) return;
   const painted = S.painting;
+  // a cancelled selection move/rotate has already carved its content out of the
+  // object (liftSelection); stamp it back so the model can't desync from the view
+  if (S.drag && (S.drag.mode === "selmove" || S.drag.mode === "selrot")) {
+    dropSelection();
+  }
   S.drag = null;
   S.painting = false;
   S.liveMeas = null; // drop any in-progress box-brush / measure wireframe
@@ -529,6 +680,11 @@ canvas.addEventListener("pointercancel", () => {
 });
 canvas.addEventListener("pointerleave", () => {
   hoverVox.visible = false;
+  toolCursor.style.display = "none"; // the trailing tool glyph belongs over the canvas
+  if (S.measMode && !S.drag && !S.painting && S.liveMeas) {
+    S.liveMeas = null; // drop the floating dimensions once the pointer leaves
+    renderMeasure();
+  }
 });
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("wheel", (e) => {

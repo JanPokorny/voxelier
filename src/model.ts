@@ -6,6 +6,7 @@ import { addv, pathXform, rotY, uid } from "./math.ts";
 import { growBounds, worldBox } from "./boxes.ts";
 import type {
   Box,
+  Box3,
   Node,
   ObjectNode,
   Rot,
@@ -134,6 +135,19 @@ export const emptyBox = (): Box => ({
 // still the inside-out sentinel — no real cell has grown it (max < min on every
 // axis, so the x check suffices). Centralises the emptyBox emptiness invariant.
 export const boxEmpty = (b: Box): boolean => b.max.x < b.min.x;
+// Flatten a node subtree's object boxes into `out` under an accumulated
+// transform. Pass a node's own pos/rot to get its boxes in the parent frame, or
+// identity to get them in the node's own frame (e.g. for a thumbnail).
+export function nodeBoxes(node: Node, off: Vec, rot: Rot, out: Box3[]): Box3[] {
+  if (node.type === "object") {
+    for (const b of node.boxes) out.push(worldBox(b, rot, off));
+  } else {
+    for (const ch of node.children) {
+      nodeBoxes(ch, addv(off, rotY(ch.pos, rot)), (rot + ch.rot) & 3, out);
+    }
+  }
+  return out;
+}
 // world AABB of a node given an accumulated transform
 export function nodeBox(node: Node, off: Vec, rot: Rot, box: Box): Box {
   if (node.type === "object") {

@@ -1,5 +1,6 @@
-// SketchUp-style floating dimensions: hover reads filled/empty runs along all
-// three axes through a voxel; left-click freezes a reading, right-click clears.
+// SketchUp-style floating dimensions: a global toggle (S.measMode) that, while
+// on, reads the filled/empty runs along all three axes through the voxel under the
+// pointer — in any mode and alongside any tool. Hover-only: there is no freeze.
 import * as THREE from "three";
 import { S } from "./state.ts";
 import { _mv, camera, measLines, viewport } from "./scene-env.ts";
@@ -11,20 +12,15 @@ import type { Box3, MeasField, MeasLabel, Seg, Vec } from "./types.ts";
 
 const M_FILL = new THREE.Color(0xa7c4bc), M_EMPTY = new THREE.Color(0x5c677d);
 // Measurement state owned solely by this module: the memoised occupancy field
-// (invalidated via invalidateField()), the frozen dimension readings, and the
-// live DOM label elements with their world anchors.
+// (invalidated via invalidateField()) and the live DOM label elements with their
+// world anchors.
 let fieldCache: MeasField | null = null;
-let frozenMeas: Seg[][] = [];
 let measLabels: MeasLabel[] = [];
-// measure is a tool while editing an object, a standalone mode otherwise
-export const measureActive = (): boolean =>
-  S.editObject ? S.tool === "measure" : S.measMode;
 export const invalidateField = (): void => {
   fieldCache = null;
 };
 export function clearMeasure(): void {
   S.liveMeas = null;
-  frozenMeas = [];
   renderMeasure();
 }
 
@@ -126,30 +122,20 @@ export function pointerMeasure(): void {
   S.liveMeas = c ? measureAt(c) : null;
   renderMeasure();
 }
-export function freezeMeasure(): void {
-  if (S.liveMeas && S.liveMeas.length) {
-    frozenMeas.push(S.liveMeas);
-    renderMeasure();
-  }
-}
 
 export function renderMeasure(): void {
   const cont = document.getElementById("measure")!;
   cont.innerHTML = "";
   measLabels = [];
-  const sets: { s: Seg[]; fz: boolean }[] = [];
-  if (S.liveMeas) sets.push({ s: S.liveMeas, fz: false });
-  for (const f of frozenMeas) sets.push({ s: f, fz: true });
   const pos: number[] = [], colr: number[] = [];
-  for (const set of sets) {
-    for (const seg of set.s) {
+  if (S.liveMeas) {
+    for (const seg of S.liveMeas) {
       const c = seg.filled ? M_FILL : M_EMPTY;
       pos.push(seg.a.x, seg.a.y, seg.a.z, seg.b.x, seg.b.y, seg.b.z);
       colr.push(c.r, c.g, c.b, c.r, c.g, c.b);
       if (seg.nolabel) continue;
       const el = document.createElement("div");
-      el.className = "mlab" + (seg.filled ? "" : " empty") +
-        (set.fz ? " frozen" : "");
+      el.className = "mlab" + (seg.filled ? "" : " empty");
       el.textContent = String(seg.len);
       cont.appendChild(el);
       measLabels.push({ el, w: seg.mid });

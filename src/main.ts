@@ -97,6 +97,7 @@ function start(): void {
   if (!load()) S.root = seed();
   S.path = [S.root];
   S.editObject = null;
+  S.sel3d = null;
   S.selection.clear();
   rebuild();
   updateChrome();

@@ -84,6 +84,11 @@ button.active {
   border-radius: 14px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
+/* the measurement group is pinned to the bottom of the rail whether or not the
+   voxel-tool group is present above it */
+.toolgroup.bottom {
+  margin-top: auto;
+}
 .tool {
   width: 50px;
   min-height: 48px;
@@ -134,6 +139,16 @@ button.active {
   overflow: hidden;
   pointer-events: none;
 }
+/* glyph trailing the pointer to show the active voxel tool (edit mode) */
+#toolcursor {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  transform: translate(10px, 8px);
+  font-size: 18px;
+  line-height: 1;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+}
 .mlab {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -149,17 +164,15 @@ button.active {
 .mlab.empty {
   color: var(--ink-dim);
 }
-.mlab.frozen {
-  border-color: var(--accent);
-  color: var(--accent);
-}
 
 #side {
   grid-area: right;
   background: var(--panel);
   border-left: 1px solid var(--line);
   padding: 12px;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 h3 {
   margin: 0 0 8px;
@@ -169,11 +182,31 @@ h3 {
   color: var(--ink-dim);
   font-weight: 600;
 }
+/* Save / Load row at the top of the scene panel (was the toolbar's import/export) */
+#iobar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+#iobar button {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  padding: 7px 6px;
+  font-size: 12px;
+}
+#iobar button:hover {
+  background: #2b3140;
+  border-color: #3a4252;
+}
+/* fill the rest of the panel so the empty space below the rows is still part of
+   the (droppable) tree — a drop there reorders to the end of the list */
 #tree {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  max-height: 46vh;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 .trow {
@@ -229,6 +262,19 @@ h3 {
 .trow.dim .nm {
   color: var(--ink-dim);
 }
+/* inline rename field — sits where the .nm span was, filling the row */
+.trow .nminput {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  outline: none;
+}
 .trow.root .nm {
   font-weight: 600;
   color: var(--ink);
@@ -282,13 +328,16 @@ h3 {
   outline-offset: -2px;
   cursor: pointer;
 }
+/* a column flyout: one row of recent colours, then the H/S/V sliders with the
+   eyedropper alongside them */
 .colorflyout {
   position: absolute;
   left: 100%;
   top: 0;
   display: none;
-  gap: 6px;
-  padding: 6px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
   margin-left: 8px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -307,14 +356,74 @@ h3 {
 .colorctl:hover .colorflyout {
   display: flex;
 }
-.sw {
-  width: 28px;
-  height: 28px;
+.swrow {
+  display: flex;
+  gap: 6px;
+}
+.sliderrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sliderline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sliderline .lbl {
+  width: 9px;
+  font-size: 10px;
+  color: var(--ink-dim);
+  text-align: center;
+}
+.csl {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 150px;
+  height: 12px;
+  margin: 0;
   border-radius: 6px;
+  cursor: pointer;
+  outline: 1px solid rgba(0, 0, 0, 0.35);
+  outline-offset: -1px;
+}
+.csl::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--ink);
+  border: 1px solid var(--bg);
+  cursor: pointer;
+}
+.csl::-moz-range-thumb {
+  width: 10px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--ink);
+  border: 1px solid var(--bg);
+  cursor: pointer;
+}
+.sw {
+  width: 50px; /* default (the eyedropper button) matches a tool icon */
+  height: 50px;
+  border-radius: 8px;
   cursor: pointer;
   border: 2px solid transparent;
   outline: 1px solid rgba(0, 0, 0, 0.35);
   outline-offset: -1px;
+}
+/* recent-colour swatches are small squares (six of them, under the sliders) */
+.swrow .sw {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
 }
 .sw.active {
   border-color: var(--ink);
@@ -327,7 +436,7 @@ h3 {
   background: var(--panel-2);
   outline-color: var(--line);
   color: var(--ink-dim);
-  font-size: 15px;
+  font-size: 20px;
 }
 .sw.more:hover {
   color: var(--ink);

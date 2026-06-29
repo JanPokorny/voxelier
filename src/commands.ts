@@ -7,6 +7,7 @@ import {
   clone,
   contextXform,
   emptyBox,
+  findPath,
   isDescendant,
   newObject,
   newScene,
@@ -20,6 +21,7 @@ import { rebuild } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { enterNode, selectNode } from "./navigation.ts";
 import { save } from "./persistence.ts";
+import { clipKind, getNodeClip, getVoxClip, setNodeClip } from "./clipboard.ts";
 import type { Node, SceneNode } from "./types.ts";
 
 // re-mesh the scene, refresh the chrome and persist — the tail of most edits
@@ -37,17 +39,7 @@ export function cycleVis(node: Node): void {
   node.vis = VIS_CYCLE[node.vis];
   commit();
 }
-export function renameNode(node: Node): void {
-  const n = prompt("Name", node.name || "");
-  if (n != null) {
-    node.name = n.trim();
-    updateChrome();
-    save();
-  }
-}
 
-// detached node clones for copy/paste — private to this module's clipboard flow
-let clipboard: Node[] = [];
 // selected context children, resolved to live nodes (dropping stale ids)
 const selectedNodes = (): Node[] =>
   [...S.selection].map((id) => childById(id)).filter((n): n is Node => !!n);
@@ -84,18 +76,58 @@ export function duplicateSelection(): void {
   commit();
 }
 export function copySelection(): void {
-  clipboard = selectedNodes().map(clone);
+  const ns = selectedNodes().map(clone);
+  if (ns.length) setNodeClip(ns); // copying nothing is a no-op, not a clipboard clear
 }
 export function cutSelection(): void {
   copySelection();
   deleteSelection();
 }
-export function pasteClipboard(): void {
-  if (!clipboard.length) return;
-  const ns = clipboard.map(cloneShift);
-  S.context.children.push(...ns);
+// Paste into the scene. If voxel data was the last thing copied (from the object
+// editor's select tool), it lands as a fresh object containing those voxels;
+// otherwise the copied nodes are pasted as siblings.
+// `into` is the target group (defaults to the current context, e.g. for Ctrl+V);
+// the tree menu passes the right-clicked group so a paste lands inside it.
+export function pasteClipboard(into: SceneNode = S.context): void {
+  if (clipKind() === "vox") {
+    pasteVoxAsObject(into);
+    return;
+  }
+  const ns = getNodeClip().map(cloneShift);
+  if (!ns.length) return;
+  into.children.push(...ns);
+  enterPasteTarget(into);
   S.selection = new Set(ns.map((d) => d.id));
   commit();
+}
+// Create a new object from the voxel clipboard (normalised, min at the origin)
+// at the camera focus, and select it.
+function pasteVoxAsObject(into: SceneNode): void {
+  const v = getVoxClip();
+  if (!v.length) return;
+  const o = newObject();
+  o.boxes = v.map((b) => ({ ...b }));
+  // place at the camera focus, converted from world to the (possibly
+  // transformed) local frame of the group the new object lives in
+  const x = worldXform(into);
+  const l = rotY(
+    { x: goal.target.x - x.off.x, y: 0, z: goal.target.z - x.off.z },
+    -x.rot,
+  );
+  o.pos = { x: Math.round(l.x), y: 0, z: Math.round(l.z) };
+  into.children.push(o);
+  enterPasteTarget(into);
+  S.selection = new Set([o.id]);
+  commit();
+}
+// reveal the paste target and, if it isn't the current context, make it the
+// context so the freshly pasted (now context-child) nodes are selectable there
+function enterPasteTarget(into: SceneNode): void {
+  S.collapsed.delete(into.id);
+  if (into !== S.context) {
+    S.path = findPath(into) ?? S.path;
+    S.editObject = null;
+  }
 }
 
 // ---- tree reparenting (drag & drop) ----
@@ -158,6 +190,22 @@ export function wrapNodeInGroup(node: Node): void {
   S.collapsed.delete(g.id);
   selectNode(g);
   save();
+}
+// Group the whole selection into one fresh group that takes `anchor`'s slot and
+// pose (the right-clicked item), then reparent each selected sibling into it with
+// its world pose preserved. The anchor must itself be part of the selection.
+export function groupSelection(anchor: Node): void {
+  const nodes = selectedNodes();
+  if (nodes.length < 2) return; // a single node groups via wrapNodeInGroup
+  const g = newScene("Group");
+  g.pos = { ...anchor.pos };
+  g.rot = anchor.rot;
+  const idx = S.context.children.indexOf(anchor);
+  S.context.children.splice(Math.max(0, idx), 0, g); // g must be in the tree before reparenting
+  for (const n of nodes) reparentNode(n, g, g.children.length);
+  S.collapsed.delete(g.id);
+  S.selection = new Set([g.id]);
+  commit();
 }
 
 // ---- right-click (context-menu) actions on a tree node ----

@@ -92,6 +92,7 @@ function disposeMeshes(): void {
     }
   }
   meshes = [];
+  disposeSelWire();
   editGroup.clear();
   if (editRemesh) {
     cancelAnimationFrame(editRemesh);
@@ -105,6 +106,16 @@ function disposeMeshes(): void {
 // not document state, so it lives here rather than in the shared S object.
 let editMesh: THREE.Mesh | null = null;
 let editRemesh = 0; // pending requestAnimationFrame id, 0 when none
+// the voxel-selection box wireframe (object-local, under editGroup so it inherits
+// the edit pose). Rebuilt by buildEditMesh alongside the surface mesh.
+let selWire: THREE.LineSegments | null = null;
+function disposeSelWire(): void {
+  if (!selWire) return;
+  editGroup.remove(selWire);
+  selWire.geometry.dispose();
+  (selWire.material as THREE.Material).dispose();
+  selWire = null;
+}
 
 // Greedy box-face mesher: one merged quad per exposed face rectangle, so cost is
 // O(boxes), not O(surface cells) — a 1000³ box is six quads, not six million.
@@ -397,7 +408,13 @@ function buildEditMesh(): void {
     const i = meshes.indexOf(editMesh);
     if (i >= 0) meshes.splice(i, 1);
   }
-  const g = boxFaceGeo(S.editObject!.boxes, col, true);
+  // mesh the object's voxels, plus a lifted (floating) selection's content so it
+  // stays visible while it is dragged/rotated out of the object
+  const sel = S.sel3d;
+  const meshBoxes = sel && sel.lifted
+    ? S.editObject!.boxes.concat(sel.boxes)
+    : S.editObject!.boxes;
+  const g = boxFaceGeo(meshBoxes, col, true);
   editMesh = g ? new THREE.Mesh(g, matSurf) : null;
   if (editMesh) {
     editMesh.castShadow = editMesh.receiveShadow = true;
@@ -405,8 +422,24 @@ function buildEditMesh(): void {
     meshes.push(editMesh);
   }
   S.pickMeshes = editMesh ? [editMesh] : [];
+  if (sel) buildSelWire(sel.region);
+  else disposeSelWire();
 }
-function scheduleEditRemesh(): void {
+// the selection marquee as a box wireframe in object-local space
+function buildSelWire(r: Region): void {
+  disposeSelWire();
+  const bg = new THREE.BoxGeometry(r.x1 - r.x0, r.y1 - r.y0, r.z1 - r.z0);
+  const w = new THREE.LineSegments(
+    new THREE.EdgesGeometry(bg),
+    new THREE.LineBasicMaterial({ color: 0xffd479, depthTest: false }),
+  );
+  bg.dispose();
+  w.position.set((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, (r.z0 + r.z1) / 2);
+  w.renderOrder = 1000;
+  editGroup.add(w);
+  selWire = w;
+}
+export function scheduleEditRemesh(): void {
   if (editRemesh) return;
   editRemesh = requestAnimationFrame(() => {
     editRemesh = 0;
@@ -429,12 +462,23 @@ export function editErase(r: Region): void {
   S.editObject!.boxes = eraseBox(S.editObject!.boxes, r);
   afterEdit();
 }
+// Lay a whole box list (each with its own colour) onto the edited object — the
+// paste/drop side of the selection tool.
+export function editStamp(boxes: Box3[]): void {
+  let bs = S.editObject!.boxes;
+  for (const b of boxes) bs = addBox(bs, b, b.c);
+  S.editObject!.boxes = bs;
+  afterEdit();
+}
 // Flood-fill the connected same-colour region containing `cell` with colour `c`.
-export function editFill(cell: Vec, c: number): void {
+// Returns whether anything actually changed (false for an empty seed cell or a
+// region already that colour), so callers can skip side effects on a no-op.
+export function editFill(cell: Vec, c: number): boolean {
   const next = fillBox(S.editObject!.boxes, cell.x, cell.y, cell.z, c);
-  if (!next) return; // empty seed cell or already that colour — nothing to do
+  if (!next) return false; // empty seed cell or already that colour — nothing to do
   S.editObject!.boxes = next;
   afterEdit();
+  return true;
 }
 // Eyedropper: the colour of the voxel under the pointer, picking from ANY visible
 // solid (the edited object or other scene objects), or null when over empty space.
@@ -472,11 +516,30 @@ export function eyedropColor(): number | null {
   return result;
 }
 
+// context-child owner ids that render as glass (by visibility, independent of
+// selection), refreshed every scene-mode rebuild. selectionRender() uses it to
+// decide whether a selection change needs a re-mesh (a selected glass object is
+// drawn solid) or just a cheap overlay refresh.
+const glassOwners = new Set<string>();
+// Reflect a selection change: re-mesh only when a glass owner's selected-state
+// flipped (so it switches between solid and glass); otherwise just redraw the
+// selection outlines. `prevSel` is the selection set before the change.
+export function selectionRender(prevSel: Set<string>): void {
+  for (const id of glassOwners) {
+    if (prevSel.has(id) !== S.selection.has(id)) {
+      rebuild();
+      return;
+    }
+  }
+  refreshOverlay();
+}
+
 export function rebuild(): void {
   disposeMeshes();
   S.pickMeshes = [];
   S.childMeshes = {};
   S.childBox = {};
+  glassOwners.clear();
   S.voxVer++;
   invalidateField();
   const O = { x: 0, y: 0, z: 0 };
@@ -508,7 +571,12 @@ export function rebuild(): void {
       const wb = worldBoxesInto(n, off, rot, []);
       growBounds(wb, sceneBox);
       if (owner) {
-        const m = tr ? gT : gE, arr = m.get(owner);
+        if (tr) glassOwners.add(owner); // inherently transparent (selection-independent)
+        // a selected glass object renders solid so it stays pickable and its
+        // meshes are tracked (childMeshes) — otherwise it can't be clicked and
+        // doesn't follow the pointer while being dragged
+        const solid = !tr || S.selection.has(owner);
+        const m = solid ? gE : gT, arr = m.get(owner);
         if (arr) arr.push(...wb);
         else m.set(owner, wb);
         growBounds(wb, S.childBox[owner] || (S.childBox[owner] = emptyBox()));
