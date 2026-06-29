@@ -40,12 +40,8 @@ export function cycleVis(node: Node): void {
 // selected context children, resolved to live nodes (dropping stale ids)
 const selectedNodes = (): Node[] =>
   [...S.selection].map((id) => childById(id)).filter((n): n is Node => !!n);
-// a clone nudged +5 on x/z, so a duplicate/paste lands visibly offset
-const cloneShift = (n: Node): Node => {
-  const d = clone(n);
-  d.pos = { x: n.pos.x + 5, y: n.pos.y, z: n.pos.z + 5 };
-  return d;
-};
+// clone keeping the original pose, so a duplicate/paste lands exactly on top of
+// its source (the copy becomes the selection, ready to be dragged off)
 
 // add a fresh empty object at the camera focus into `parent`, reveal it, enter it
 const spawnObject = (parent: SceneNode, fit: boolean): void => {
@@ -66,7 +62,7 @@ export function deleteSelection(): void {
   commit();
 }
 export function duplicateSelection(): void {
-  const dups = selectedNodes().map(cloneShift);
+  const dups = selectedNodes().map(clone);
   if (!dups.length) return;
   S.context.children.push(...dups);
   S.selection = new Set(dups.map((d) => d.id));
@@ -90,7 +86,7 @@ export function pasteClipboard(into: SceneNode = S.context): void {
     pasteVoxAsObject(into);
     return;
   }
-  const ns = getNodeClip().map(cloneShift);
+  const ns = getNodeClip().map(clone);
   if (!ns.length) return;
   into.children.push(...ns);
   enterPasteTarget(into);
@@ -209,7 +205,7 @@ export function groupSelection(anchor: Node): void {
 export function duplicateNode(node: Node): void {
   const par = parentOf(node);
   if (!par) return;
-  const d = cloneShift(node);
+  const d = clone(node);
   par.children.splice(par.children.indexOf(node) + 1, 0, d);
   selectNode(d);
   save();
