@@ -97,8 +97,9 @@ export type Drag = {
   start?: Vec | null;
   steps?: number;
   dirty?: boolean; // rotobj: a rotation was applied during the drag (commit even if net steps == 0)
-  fine?: boolean; // rotobj: Alt fine-rotation (15° three-shear) mode engaged
-  deg?: number; // rotobj fine mode: the angle (°) currently baked from the snapshot
+  fine?: boolean; // rotobj: baked-rotation mode engaged (Alt = 15° steps, Shift = other axis)
+  deg?: number; // rotobj baked mode: the angle (°) currently baked from the snapshot
+  axis?: number; // rotobj baked mode: rotation axis (0=X, 1=Y, 2=Z)
   clickId?: string | null;
   // in-progress box-brush footprint, oriented to the face the drag began on. `s`
   // is the start cell; the footprint lies in the plane perpendicular to axis `na`

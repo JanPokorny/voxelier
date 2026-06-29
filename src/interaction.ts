@@ -247,24 +247,37 @@ function commitMove(copy: boolean): void {
   updateChrome(); // refresh tree rows (copies add nodes) + group thumbnails
   save();
 }
-const FINE_DEG_PER_PX = 0.5; // Alt fine-rotation: pointer travel -> angle
+// the world horizontal axis (X or Z) closest to screen-right — the one a Shift
+// rotation tips the whole selection about
+function sceneHorizAxis(): number {
+  const m = camera.matrixWorld.elements; // column 0 = camera right
+  return Math.abs(m[0]) >= Math.abs(m[2]) ? 0 : 2;
+}
 function rotDragTo(e: PointerEvent): void {
   const d = S.drag!;
-  if (e.altKey) { // Alt: fine 15°-step rotation, re-voxelised from the original via three shears
-    if (!d.fine) { // entering fine mode — snapshot, and measure the angle from here
+  // Alt and/or Shift leave plain 90°-Y snapping for a baked rotation: the model
+  // only stores Y poses, so a finer angle (Alt) or a horizontal axis (Shift) is
+  // re-voxelised. The whole selection turns rigidly about one shared pivot.
+  if (e.altKey || e.shiftKey) {
+    const axis = e.shiftKey ? sceneHorizAxis() : 1; // Shift -> tip about a horizontal axis
+    if (!d.fine || d.axis !== axis) { // (re)enter baked mode, or the tip axis changed
+      if (d.fine) endFineRotate(); // keep the baked result so far, then re-snapshot
       beginFineRotate();
       d.fine = true;
+      d.axis = axis;
       d.sx = e.clientX;
       d.deg = 0;
     }
-    const deg = Math.round((d.sx - e.clientX) * FINE_DEG_PER_PX / 15) * 15;
+    const step = e.altKey ? 15 : 90; // Alt refines the increment; Shift alone snaps to 90°
+    const pxPerStep = e.altKey ? 25 : 70;
+    const deg = Math.round((d.sx - e.clientX) / pxPerStep) * step;
     if (deg !== d.deg) {
-      fineRotateSelectionTo(deg);
+      fineRotateSelectionTo(deg, axis);
       d.deg = deg;
       d.dirty = true;
     }
-  } else { // 90°-snap rotation about the selection centre
-    if (d.fine) { // leaving fine mode — keep the baked result, restart the 90° count here
+  } else { // 90°-snap rotation about the selection centre (rigid, no baking)
+    if (d.fine) { // leaving baked mode — keep the result, restart the 90° count here
       endFineRotate();
       d.fine = false;
       d.sx = e.clientX;

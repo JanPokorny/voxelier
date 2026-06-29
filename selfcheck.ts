@@ -9,7 +9,7 @@ import { assert } from "@std/assert";
 import type { Box3, Region, Vec } from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
 import { addBox, buildIndex, eraseBox, fillBox } from "./src/boxes.ts";
-import { shearRotateY } from "./src/shear.ts";
+import { rigidRotateWorld } from "./src/shear.ts";
 
 const toW = (cell: Vec, off: Vec, rot: number): Vec =>
   addv(rotY(cell, rot), off); // local -> world (locToW)
@@ -240,6 +240,22 @@ Deno.test("shear rotation is a hole-free, count-preserving bijection", () => {
     ],
     [{ x0: -3, y0: 0, z0: -2, x1: 2, y1: 3, z1: 4, c: 5 }], // negative coords
   ];
+  // rotate about Y through the shape's (rounded) XZ centre, identity localise —
+  // the rigid-rotation core as the editor drives it for a single object
+  const rotY90 = (bs: Box3[], deg: number): Box3[] => {
+    let mnx = Infinity, mnz = Infinity, mxx = -Infinity, mxz = -Infinity;
+    for (const b of bs) {
+      mnx = Math.min(mnx, b.x0);
+      mnz = Math.min(mnz, b.z0);
+      mxx = Math.max(mxx, b.x1 - 1);
+      mxz = Math.max(mxz, b.z1 - 1);
+    }
+    return rigidRotateWorld(bs, deg, 1, (mnx + mxx) / 2, (mnz + mxz) / 2, (x, y, z) => ({
+      x,
+      y,
+      z,
+    }));
+  };
   // normalised (translation-independent) cell+colour signature of a box set
   const sig = (bs: Box3[]): Set<string> => {
     let mnx = Infinity, mny = Infinity, mnz = Infinity;
@@ -258,12 +274,12 @@ Deno.test("shear rotation is a hole-free, count-preserving bijection", () => {
   for (const sh of shapes) {
     const base = count(sh);
     for (let deg = 0; deg < 360; deg += 15) {
-      const r = shearRotateY(sh, deg);
+      const r = rotY90(sh, deg);
       materialize(r, `shear ${deg}°`); // asserts disjoint
       assert(count(r) === base, `count drift at ${deg}° (${count(r)} != ${base})`);
     }
     for (const q of [1, 2, 3]) { // quarter-turns == exact rotY
-      const got = sig(shearRotateY(sh, q * 90));
+      const got = sig(rotY90(sh, q * 90));
       const exact: Box3[] = sh.map((b) => {
         const a = rotY({ x: b.x0, y: b.y0, z: b.z0 }, q);
         const d = rotY({ x: b.x1 - 1, y: b.y1 - 1, z: b.z1 - 1 }, q);

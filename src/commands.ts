@@ -3,6 +3,7 @@
 import { S } from "./state.ts";
 import { addv, rndSym, rotY, xcompose, xinvert } from "./math.ts";
 import {
+  boxEmpty,
   childById,
   clone,
   contextXform,
@@ -16,14 +17,15 @@ import {
   VIS_CYCLE,
   worldXform,
 } from "./model.ts";
+import { growBounds, worldBox } from "./boxes.ts";
 import { goal } from "./scene-env.ts";
 import { rebuild } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { enterNode, selectNode } from "./navigation.ts";
 import { save } from "./persistence.ts";
 import { clipKind, getNodeClip, getVoxClip, setNodeClip } from "./clipboard.ts";
-import { shearRotateY } from "./shear.ts";
-import type { Box3, Node, SceneNode } from "./types.ts";
+import { rigidRotateWorld } from "./shear.ts";
+import type { Box3, Node, ObjectNode, Rot, SceneNode, Vec } from "./types.ts";
 
 // re-mesh the scene, refresh the chrome and persist — the tail of most edits
 const commit = (): void => {
@@ -297,23 +299,58 @@ export function rotateSelection(): void {
   }
 }
 
-// ---- fine (Alt) rotation: bake an arbitrary Y angle into each selected
-// object's voxels via the three-shear algorithm. Always rotates the ORIGINAL
-// snapshot by the absolute angle (no compounding round-off), so a drag can swing
-// freely back and forth before being committed on release. ----
-let fineBase: Map<string, Box3[]> | null = null;
+// ---- baked rotation (Alt = 15° steps, Shift = a horizontal axis): rotate the
+// whole selection as one rigid unit about a shared pivot, baking the angle into
+// each object's voxels via the three-shear algorithm. Since a single shared
+// pivot turns every leaf object together, the relative arrangement is preserved
+// and no piece newly intersects another. The ORIGINAL voxels are snapshotted and
+// re-rotated by the absolute angle each step (no compounding round-off), so a
+// drag can swing freely back and forth before being committed on release. ----
+type LeafSnap = { node: ObjectNode; boxes: Box3[]; off: Vec; rot: Rot };
+let fineBase: { leaves: LeafSnap[]; piv: Vec } | null = null;
+
+// every object at or under `node` (a direct selection may be a group)
+const collectObjects = (node: Node, out: ObjectNode[]): void => {
+  if (node.type === "object") out.push(node);
+  else for (const ch of node.children) collectObjects(ch, out);
+};
 export function beginFineRotate(): void {
-  fineBase = new Map();
+  const leaves: LeafSnap[] = [];
+  const seen = new Set<ObjectNode>();
+  const all = emptyBox(); // combined world AABB -> the shared pivot
   for (const id of S.selection) {
     const ch = childById(id);
-    if (ch && ch.type === "object") fineBase.set(id, ch.boxes.map((b) => ({ ...b })));
+    if (!ch) continue;
+    const objs: ObjectNode[] = [];
+    collectObjects(ch, objs);
+    for (const o of objs) {
+      if (seen.has(o)) continue; // a node selected both directly and via a group
+      seen.add(o);
+      const x = worldXform(o);
+      const wb = o.boxes.map((b) => worldBox(b, x.rot, x.off));
+      leaves.push({ node: o, boxes: o.boxes.map((b) => ({ ...b })), off: x.off, rot: x.rot });
+      growBounds(wb, all);
+    }
   }
+  const piv = boxEmpty(all) ? { x: 0, y: 0, z: 0 } : {
+    x: (all.min.x + all.max.x) / 2,
+    y: (all.min.y + all.max.y) / 2,
+    z: (all.min.z + all.max.z) / 2,
+  };
+  fineBase = { leaves, piv };
 }
-export function fineRotateSelectionTo(deg: number): void {
-  if (!fineBase || !fineBase.size) return;
-  for (const [id, base] of fineBase) {
-    const ch = childById(id);
-    if (ch && ch.type === "object") ch.boxes = shearRotateY(base, deg);
+// rotate the snapshot by `deg` about world `axis` (0=X,1=Y,2=Z) through the pivot
+export function fineRotateSelectionTo(deg: number, axis: number): void {
+  if (!fineBase || !fineBase.leaves.length) return;
+  const p = fineBase.piv;
+  // the two in-plane pivot coords for this rotation axis
+  const [pu, pv] = axis === 0 ? [p.y, p.z] : axis === 1 ? [p.x, p.z] : [p.x, p.y];
+  for (const lf of fineBase.leaves) {
+    const wb = lf.boxes.map((b) => worldBox(b, lf.rot, lf.off));
+    // rotate in world, then map back through the object's own (unchanged) pose,
+    // so its pos/rot stay put and the turn lives entirely in the baked voxels
+    lf.node.boxes = rigidRotateWorld(wb, deg, axis, pu, pv, (x, y, z) =>
+      rotY({ x: x - lf.off.x, y: y - lf.off.y, z: z - lf.off.z }, -lf.rot));
   }
   rebuild();
 }

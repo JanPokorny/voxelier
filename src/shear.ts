@@ -1,19 +1,28 @@
-// Arbitrary-angle voxel rotation about the Y axis by the three-shear (Paeth)
-// algorithm. The document model only stores 90° poses (Rot), so a finer angle is
-// baked into the voxels themselves: explode the box list to cells, rotate the
-// cell grid, then re-pack the result into boxes.
+// Arbitrary-angle voxel rotation by the three-shear (Paeth) algorithm. The
+// document model only stores 90° Y poses (Rot), so any finer angle — or any
+// rotation about a horizontal axis — is baked into the voxels themselves:
+// explode the box list to cells, rotate the cell grid, then re-pack into boxes.
 //
 // Paeth rotation decomposes a rotation by θ into three shears
-//   x -= round(z·tan(θ/2));  z += round(x·sin θ);  x -= round(z·tan(θ/2))
+//   u -= round(v·tan(θ/2));  v += round(u·sin θ);  u -= round(v·tan(θ/2))
 // each shifting whole rows/columns by an integer that depends only on the
 // perpendicular axis. Every shear is therefore a bijection of the cell grid, so
-// the rotation never drops or doubles a voxel and leaves no holes — unlike a
-// direct round-the-coordinates rotation. Shears stay accurate only for |θ|<90°,
-// so larger angles peel off exact 90° quarter-turns first and shear the rest.
-import { key, rndSym } from "./math.ts";
-import type { Box3 } from "./types.ts";
+// the rotation never drops or doubles a voxel and leaves no holes. Shears stay
+// accurate only for |θ|<90°, so larger angles peel off exact 90° quarter-turns
+// first and shear the rest. Turning about an INTEGER pivot keeps every cell on
+// the grid; a shared pivot across many objects makes the whole set turn rigidly
+// (relative positions preserved, so no piece newly intersects another).
+import type { Box3, Vec } from "./types.ts";
+import { key } from "./math.ts";
 
 type Cell = { x: number; y: number; z: number; c: number };
+// the two in-plane axis names for a rotation about axis 0=X / 1=Y / 2=Z, ordered
+// so one +90° step is (u,v) -> (-v,u) — matching rotY/rotAxis handedness
+const PLANE: Record<number, [keyof Vec, keyof Vec]> = {
+  0: ["y", "z"],
+  1: ["x", "z"],
+  2: ["x", "y"],
+};
 
 // explode a disjoint box list into individual coloured cells
 function explode(boxes: Box3[]): Cell[] {
@@ -28,39 +37,37 @@ function explode(boxes: Box3[]): Cell[] {
   return out;
 }
 
-// horizontal (X/Z) centre of a cell set — the pivot the rotation turns about
-function xzCentre(cells: Cell[]): { cx: number; cz: number } {
-  let mnx = Infinity, mnz = Infinity, mxx = -Infinity, mxz = -Infinity;
+// rotate every cell in place about the line parallel to `axis` through the
+// integer point (pu,pv) of the rotation plane, by `degrees`
+function rotateCells(
+  cells: Cell[],
+  axis: number,
+  degrees: number,
+  pu: number,
+  pv: number,
+): void {
+  let deg = ((degrees % 360) + 360) % 360; // 0..359
+  if (deg > 180) deg -= 360; // -179..180
+  if (deg === 0) return;
+  const quarters = Math.round(deg / 90);
+  const rem = (deg - quarters * 90) * Math.PI / 180; // remainder in (-45,45]°
+  const q = ((quarters % 4) + 4) % 4;
+  const t = Math.tan(rem / 2), s = Math.sin(rem);
+  const [U, V] = PLANE[axis];
   for (const c of cells) {
-    if (c.x < mnx) mnx = c.x;
-    if (c.z < mnz) mnz = c.z;
-    if (c.x > mxx) mxx = c.x;
-    if (c.z > mxz) mxz = c.z;
-  }
-  return { cx: (mnx + mxx) / 2, cz: (mnz + mxz) / 2 };
-}
-
-// q exact 90° turns about the origin: (x,z) -> (-z,x), matching rotY(v,1)
-function applyQuarter(cells: Cell[], q: number): void {
-  for (const c of cells) {
-    for (let i = 0; i < q; i++) {
-      const nx = -c.z, nz = c.x;
-      c.x = nx;
-      c.z = nz;
+    let u = c[U] - pu, v = c[V] - pv; // integer offsets from the pivot
+    for (let i = 0; i < q; i++) { // exact 90° turns: (u,v) -> (-v,u)
+      const nu = -v, nv = u;
+      u = nu;
+      v = nv;
     }
-  }
-}
-
-// the three shears for angle θ (radians, |θ| ≤ 45°) about (cx,cz)
-function applyShear(cells: Cell[], theta: number, cx: number, cz: number): void {
-  const t = Math.tan(theta / 2), s = Math.sin(theta);
-  for (const c of cells) {
-    let a = c.x - cx, b = c.z - cz;
-    a -= Math.round(b * t);
-    b += Math.round(a * s);
-    a -= Math.round(b * t);
-    c.x = Math.round(cx + a); // a,b are integer up to float error; round guards it
-    c.z = Math.round(cz + b);
+    if (rem) { // three shears for the ≤45° remainder (integer shifts, no holes)
+      u -= Math.round(v * t);
+      v += Math.round(u * s);
+      u -= Math.round(v * t);
+    }
+    c[U] = pu + u;
+    c[V] = pv + v;
   }
 }
 
@@ -111,27 +118,25 @@ function compact(cells: Cell[]): Box3[] {
   return out;
 }
 
-// Rotate a box list about the Y axis by `degrees`, baking the angle into fresh
-// voxels and keeping the result centred on the original's horizontal centre.
-export function shearRotateY(boxes: Box3[], degrees: number): Box3[] {
-  if (!boxes.length) return [];
-  let deg = ((degrees % 360) + 360) % 360; // 0..359
-  if (deg > 180) deg -= 360; // -179..180
-  if (deg === 0) return boxes.map((b) => ({ ...b }));
-
+// Rigidly rotate world-space `boxes` about the axis-parallel line through the
+// (rounded) pivot, by `degrees`, then re-express the result in some frame via
+// `toLocal` and re-pack into boxes. The caller passes one shared pivot for every
+// object in a selection so they all turn as a single rigid unit.
+export function rigidRotateWorld(
+  boxes: Box3[],
+  degrees: number,
+  axis: number,
+  pu: number,
+  pv: number,
+  toLocal: (x: number, y: number, z: number) => Vec,
+): Box3[] {
   const cells = explode(boxes);
-  const before = xzCentre(cells);
-  const quarters = Math.round(deg / 90);
-  const rem = deg - quarters * 90; // remainder in [-45,45]°
-  const q = ((quarters % 4) + 4) % 4;
-  if (q) applyQuarter(cells, q);
-  if (rem) {
-    const m = xzCentre(cells); // shear about the post-quarter centre
-    applyShear(cells, rem * Math.PI / 180, m.cx, m.cz);
+  rotateCells(cells, axis, degrees, Math.round(pu), Math.round(pv));
+  for (const c of cells) {
+    const l = toLocal(c.x, c.y, c.z);
+    c.x = l.x;
+    c.y = l.y;
+    c.z = l.z;
   }
-  // translate so the rotated block stays on the original centre (rotate in place)
-  const after = xzCentre(cells);
-  const dx = rndSym(before.cx - after.cx), dz = rndSym(before.cz - after.cz);
-  if (dx || dz) for (const c of cells) (c.x += dx, c.z += dz);
   return compact(cells);
 }
