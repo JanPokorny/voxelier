@@ -552,7 +552,11 @@ export function rebuild(): void {
       const wb = worldBoxesInto(n, off, rot, []);
       growBounds(wb, sceneBox);
       if (owner) {
-        const m = tr ? gT : gE, arr = m.get(owner);
+        // a selected glass object renders solid so it stays pickable and its
+        // meshes are tracked (childMeshes) — otherwise it can't be clicked and
+        // doesn't follow the pointer while being dragged
+        const solid = !tr || S.selection.has(owner);
+        const m = solid ? gE : gT, arr = m.get(owner);
         if (arr) arr.push(...wb);
         else m.set(owner, wb);
         growBounds(wb, S.childBox[owner] || (S.childBox[owner] = emptyBox()));
