@@ -250,34 +250,51 @@ export function addGroupIn(group: SceneNode): void { // new empty group inside a
   selectNode(g);
   save();
 }
-export function rotateSelectionBy(steps: number): void { // rotate selection in 90° steps about each piece's own centre
-  const dir = steps < 0 ? -1 : 1;
+// Rotate the selection in 90° steps about the COMBINED centre of all selected
+// items, so a multi-selection turns as one rigid unit (each piece both spins and
+// orbits the shared pivot) rather than each piece spinning about its own centre.
+// A single item still rotates about its own centre (its box centre is the pivot).
+export function rotateSelectionBy(steps: number): void {
+  const ids = [...S.selection];
+  if (!ids.length) return;
+  const dir = steps < 0 ? 3 : 1; // one 90° step as a positive quarter (3 == -1)
   // invariant across the loop: we rotate context children, not the path that
   // defines the context frame, so the context transform never changes here
-  const x = contextXform();
+  const x = contextXform(), inv = xinvert(x);
   // world AABB of a context child under the current context transform
   const childWorldBox = (ch: Node) =>
     nodeBox(ch, addv(x.off, rotY(ch.pos, x.rot)), (x.rot + ch.rot) & 3, emptyBox());
   for (let n = 0; n < Math.abs(steps); n++) {
-    for (const id of S.selection) {
+    // combined world AABB centre of the whole selection -> the shared pivot
+    const all = emptyBox();
+    for (const id of ids) {
+      const b = childWorldBox(childById(id)!);
+      if (b.min.x < all.min.x) all.min.x = b.min.x;
+      if (b.min.z < all.min.z) all.min.z = b.min.z;
+      if (b.max.x > all.max.x) all.max.x = b.max.x;
+      if (b.max.z > all.max.z) all.max.z = b.max.z;
+    }
+    const px = (all.min.x + all.max.x) / 2, pz = (all.min.z + all.max.z) / 2;
+    // a world rotation by `dir` quarters about the pivot, as an {off,rot} xform:
+    // rotY(v - P, dir) + P == rotY(v, dir) + (P - rotY(P, dir))
+    const rp = rotY({ x: px, y: 0, z: pz }, dir);
+    const pivotTurn = { rot: dir, off: { x: px - rp.x, y: 0, z: pz - rp.z } };
+    for (const id of ids) {
       const ch = childById(id);
       if (!ch) continue;
-      const before = childWorldBox(ch);
-      ch.rot = (ch.rot + dir) & 3;
-      const after = childWorldBox(ch);
-      const dW = {
-        x: (before.min.x + before.max.x) / 2 - (after.min.x + after.max.x) / 2,
-        z: (before.min.z + before.max.z) / 2 - (after.min.z + after.max.z) / 2,
+      // compose the pivot turn onto the child's world pose, then bring it back
+      // into the context frame — turning the whole group rigidly about the pivot
+      const world = xcompose(x, { off: ch.pos, rot: ch.rot });
+      const local = xcompose(inv, xcompose(pivotTurn, world));
+      ch.pos = {
+        x: rndSym(local.off.x),
+        y: rndSym(local.off.y),
+        z: rndSym(local.off.z),
       };
-      const dL = rotY(
-        { x: rndSym(dW.x), y: 0, z: rndSym(dW.z) },
-        -x.rot, // world recentre delta -> context-local (inverse rotation)
-      );
-      ch.pos.x += dL.x;
-      ch.pos.z += dL.z;
+      ch.rot = local.rot & 3;
     }
   }
-  if (S.selection.size) rebuild();
+  rebuild();
 }
 export function rotateSelection(): void {
   if (S.selection.size) {
