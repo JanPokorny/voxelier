@@ -10,13 +10,10 @@
 // the rotation never drops or doubles a voxel and leaves no holes — unlike a
 // direct round-the-coordinates rotation. Shears stay accurate only for |θ|<90°,
 // so larger angles peel off exact 90° quarter-turns first and shear the rest.
-import { key } from "./math.ts";
+import { key, rndSym } from "./math.ts";
 import type { Box3 } from "./types.ts";
 
 type Cell = { x: number; y: number; z: number; c: number };
-
-// round half away from zero, so re-centring can't creep over repeated turns
-const rndSym = (v: number): number => (v < 0 ? -Math.round(-v) : Math.round(v));
 
 // explode a disjoint box list into individual coloured cells
 function explode(boxes: Box3[]): Cell[] {

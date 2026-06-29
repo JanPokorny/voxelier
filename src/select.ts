@@ -6,7 +6,7 @@
 // gesture ends or the selection is cleared.
 import * as THREE from "three";
 import { S } from "./state.ts";
-import { rotY } from "./math.ts";
+import { rndSym, rotY } from "./math.ts";
 import { camera, ndc, raycaster } from "./scene-env.ts";
 import { locToW } from "./picking.ts";
 import { editErase, editStamp, scheduleEditRemesh } from "./render.ts";
@@ -17,9 +17,6 @@ import { flush, save } from "./persistence.ts";
 import type { Box3, Region, Vec } from "./types.ts";
 
 const PASTE_GAP = 2; // cells left between a paste and the object's existing voxels
-
-// round half away from zero (symmetric), so rotation re-centring can't creep
-const rndSym = (v: number): number => (v < 0 ? -Math.round(-v) : Math.round(v));
 
 // half-open bounds of a box list (min inclusive, max exclusive)
 function bounds(boxes: Box3[]): { mn: Vec; mx: Vec } {

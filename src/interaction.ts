@@ -251,7 +251,7 @@ function commitMove(copy: boolean): void {
 const FINE_DEG_PER_PX = 0.5; // Alt fine-rotation: pointer travel -> angle
 function rotDragTo(e: PointerEvent): void {
   const d = S.drag!;
-  if (e.altKey) { // Alt: free 15° rotation, re-voxelised from the original via three shears
+  if (e.altKey) { // Alt: fine 15°-step rotation, re-voxelised from the original via three shears
     if (!d.fine) { // entering fine mode — snapshot, and measure the angle from here
       beginFineRotate();
       d.fine = true;

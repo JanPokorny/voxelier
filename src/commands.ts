@@ -1,7 +1,7 @@
 // Editing commands invoked from the tree menu, keyboard and pointer: visibility,
 // rename, create/delete/duplicate, clipboard, reparent/group, rotate and nudge.
 import { S } from "./state.ts";
-import { addv, rotY, xcompose, xinvert } from "./math.ts";
+import { addv, rndSym, rotY, xcompose, xinvert } from "./math.ts";
 import {
   childById,
   clone,
@@ -31,10 +31,6 @@ const commit = (): void => {
   updateChrome();
   save();
 };
-// round half away from zero (symmetric). Math.round rounds half toward +∞, so
-// rotation re-centring of an even×odd footprint (half-integer centre delta)
-// wouldn't cancel over a full turn — the object would creep across the scene.
-const rndSym = (v: number): number => (v < 0 ? -Math.round(-v) : Math.round(v));
 
 export function cycleVis(node: Node): void {
   node.vis = VIS_CYCLE[node.vis];
