@@ -264,14 +264,24 @@ function eyedrop(): void { // pick the draw colour from the voxel under the curs
   selectColor(c); // sets the draw colour + chrome refresh (recents track use, not picks)
 }
 
-function applyVoxel(): void { // bucket: flood-fill the connected same-colour region under the cursor
+// Fill tool. Normally flood-fills the connected same-colour region under the
+// cursor; with Shift it recolours just the single hovered cell, and keeps
+// recolouring cell-by-cell as the pointer is dragged across the surface.
+function applyVoxel(single: boolean): void {
   const t = pickVoxel();
   const c = voxelTarget(t);
   if (!c) return;
   const k = key(c.x, c.y, c.z);
   if (k !== S.lastVox) {
-    // recolours the whole face-connected same-colour run; record only on a real fill
-    if (editFill(c, S.selColor)) recordRecent(S.selColor);
+    // Shift -> overwrite this one cell with the draw colour; otherwise recolour
+    // the whole face-connected same-colour run. Record only on a real change.
+    if (single) {
+      editAdd(
+        { x0: c.x, y0: c.y, z0: c.z, x1: c.x + 1, y1: c.y + 1, z1: c.z + 1 },
+        S.selColor,
+      );
+      recordRecent(S.selColor);
+    } else if (editFill(c, S.selColor)) recordRecent(S.selColor);
     S.lastVox = k;
   }
   updateVoxHover(t);
@@ -554,7 +564,7 @@ canvas.addEventListener("pointerdown", (e) => {
       else {
         S.painting = true;
         S.lastVox = null;
-        applyVoxel();
+        applyVoxel(e.shiftKey);
       }
     } else if (e.button === 2) {
       if (S.tool === "select" && S.sel3d && selectionHit()) startSelRot(base);
@@ -587,7 +597,7 @@ canvas.addEventListener("pointerdown", (e) => {
 canvas.addEventListener("pointermove", (e) => {
   setNdc(e.clientX, e.clientY);
   if (S.editObject && S.painting) {
-    applyVoxel();
+    applyVoxel(e.shiftKey);
   } else if (!S.drag) {
     // the hover cube is only meaningful for the editing tools, not view/select
     if (S.editObject && S.tool !== "select" && S.tool !== "view") updateVoxHover();
