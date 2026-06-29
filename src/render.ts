@@ -516,11 +516,30 @@ export function eyedropColor(): number | null {
   return result;
 }
 
+// context-child owner ids that render as glass (by visibility, independent of
+// selection), refreshed every scene-mode rebuild. selectionRender() uses it to
+// decide whether a selection change needs a re-mesh (a selected glass object is
+// drawn solid) or just a cheap overlay refresh.
+const glassOwners = new Set<string>();
+// Reflect a selection change: re-mesh only when a glass owner's selected-state
+// flipped (so it switches between solid and glass); otherwise just redraw the
+// selection outlines. `prevSel` is the selection set before the change.
+export function selectionRender(prevSel: Set<string>): void {
+  for (const id of glassOwners) {
+    if (prevSel.has(id) !== S.selection.has(id)) {
+      rebuild();
+      return;
+    }
+  }
+  refreshOverlay();
+}
+
 export function rebuild(): void {
   disposeMeshes();
   S.pickMeshes = [];
   S.childMeshes = {};
   S.childBox = {};
+  glassOwners.clear();
   S.voxVer++;
   invalidateField();
   const O = { x: 0, y: 0, z: 0 };
@@ -552,6 +571,7 @@ export function rebuild(): void {
       const wb = worldBoxesInto(n, off, rot, []);
       growBounds(wb, sceneBox);
       if (owner) {
+        if (tr) glassOwners.add(owner); // inherently transparent (selection-independent)
         // a selected glass object renders solid so it stays pickable and its
         // meshes are tracked (childMeshes) — otherwise it can't be clicked and
         // doesn't follow the pointer while being dragged

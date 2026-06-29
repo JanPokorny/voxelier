@@ -3,7 +3,7 @@
 // object for painting). The edit mode is implicit in what you've entered.
 import { S } from "./state.ts";
 import { findPath } from "./model.ts";
-import { rebuild, refreshOverlay } from "./render.ts";
+import { rebuild, selectionRender } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
@@ -14,20 +14,21 @@ import type { Node, ObjectNode } from "./types.ts";
 // tail of ascend/exitObject/selectNode. The rendered scene depends only on the
 // context (path tail) and the edit object; selection is a separate overlay. So
 // when neither changed (a plain re-select within the same context) we skip the
-// AO-meshing rebuild and just refresh the overlay, making tree selection as
-// instant as clicking the object in the 3D scene. Callers snapshot the context
-// and edit object before mutating S.path.
+// AO-meshing rebuild via selectionRender, which still re-meshes when a glass
+// object's selected-state flips (it draws solid while selected). Callers snapshot
+// the context and edit object before mutating S.path.
 const selectOnly = (
   id: string,
   prevCtx: Node,
   prevEdit: ObjectNode | null,
 ): void => {
+  const prevSel = new Set(S.selection);
   clearSelection(); // stamp/drop any voxel selection before leaving the object
   S.selection = new Set([id]);
   S.editObject = null;
   clearMeasure();
   if (S.context !== prevCtx || prevEdit) rebuild();
-  else refreshOverlay();
+  else selectionRender(prevSel);
   updateChrome();
 };
 

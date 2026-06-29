@@ -37,7 +37,7 @@ import {
   wrapInGroup,
   wrapNodeInGroup,
 } from "./commands.ts";
-import { rebuild, refreshOverlay } from "./render.ts";
+import { rebuild, selectionRender } from "./render.ts";
 import { save } from "./persistence.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
@@ -140,6 +140,12 @@ export function updateChrome(): void {
   const bottom = el("div", { className: "toolgroup bottom" });
   bottom.appendChild(toolButton("📏", "Measure", S.measMode, toggleMeasure));
   tw.append(bottom);
+  // the tool-cursor glyph is edit-mode only; hide it on the transition to scene
+  // mode (a pointer move may not follow, e.g. exiting via the keyboard)
+  if (!S.editObject) {
+    const tc = document.getElementById("toolcursor");
+    if (tc) tc.style.display = "none";
+  }
   buildTree();
 }
 
@@ -418,9 +424,10 @@ function toggleSelect(node: Node): void {
   if (node === S.root || parentOf(node) !== S.context || S.editObject) {
     selectNode(node); // can't multi-select across contexts / out of edit mode
   } else {
+    const prevSel = new Set(S.selection);
     if (S.selection.has(node.id)) S.selection.delete(node.id);
     else S.selection.add(node.id);
-    refreshOverlay();
+    selectionRender(prevSel);
     updateChrome();
   }
   selAnchor = node.id;
@@ -435,9 +442,10 @@ function rangeSelect(node: Node): void {
     selAnchor = node.id;
     return;
   }
+  const prevSel = new Set(S.selection);
   const lo = Math.min(ai, bi), hi = Math.max(ai, bi);
   S.selection = new Set(kids.slice(lo, hi + 1).map((c) => c.id));
-  refreshOverlay(); // keep the pivot so further Shift-clicks extend from it
+  selectionRender(prevSel); // keep the pivot so further Shift-clicks extend from it
   updateChrome();
 }
 function rowClick(node: Node, e: MouseEvent): void {

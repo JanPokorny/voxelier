@@ -33,7 +33,7 @@ import {
   editFill,
   eyedropColor,
   rebuild,
-  refreshOverlay,
+  selectionRender,
 } from "./render.ts";
 import { boxesOverlap, worldBox } from "./boxes.ts";
 import { childById, clone, contextXform } from "./model.ts";
@@ -630,6 +630,7 @@ canvas.addEventListener("pointerup", (e) => {
       const id = S.drag.clickId;
       // no range in 3D, so Shift behaves like Ctrl here: add/remove a single item
       const add = e.shiftKey || e.ctrlKey || e.metaKey;
+      const prevSel = new Set(S.selection);
       if (id) {
         if (add) {
           S.selection.has(id) ? S.selection.delete(id) : S.selection.add(id);
@@ -639,7 +640,7 @@ canvas.addEventListener("pointerup", (e) => {
         S.selection.clear();
         setSelAnchor(null);
       }
-      refreshOverlay();
+      selectionRender(prevSel); // re-mesh if a glass object's selection flipped
       updateChrome();
     } else if (S.drag.mode === "move") {
       // only copy on a real drag — a Ctrl+click without movement must not
