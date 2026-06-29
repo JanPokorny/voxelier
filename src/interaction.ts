@@ -56,6 +56,7 @@ import {
   selectColor,
   setSelAnchor,
   toggleMeasure,
+  TOOL_ICON,
   updateChrome,
 } from "./ui.ts";
 import { save } from "./persistence.ts";
@@ -63,6 +64,24 @@ import type { Box3, Drag, Node, Seg, Vec } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
+
+// A small glyph that follows the pointer to show the active voxel tool while
+// editing an object (the native cursor stays for precision). Hidden in scene
+// mode and whenever the pointer leaves the canvas.
+const toolCursor = document.createElement("div");
+toolCursor.id = "toolcursor";
+toolCursor.style.display = "none";
+document.body.appendChild(toolCursor);
+function updateToolCursor(e: PointerEvent): void {
+  if (!S.editObject) {
+    toolCursor.style.display = "none";
+    return;
+  }
+  toolCursor.textContent = TOOL_ICON[S.tool];
+  toolCursor.style.left = e.clientX + "px";
+  toolCursor.style.top = e.clientY + "px";
+  toolCursor.style.display = "block";
+}
 
 // Refresh the floating dimension overlay. While measurement mode is on it reads
 // the runs through the cell under the pointer, in any mode and alongside any tool
@@ -577,6 +596,7 @@ canvas.addEventListener("pointermove", (e) => {
     else if (S.drag.mode === "selrot") selRotTo(e);
   }
   updateMeas(); // floating dimensions, alongside whatever the active tool did
+  updateToolCursor(e); // the tool glyph that trails the pointer in edit mode
 });
 
 canvas.addEventListener("pointerup", (e) => {
@@ -655,6 +675,7 @@ canvas.addEventListener("pointercancel", () => {
 });
 canvas.addEventListener("pointerleave", () => {
   hoverVox.visible = false;
+  toolCursor.style.display = "none"; // the trailing tool glyph belongs over the canvas
   if (S.measMode && !S.drag && !S.painting && S.liveMeas) {
     S.liveMeas = null; // drop the floating dimensions once the pointer leaves
     renderMeasure();

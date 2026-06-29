@@ -139,6 +139,16 @@ button.active {
   overflow: hidden;
   pointer-events: none;
 }
+/* glyph trailing the pointer to show the active voxel tool (edit mode) */
+#toolcursor {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  transform: translate(10px, 8px);
+  font-size: 18px;
+  line-height: 1;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+}
 .mlab {
   position: absolute;
   transform: translate(-50%, -50%);

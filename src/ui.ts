@@ -72,12 +72,21 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return e;
 }
 
-const VOX_TOOLS: { id: Tool; ic: string; label: string }[] = [
-  { id: "view", ic: "👁", label: "View" },
-  { id: "add", ic: "＋", label: "Add" },
-  { id: "erase", ic: "－", label: "Erase" },
-  { id: "paint", ic: "🪣", label: "Fill" },
-  { id: "select", ic: "⬚", label: "Select" },
+// glyph per voxel tool (also drives the tool-cursor follower in interaction.ts)
+export const TOOL_ICON: Record<Tool, string> = {
+  view: "👁",
+  add: "＋",
+  erase: "－",
+  paint: "🪣",
+  eyedropper: "💧",
+  select: "⬚",
+};
+const VOX_TOOLS: { id: Tool; label: string }[] = [
+  { id: "view", label: "View" },
+  { id: "add", label: "Add" },
+  { id: "erase", label: "Erase" },
+  { id: "paint", label: "Fill" },
+  { id: "select", label: "Select" },
 ]; // eyedropper lives in the colour flyout, not the rail
 // tree visibility-toggle glyphs, by current vis state
 const VIS_GLYPH: Record<string, string> = {
@@ -116,7 +125,7 @@ export function updateChrome(): void {
   if (S.editObject) {
     const top = el("div", { className: "toolgroup" });
     for (const t of VOX_TOOLS) {
-      top.appendChild(toolButton(t.ic, t.label, S.tool === t.id, () => {
+      top.appendChild(toolButton(TOOL_ICON[t.id], t.label, S.tool === t.id, () => {
         if (S.tool !== t.id) clearSelection(); // switching tools drops the marquee
         S.tool = t.id;
         S.eyedropReturn = null; // a manual switch cancels any pending eyedropper return
