@@ -60,7 +60,6 @@ import {
   recordRecent,
   selectColor,
   setSelAnchor,
-  toggleMeasure,
   TOOL_ICON,
   updateChrome,
 } from "./ui.ts";
@@ -88,11 +87,11 @@ function updateToolCursor(e: PointerEvent): void {
   toolCursor.style.display = "block";
 }
 
-// Refresh the floating dimension overlay. While measurement mode is on it reads
-// the runs through the cell under the pointer, in any mode and alongside any tool
-// — except the box brush, which already draws its own dimensions into liveMeas.
+// Refresh the floating dimension overlay. While the measure tool is active it
+// reads the runs through the cell under the pointer (the tool only pans/orbits,
+// so this runs alongside that). The box brush draws its own dimensions, so skip.
 function updateMeas(): void {
-  if (!S.measMode || S.painting) return;
+  if (S.tool !== "measure" || S.painting) return;
   if (S.drag && S.drag.mode === "box") return;
   pointerMeasure();
 }
@@ -569,17 +568,17 @@ canvas.addEventListener("pointerdown", (e) => {
   setNdc(e.clientX, e.clientY);
   const base = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY };
 
-  // middle button: pan the view, but a non-moved release toggles measurement mode
+  // middle button: pan the view
   if (e.button === 1) {
-    S.drag = { ...base, mode: "pan", mid: true };
+    S.drag = { ...base, mode: "pan" };
     return;
   }
   if (S.editObject) {
     if (e.button === 0) {
-      // view pans the camera (non-destructive, the default); select grabs/extends
-      // the marquee; add/erase drag out a box footprint; eyedropper picks a colour
+      // view/measure pan the camera (non-destructive); select grabs/extends the
+      // marquee; add/erase drag out a box footprint; eyedropper picks a colour
       // (one-shot); paint floods the hovered cell
-      if (S.tool === "view") S.drag = { ...base, mode: "pan" };
+      if (S.tool === "view" || S.tool === "measure") S.drag = { ...base, mode: "pan" };
       else if (S.tool === "select") {
         if (S.sel3d && selectionHit()) startSelMove(base);
         else {
@@ -626,8 +625,12 @@ canvas.addEventListener("pointermove", (e) => {
   if (S.editObject && S.painting) {
     applyVoxel(e.shiftKey);
   } else if (!S.drag) {
-    // the hover cube is only meaningful for the editing tools, not view/select
-    if (S.editObject && S.tool !== "select" && S.tool !== "view") updateVoxHover();
+    // the hover cube is only meaningful for the placing tools (add/erase/paint/
+    // eyedropper), not view/select/measure
+    if (
+      S.editObject && S.tool !== "select" && S.tool !== "view" &&
+      S.tool !== "measure"
+    ) updateVoxHover();
     else hoverVox.visible = false;
   } else if (!dragPanOrbit(e)) {
     if (S.drag.mode === "move") moveDragTo(e);
@@ -644,12 +647,6 @@ canvas.addEventListener("pointerup", (e) => {
   try {
     canvas.releasePointerCapture(e.pointerId);
   } catch (_) { /* not captured */ }
-  // middle button: a click (no drag) toggles measurement mode; a drag just panned
-  if (S.drag && S.drag.mid) {
-    if (!moved(e)) toggleMeasure();
-    S.drag = null;
-    return;
-  }
   if (S.editObject) {
     if (S.painting) {
       S.painting = false;
@@ -667,7 +664,8 @@ canvas.addEventListener("pointerup", (e) => {
     return;
   }
   if (S.drag) {
-    if (S.drag.mode === "pan" && !moved(e)) { // a click -> select / deselect
+    // a left click (no drag) -> select / deselect; a middle-button pan never does
+    if (S.drag.mode === "pan" && !moved(e) && e.button === 0) {
       const id = S.drag.clickId;
       // no range in 3D, so Shift behaves like Ctrl here: add/remove a single item
       const add = e.shiftKey || e.ctrlKey || e.metaKey;
@@ -722,7 +720,7 @@ canvas.addEventListener("pointercancel", () => {
 canvas.addEventListener("pointerleave", () => {
   hoverVox.visible = false;
   toolCursor.style.display = "none"; // the trailing tool glyph belongs over the canvas
-  if (S.measMode && !S.drag && !S.painting && S.liveMeas) {
+  if (S.tool === "measure" && !S.drag && !S.painting && S.liveMeas) {
     S.liveMeas = null; // drop the floating dimensions once the pointer leaves
     renderMeasure();
   }

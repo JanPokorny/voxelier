@@ -40,8 +40,7 @@ export type State = {
   lastVox: number | null;
   drag: Drag | null;
 
-  // ---- measurements ----
-  measMode: boolean;
+  // ---- measurements (the "measure" tool's live reading) ----
   liveMeas: Seg[] | null;
 };
 
@@ -72,6 +71,5 @@ export const S: State = {
   lastVox: null,
   drag: null,
 
-  measMode: false,
   liveMeas: null,
 };

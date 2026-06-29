@@ -80,6 +80,7 @@ export const TOOL_ICON: Record<Tool, string> = {
   paint: "🪣",
   eyedropper: "💧",
   select: "⬚",
+  measure: "📏",
 };
 const VOX_TOOLS: { id: Tool; label: string }[] = [
   { id: "view", label: "View" },
@@ -87,7 +88,7 @@ const VOX_TOOLS: { id: Tool; label: string }[] = [
   { id: "erase", label: "Erase" },
   { id: "paint", label: "Fill" },
   { id: "select", label: "Select" },
-]; // eyedropper lives in the colour flyout, not the rail
+]; // eyedropper lives in the colour flyout; measure is appended in any mode
 // tree visibility-toggle glyphs, by current vis state
 const VIS_GLYPH: Record<string, string> = {
   visible: "◉",
@@ -108,12 +109,16 @@ const toolButton = (
     onclick,
   });
 
-// Measurement is a global toggle (works in any mode, alongside any tool); its
-// button lives in the bottom-left tool rail. Shared with the middle-click toggle
-// in interaction.ts.
-export function toggleMeasure(): void {
-  S.measMode = !S.measMode;
-  if (!S.measMode) clearMeasure();
+// Switch the active tool. Tools are mutually exclusive, so this drops any voxel
+// marquee, cancels a pending eyedropper return, hides the hover cube and clears
+// the live measurement — then redraws the chrome to reflect the new selection.
+export function setTool(id: Tool): void {
+  if (S.tool === id) return;
+  clearSelection();
+  S.tool = id;
+  S.eyedropReturn = null;
+  hoverVox.visible = false;
+  clearMeasure();
   updateChrome();
 }
 
@@ -127,16 +132,17 @@ export function updateChrome(): void {
   const top = el("div", { className: "toolgroup" });
   if (S.editObject) {
     for (const t of VOX_TOOLS) {
-      top.appendChild(toolButton(TOOL_ICON[t.id], t.label, S.tool === t.id, () => {
-        if (S.tool !== t.id) clearSelection(); // switching tools drops the marquee
-        S.tool = t.id;
-        S.eyedropReturn = null; // a manual switch cancels any pending eyedropper return
-        hoverVox.visible = false;
-        updateChrome();
-      }));
+      top.appendChild(
+        toolButton(TOOL_ICON[t.id], t.label, S.tool === t.id, () => setTool(t.id)),
+      );
     }
   }
-  top.appendChild(toolButton("📏", "Measure", S.measMode, toggleMeasure));
+  // Measure is a tool like the rest; outside edit mode it's the only one, so its
+  // button toggles back to View to switch measuring off.
+  top.appendChild(
+    toolButton(TOOL_ICON.measure, "Measure", S.tool === "measure", () =>
+      setTool(S.tool === "measure" ? "view" : "measure")),
+  );
   if (S.editObject) top.appendChild(colorControl()); // draw-colour picker (edit mode only)
   tw.append(top);
   // the tool-cursor glyph is edit-mode only; hide it on the transition to scene

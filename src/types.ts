@@ -39,7 +39,14 @@ export type SceneNode = NodeBase & { type: "scene"; children: Node[] };
 export type Node = ObjectNode | SceneNode;
 
 // ---- editor tools ----
-export type Tool = "view" | "add" | "erase" | "paint" | "eyedropper" | "select";
+export type Tool =
+  | "view"
+  | "add"
+  | "erase"
+  | "paint"
+  | "eyedropper"
+  | "select"
+  | "measure";
 
 // ---- voxel selection (the object-editor "select" tool) ----
 // A MSPaint-style marquee over object-local voxels. `region` is the current
@@ -93,7 +100,6 @@ export type Drag = {
   fine?: boolean; // rotobj: Alt fine-rotation (15° three-shear) mode engaged
   deg?: number; // rotobj fine mode: the angle (°) currently baked from the snapshot
   clickId?: string | null;
-  mid?: boolean; // middle-button drag: a non-moved release toggles measurement mode
   // in-progress box-brush footprint, oriented to the face the drag began on. `s`
   // is the start cell; the footprint lies in the plane perpendicular to axis `na`
   // (0/1/2) at s[na], its opposite corner tracked in `c` (na coord stays s[na]);

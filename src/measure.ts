@@ -1,6 +1,6 @@
-// SketchUp-style floating dimensions: a global toggle (S.measMode) that, while
-// on, reads the filled/empty runs along all three axes through the voxel under the
-// pointer — in any mode and alongside any tool. Hover-only: there is no freeze.
+// SketchUp-style floating dimensions: the "measure" tool (S.tool === "measure")
+// reads the filled/empty runs along all three axes through the voxel under the
+// pointer — in any mode. Hover-only: there is no freeze.
 import * as THREE from "three";
 import { S } from "./state.ts";
 import { _mv, camera, measLines, viewport } from "./scene-env.ts";
