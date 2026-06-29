@@ -18,7 +18,6 @@ import {
 import {
   camera,
   col,
-  dimCol,
   dir,
   editGroup,
   matGlass,
@@ -93,6 +92,7 @@ function disposeMeshes(): void {
   }
   meshes = [];
   disposeSelWire();
+  disposeGlow();
   editGroup.clear();
   if (editRemesh) {
     cancelAnimationFrame(editRemesh);
@@ -115,6 +115,53 @@ function disposeSelWire(): void {
   selWire.geometry.dispose();
   (selWire.material as THREE.Material).dispose();
   selWire = null;
+}
+
+// ---- focus glow: a white halo around the thing currently being edited (an
+// object, or the children of the group you've descended into) so it stands out
+// without dimming or see-through-glassing everything else. An inverted-hull
+// outline: the same surface, scaled out ~0.6 cell about its centre and drawn
+// back-faces-only; the opaque object (drawn first, writing depth) covers the
+// interior, leaving just the expanded rim showing as a white edge. ----
+const GLOW_OUT = 0.6; // how far the halo extends past the surface, in cells
+const glowMat = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  side: THREE.BackSide,
+  transparent: true,
+  opacity: 0.85,
+  depthWrite: false, // a halo, not an occluder
+});
+let glowMeshes: THREE.Mesh[] = [];
+function disposeGlow(): void {
+  for (const m of glowMeshes) {
+    m.parent?.remove(m);
+    m.geometry.dispose();
+  }
+  glowMeshes = [];
+}
+// Build the halo from a box list (object-local for the edit case, world for the
+// group case) and add it under `parent` so it inherits that frame's pose.
+function buildGlow(boxes: Box3[], parent: THREE.Object3D): void {
+  if (!boxes.length) return;
+  const g = boxFaceGeo(boxes, col, false); // colours unused (glowMat is flat white)
+  if (!g) return;
+  g.computeBoundingBox();
+  const bb = g.boundingBox!;
+  const cx = (bb.min.x + bb.max.x) / 2,
+    cy = (bb.min.y + bb.max.y) / 2,
+    cz = (bb.min.z + bb.max.z) / 2;
+  const dim = Math.max(
+    bb.max.x - bb.min.x,
+    bb.max.y - bb.min.y,
+    bb.max.z - bb.min.z,
+    1,
+  );
+  const s = 1 + 2 * GLOW_OUT / dim; // uniform scale that pushes the rim out GLOW_OUT cells
+  const m = new THREE.Mesh(g, glowMat);
+  m.scale.setScalar(s);
+  m.position.set(cx * (1 - s), cy * (1 - s), cz * (1 - s)); // scale about the centre
+  parent.add(m);
+  glowMeshes.push(m);
 }
 
 // Greedy box-face mesher: one merged quad per exposed face rectangle, so cost is
@@ -422,6 +469,10 @@ function buildEditMesh(): void {
     meshes.push(editMesh);
   }
   S.pickMeshes = editMesh ? [editMesh] : [];
+  // white halo around the edited object so it reads as the focus (rebuilt here,
+  // alongside the surface mesh, so it tracks edits between full rebuilds)
+  disposeGlow();
+  buildGlow(meshBoxes, editGroup);
   if (sel) buildSelWire(sel.region);
   else disposeSelWire();
 }
@@ -550,23 +601,30 @@ export function rebuild(): void {
       off: S.editObject.pos,
       rot: S.editObject.rot,
     });
-    const others: Box3[] = [];
+    // other objects render normally (each keeping its own opaque/glass look),
+    // not forced to glass — the edited object is picked out by its white halo
+    const solidO: Box3[] = [], glassO: Box3[] = [];
     eachObject(
       S.root,
       O,
       0,
       null,
       0,
-      (n, off, rot) => worldBoxesInto(n, off, rot, others),
+      (n, off, rot, _owner, tr) => worldBoxesInto(n, off, rot, tr ? glassO : solidO),
     );
-    growBounds(others, sceneBox);
-    meshSurface(others, col, { transparent: true }); // everything else: glass
-    buildEditMesh(); // edited object: opaque, in 3D
+    growBounds(solidO, sceneBox);
+    growBounds(glassO, sceneBox);
+    meshSurface(solidO, col);
+    meshSurface(glassO, col, { transparent: true });
+    buildEditMesh(); // edited object: opaque, in 3D, with its focus halo
     nodeBox(S.editObject, S.editXform.off, S.editXform.rot, sceneBox); // eachObject skips it
   } else {
-    // owner -> a current-context child; otherwise dimmed (descended past).
+    // owner -> a current-context child; otherwise it's outside the open group
+    // (an ancestor's other branch). Both render in full colour — the open group
+    // is picked out by a white halo instead of by dimming everything else.
     const gE = new Map<string, Box3[]>(), gT = new Map<string, Box3[]>();
     const ctxE: Box3[] = [], ctxT: Box3[] = [];
+    const focus: Box3[] = []; // every context-child box, for the group halo
     eachObject(S.root, O, 0, null, 0, (n, off, rot, owner, tr) => {
       const wb = worldBoxesInto(n, off, rot, []);
       growBounds(wb, sceneBox);
@@ -579,11 +637,12 @@ export function rebuild(): void {
         const m = solid ? gE : gT, arr = m.get(owner);
         if (arr) arr.push(...wb);
         else m.set(owner, wb);
+        focus.push(...wb);
         growBounds(wb, S.childBox[owner] || (S.childBox[owner] = emptyBox()));
       } else (tr ? ctxT : ctxE).push(...wb);
     });
-    meshSurface(ctxE, dimCol);
-    meshSurface(ctxT, dimCol, { transparent: true });
+    meshSurface(ctxE, col);
+    meshSurface(ctxT, col, { transparent: true });
     for (const id of new Set([...gE.keys(), ...gT.keys()])) {
       const e = gE.get(id);
       if (e) {
@@ -592,6 +651,9 @@ export function rebuild(): void {
       const t = gT.get(id);
       if (t) meshSurface(t, col, { transparent: true }); // not pickable
     }
+    // halo the open group's contents — but only once you've descended into one;
+    // at the root every object is a context child, so there's nothing to single out
+    if (S.context !== S.root) buildGlow(focus, scene);
   }
   S.sceneBox = sceneBox; // camera depth range reads this (see updateCamera)
   fitShadow(sceneBox); // anchor the light/shadow frustum to the scene, not the view

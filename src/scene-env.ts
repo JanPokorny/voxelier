@@ -94,23 +94,13 @@ export const wake = (): void => {
 };
 
 export const _up = new THREE.Vector3(), _upN = new THREE.Vector3();
-const bg = new THREE.Color("#0f1115");
-// Voxels store a 0xRRGGBB int; resolve to a (cached) THREE.Color, full or dimmed.
-const _palCache = new Map<number, THREE.Color>(),
-  _dimCache = new Map<number, THREE.Color>();
+// Voxels store a 0xRRGGBB int; resolve to a (cached) THREE.Color.
+const _palCache = new Map<number, THREE.Color>();
 export function col(v: number): THREE.Color {
   let c = _palCache.get(v);
   if (!c) {
     c = new THREE.Color().setHex(v);
     _palCache.set(v, c);
-  }
-  return c;
-}
-export function dimCol(v: number): THREE.Color {
-  let c = _dimCache.get(v);
-  if (!c) {
-    c = new THREE.Color().setHex(v).lerp(bg, 0.62);
-    _dimCache.set(v, c);
   }
   return c;
 }
