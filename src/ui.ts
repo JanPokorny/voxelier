@@ -679,6 +679,7 @@ function clearDropInd(): void {
   if (dropRow) {
     dropRow.classList.remove("drop-into", "drop-before", "drop-after");
   }
+  document.getElementById("tree")?.classList.remove("drop-end");
   dropRow = null;
   dropInfo = null;
 }
@@ -784,6 +785,7 @@ function doDrop(): void {
       ev.preventDefault();
       clearDropInd();
       dropInfo = { parent: S.root, index: S.root.children.length };
+      treeEl.classList.add("drop-end"); // show the drop lands at the list end
     }
   });
   treeEl.addEventListener("drop", (ev) => {
