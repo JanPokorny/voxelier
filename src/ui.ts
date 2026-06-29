@@ -822,6 +822,18 @@ function doDrop(): void {
   });
 }
 
+// Clicking empty space in the side panel — anywhere that isn't a tree row,
+// button or input — clears the scene selection, an easy way to deselect all.
+document.getElementById("side")!.addEventListener("click", (e) => {
+  if ((e.target as HTMLElement).closest(".trow, button, input")) return;
+  if (!S.selection.size) return;
+  const prevSel = new Set(S.selection);
+  S.selection.clear();
+  selAnchor = null;
+  selectionRender(prevSel);
+  updateChrome();
+});
+
 window.addEventListener("keydown", (e) => {
   if ((e.target as HTMLElement).tagName === "INPUT") return;
   // ignore shortcuts mid-gesture: undo/redo (and delete/clipboard) serialize the
