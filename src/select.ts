@@ -49,9 +49,13 @@ function normalize(boxes: Box3[]): Box3[] {
 
 // ---- capture / lift / drop / clear ----
 export function captureSelection(region: Region): void {
+  const boxes = clipBoxes(S.editObject!.boxes, region);
+  // shrink the marquee to the voxels it actually caught — trimming the empty
+  // margins the drag swept over — so the wireframe hugs the content. An empty
+  // marquee keeps the dragged region (nothing to tighten to).
   S.sel3d = {
-    region: { ...region },
-    boxes: clipBoxes(S.editObject!.boxes, region),
+    region: boxes.length ? regionOf(boxes) : { ...region },
+    boxes,
     lifted: false,
   };
   scheduleEditRemesh(); // draw the marquee wireframe
