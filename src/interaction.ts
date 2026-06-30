@@ -5,7 +5,7 @@
 // Attaches its canvas listeners on import (side effect).
 import type * as THREE from "three";
 import { S } from "./state.ts";
-import { addv, key, rotY } from "./math.ts";
+import { key, rotY } from "./math.ts";
 import {
   camera,
   canvas,
@@ -331,12 +331,15 @@ function updateVoxHover(t: Pick = pickVoxel()): void {
     hoverVox.visible = false;
     return;
   }
-  const w = addv(rotY(cell, S.editXform.rot), S.editXform.off);
+  // centre the cube on the cell in OBJECT-LOCAL space, then map to world — the
+  // half-cell offset has to rotate with the edit pose (as the real voxel does
+  // through editGroup), or the preview drifts when the object/context is turned.
+  const w = locToW(cell.x + 0.5, cell.y + 0.5, cell.z + 0.5);
   hoverVox.visible = true;
   (hoverVox.material as THREE.LineBasicMaterial).color.set(
     S.tool === "erase" ? 0xb5838d : 0xa7c4bc,
   );
-  hoverVox.position.set(w.x + 0.5, w.y + 0.5, w.z + 0.5);
+  hoverVox.position.copy(w);
 }
 
 // ---- box brush (add/erase): drag a footprint in the started face's plane,
