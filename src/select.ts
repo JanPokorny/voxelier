@@ -6,20 +6,18 @@
 // gesture ends or the selection is cleared.
 import * as THREE from "three";
 import { S } from "./state.ts";
-import { rotY } from "./math.ts";
+import { rndSym, rotY } from "./math.ts";
 import { camera, ndc, raycaster } from "./scene-env.ts";
 import { locToW } from "./picking.ts";
 import { editErase, editStamp, scheduleEditRemesh } from "./render.ts";
 import { clipBoxes, growBounds } from "./boxes.ts";
+import { rigidRotateWorld } from "./shear.ts";
 import { emptyBox } from "./model.ts";
 import { setVoxClip } from "./clipboard.ts";
 import { flush, save } from "./persistence.ts";
 import type { Box3, Region, Vec } from "./types.ts";
 
 const PASTE_GAP = 2; // cells left between a paste and the object's existing voxels
-
-// round half away from zero (symmetric), so rotation re-centring can't creep
-const rndSym = (v: number): number => (v < 0 ? -Math.round(-v) : Math.round(v));
 
 // half-open bounds of a box list (min inclusive, max exclusive)
 function bounds(boxes: Box3[]): { mn: Vec; mx: Vec } {
@@ -49,9 +47,13 @@ function normalize(boxes: Box3[]): Box3[] {
 
 // ---- capture / lift / drop / clear ----
 export function captureSelection(region: Region): void {
+  const boxes = clipBoxes(S.editObject!.boxes, region);
+  // shrink the marquee to the voxels it actually caught — trimming the empty
+  // margins the drag swept over — so the wireframe hugs the content. An empty
+  // marquee keeps the dragged region (nothing to tighten to).
   S.sel3d = {
-    region: { ...region },
-    boxes: clipBoxes(S.editObject!.boxes, region),
+    region: boxes.length ? regionOf(boxes) : { ...region },
+    boxes,
     lifted: false,
   };
   scheduleEditRemesh(); // draw the marquee wireframe
@@ -220,6 +222,23 @@ export function rotateSelectionTo(steps: number, horizontal: boolean): void {
   }
   s.boxes = rot;
   s.region = regionOf(rot);
+  scheduleEditRemesh();
+}
+// Fine (Alt) rotation of the selection by an arbitrary 15°-stepped angle, baked
+// via the three-shear algorithm — the object-editor counterpart of the scene's
+// fine object rotation. Works from the same base snapshot, turning about the
+// selection's centre (Shift -> a horizontal axis, else Y).
+export function fineRotateSel3d(deg: number, horizontal: boolean): void {
+  const s = S.sel3d, base = rotBase;
+  if (!s || !base || !base.boxes.length) return;
+  const axis = horizontal ? horizAxis() : 1;
+  const [pu, pv] = axis === 0
+    ? [base.cy, base.cz]
+    : axis === 1
+    ? [base.cx, base.cz]
+    : [base.cx, base.cy];
+  s.boxes = rigidRotateWorld(base.boxes, deg, axis, pu, pv, (x, y, z) => ({ x, y, z }));
+  s.region = regionOf(s.boxes);
   scheduleEditRemesh();
 }
 

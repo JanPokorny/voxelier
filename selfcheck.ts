@@ -9,6 +9,7 @@ import { assert } from "@std/assert";
 import type { Box3, Region, Vec } from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
 import { addBox, buildIndex, eraseBox, fillBox } from "./src/boxes.ts";
+import { rigidRotateWorld } from "./src/shear.ts";
 
 const toW = (cell: Vec, off: Vec, rot: number): Vec =>
   addv(rotY(cell, rot), off); // local -> world (locToW)
@@ -215,6 +216,86 @@ Deno.test("fillBox matches a cell-level flood fill", () => {
         got.get(k) === v,
         `fill colour mismatch (got ${got.get(k)} != ${v})`,
       );
+    }
+  }
+});
+
+// Arbitrary-angle Y rotation (Alt fine-rotate) bakes voxels via three shears.
+// Each shear shifts whole rows/columns by an integer, so the whole rotation is
+// a bijection of the cell grid: it must keep the box set disjoint and preserve
+// the exact voxel count at every 15° step, with no holes or doubled cells.
+// Quarter-turns (90/180/270) must additionally reproduce the exact rotY pose.
+Deno.test("shear rotation is a hole-free, count-preserving bijection", () => {
+  const count = (bs: Box3[]) =>
+    bs.reduce(
+      (n, b) => n + (b.x1 - b.x0) * (b.y1 - b.y0) * (b.z1 - b.z0),
+      0,
+    );
+  const shapes: Box3[][] = [
+    [{ x0: 0, y0: 0, z0: 0, x1: 5, y1: 1, z1: 3, c: 1 }], // flat, mixed parity
+    [{ x0: 0, y0: 0, z0: 0, x1: 4, y1: 4, z1: 4, c: 2 }], // cube
+    [ // an L of two colours
+      { x0: 0, y0: 0, z0: 0, x1: 7, y1: 2, z1: 1, c: 3 },
+      { x0: 2, y0: 0, z0: 1, x1: 5, y1: 2, z1: 6, c: 4 },
+    ],
+    [{ x0: -3, y0: 0, z0: -2, x1: 2, y1: 3, z1: 4, c: 5 }], // negative coords
+  ];
+  // rotate about Y through the shape's (rounded) XZ centre, identity localise —
+  // the rigid-rotation core as the editor drives it for a single object
+  const rotY90 = (bs: Box3[], deg: number): Box3[] => {
+    let mnx = Infinity, mnz = Infinity, mxx = -Infinity, mxz = -Infinity;
+    for (const b of bs) {
+      mnx = Math.min(mnx, b.x0);
+      mnz = Math.min(mnz, b.z0);
+      mxx = Math.max(mxx, b.x1 - 1);
+      mxz = Math.max(mxz, b.z1 - 1);
+    }
+    return rigidRotateWorld(bs, deg, 1, (mnx + mxx) / 2, (mnz + mxz) / 2, (x, y, z) => ({
+      x,
+      y,
+      z,
+    }));
+  };
+  // normalised (translation-independent) cell+colour signature of a box set
+  const sig = (bs: Box3[]): Set<string> => {
+    let mnx = Infinity, mny = Infinity, mnz = Infinity;
+    for (const b of bs) {
+      mnx = Math.min(mnx, b.x0);
+      mny = Math.min(mny, b.y0);
+      mnz = Math.min(mnz, b.z0);
+    }
+    const s = new Set<string>();
+    for (const b of bs) {
+      eachCell(b, (x, y, z) =>
+        s.add(`${x - mnx},${y - mny},${z - mnz}:${b.c}`));
+    }
+    return s;
+  };
+  for (const sh of shapes) {
+    const base = count(sh);
+    for (let deg = 0; deg < 360; deg += 15) {
+      const r = rotY90(sh, deg);
+      materialize(r, `shear ${deg}°`); // asserts disjoint
+      assert(count(r) === base, `count drift at ${deg}° (${count(r)} != ${base})`);
+    }
+    for (const q of [1, 2, 3]) { // quarter-turns == exact rotY
+      const got = sig(rotY90(sh, q * 90));
+      const exact: Box3[] = sh.map((b) => {
+        const a = rotY({ x: b.x0, y: b.y0, z: b.z0 }, q);
+        const d = rotY({ x: b.x1 - 1, y: b.y1 - 1, z: b.z1 - 1 }, q);
+        return {
+          x0: Math.min(a.x, d.x),
+          y0: Math.min(a.y, d.y),
+          z0: Math.min(a.z, d.z),
+          x1: Math.max(a.x, d.x) + 1,
+          y1: Math.max(a.y, d.y) + 1,
+          z1: Math.max(a.z, d.z) + 1,
+          c: b.c,
+        };
+      });
+      const want = sig(exact);
+      assert(got.size === want.size, `quarter ${q} size mismatch`);
+      for (const k of want) assert(got.has(k), `quarter ${q} cell mismatch`);
     }
   }
 });

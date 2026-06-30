@@ -1,8 +1,9 @@
 // Editing commands invoked from the tree menu, keyboard and pointer: visibility,
 // rename, create/delete/duplicate, clipboard, reparent/group, rotate and nudge.
 import { S } from "./state.ts";
-import { addv, rotY, xcompose, xinvert } from "./math.ts";
+import { addv, rndSym, rotY, xcompose, xinvert } from "./math.ts";
 import {
+  boxEmpty,
   childById,
   clone,
   contextXform,
@@ -16,13 +17,15 @@ import {
   VIS_CYCLE,
   worldXform,
 } from "./model.ts";
+import { growBounds, worldBox } from "./boxes.ts";
 import { goal } from "./scene-env.ts";
 import { rebuild } from "./render.ts";
-import { updateChrome } from "./ui.ts";
+import { startRename, updateChrome } from "./ui.ts";
 import { enterNode, selectNode } from "./navigation.ts";
 import { save } from "./persistence.ts";
 import { clipKind, getNodeClip, getVoxClip, setNodeClip } from "./clipboard.ts";
-import type { Node, SceneNode } from "./types.ts";
+import { rigidRotateWorld } from "./shear.ts";
+import type { Box3, Node, ObjectNode, Rot, SceneNode, Vec } from "./types.ts";
 
 // re-mesh the scene, refresh the chrome and persist — the tail of most edits
 const commit = (): void => {
@@ -30,10 +33,6 @@ const commit = (): void => {
   updateChrome();
   save();
 };
-// round half away from zero (symmetric). Math.round rounds half toward +∞, so
-// rotation re-centring of an even×odd footprint (half-integer centre delta)
-// wouldn't cancel over a full turn — the object would creep across the scene.
-const rndSym = (v: number): number => (v < 0 ? -Math.round(-v) : Math.round(v));
 
 export function cycleVis(node: Node): void {
   node.vis = VIS_CYCLE[node.vis];
@@ -43,12 +42,8 @@ export function cycleVis(node: Node): void {
 // selected context children, resolved to live nodes (dropping stale ids)
 const selectedNodes = (): Node[] =>
   [...S.selection].map((id) => childById(id)).filter((n): n is Node => !!n);
-// a clone nudged +5 on x/z, so a duplicate/paste lands visibly offset
-const cloneShift = (n: Node): Node => {
-  const d = clone(n);
-  d.pos = { x: n.pos.x + 5, y: n.pos.y, z: n.pos.z + 5 };
-  return d;
-};
+// clone keeping the original pose, so a duplicate/paste lands exactly on top of
+// its source (the copy becomes the selection, ready to be dragged off)
 
 // add a fresh empty object at the camera focus into `parent`, reveal it, enter it
 const spawnObject = (parent: SceneNode, fit: boolean): void => {
@@ -58,6 +53,7 @@ const spawnObject = (parent: SceneNode, fit: boolean): void => {
   S.collapsed.delete(parent.id);
   enterNode(o, fit); // fit only when spawning into the open context; nested stays put
   save();
+  startRename(o); // a fresh object opens ready to be named
 };
 export function createObject(): void {
   spawnObject(S.context, true);
@@ -69,7 +65,7 @@ export function deleteSelection(): void {
   commit();
 }
 export function duplicateSelection(): void {
-  const dups = selectedNodes().map(cloneShift);
+  const dups = selectedNodes().map(clone);
   if (!dups.length) return;
   S.context.children.push(...dups);
   S.selection = new Set(dups.map((d) => d.id));
@@ -93,7 +89,7 @@ export function pasteClipboard(into: SceneNode = S.context): void {
     pasteVoxAsObject(into);
     return;
   }
-  const ns = getNodeClip().map(cloneShift);
+  const ns = getNodeClip().map(clone);
   if (!ns.length) return;
   into.children.push(...ns);
   enterPasteTarget(into);
@@ -190,6 +186,7 @@ export function wrapNodeInGroup(node: Node): void {
   S.collapsed.delete(g.id);
   selectNode(g);
   save();
+  startRename(g); // a fresh group opens ready to be named
 }
 // Group the whole selection into one fresh group that takes `anchor`'s slot and
 // pose (the right-clicked item), then reparent each selected sibling into it with
@@ -212,7 +209,7 @@ export function groupSelection(anchor: Node): void {
 export function duplicateNode(node: Node): void {
   const par = parentOf(node);
   if (!par) return;
-  const d = cloneShift(node);
+  const d = clone(node);
   par.children.splice(par.children.indexOf(node) + 1, 0, d);
   selectNode(d);
   save();
@@ -249,35 +246,53 @@ export function addGroupIn(group: SceneNode): void { // new empty group inside a
   S.collapsed.delete(group.id);
   selectNode(g);
   save();
+  startRename(g); // a fresh group opens ready to be named
 }
-export function rotateSelectionBy(steps: number): void { // rotate selection in 90° steps about each piece's own centre
-  const dir = steps < 0 ? -1 : 1;
+// Rotate the selection in 90° steps about the COMBINED centre of all selected
+// items, so a multi-selection turns as one rigid unit (each piece both spins and
+// orbits the shared pivot) rather than each piece spinning about its own centre.
+// A single item still rotates about its own centre (its box centre is the pivot).
+export function rotateSelectionBy(steps: number): void {
+  const ids = [...S.selection];
+  if (!ids.length) return;
+  const dir = steps < 0 ? 3 : 1; // one 90° step as a positive quarter (3 == -1)
   // invariant across the loop: we rotate context children, not the path that
   // defines the context frame, so the context transform never changes here
-  const x = contextXform();
+  const x = contextXform(), inv = xinvert(x);
   // world AABB of a context child under the current context transform
   const childWorldBox = (ch: Node) =>
     nodeBox(ch, addv(x.off, rotY(ch.pos, x.rot)), (x.rot + ch.rot) & 3, emptyBox());
   for (let n = 0; n < Math.abs(steps); n++) {
-    for (const id of S.selection) {
+    // combined world AABB centre of the whole selection -> the shared pivot
+    const all = emptyBox();
+    for (const id of ids) {
+      const b = childWorldBox(childById(id)!);
+      if (b.min.x < all.min.x) all.min.x = b.min.x;
+      if (b.min.z < all.min.z) all.min.z = b.min.z;
+      if (b.max.x > all.max.x) all.max.x = b.max.x;
+      if (b.max.z > all.max.z) all.max.z = b.max.z;
+    }
+    const px = (all.min.x + all.max.x) / 2, pz = (all.min.z + all.max.z) / 2;
+    // a world rotation by `dir` quarters about the pivot, as an {off,rot} xform:
+    // rotY(v - P, dir) + P == rotY(v, dir) + (P - rotY(P, dir))
+    const rp = rotY({ x: px, y: 0, z: pz }, dir);
+    const pivotTurn = { rot: dir, off: { x: px - rp.x, y: 0, z: pz - rp.z } };
+    for (const id of ids) {
       const ch = childById(id);
       if (!ch) continue;
-      const before = childWorldBox(ch);
-      ch.rot = (ch.rot + dir) & 3;
-      const after = childWorldBox(ch);
-      const dW = {
-        x: (before.min.x + before.max.x) / 2 - (after.min.x + after.max.x) / 2,
-        z: (before.min.z + before.max.z) / 2 - (after.min.z + after.max.z) / 2,
+      // compose the pivot turn onto the child's world pose, then bring it back
+      // into the context frame — turning the whole group rigidly about the pivot
+      const world = xcompose(x, { off: ch.pos, rot: ch.rot });
+      const local = xcompose(inv, xcompose(pivotTurn, world));
+      ch.pos = {
+        x: rndSym(local.off.x),
+        y: rndSym(local.off.y),
+        z: rndSym(local.off.z),
       };
-      const dL = rotY(
-        { x: rndSym(dW.x), y: 0, z: rndSym(dW.z) },
-        -x.rot, // world recentre delta -> context-local (inverse rotation)
-      );
-      ch.pos.x += dL.x;
-      ch.pos.z += dL.z;
+      ch.rot = local.rot & 3;
     }
   }
-  if (S.selection.size) rebuild();
+  rebuild();
 }
 export function rotateSelection(): void {
   if (S.selection.size) {
@@ -285,6 +300,65 @@ export function rotateSelection(): void {
     updateChrome();
     save();
   }
+}
+
+// ---- baked rotation (Alt = 15° steps, Shift = a horizontal axis): rotate the
+// whole selection as one rigid unit about a shared pivot, baking the angle into
+// each object's voxels via the three-shear algorithm. Since a single shared
+// pivot turns every leaf object together, the relative arrangement is preserved
+// and no piece newly intersects another. The ORIGINAL voxels are snapshotted and
+// re-rotated by the absolute angle each step (no compounding round-off), so a
+// drag can swing freely back and forth before being committed on release. ----
+type LeafSnap = { node: ObjectNode; boxes: Box3[]; off: Vec; rot: Rot };
+let fineBase: { leaves: LeafSnap[]; piv: Vec } | null = null;
+
+// every object at or under `node` (a direct selection may be a group)
+const collectObjects = (node: Node, out: ObjectNode[]): void => {
+  if (node.type === "object") out.push(node);
+  else for (const ch of node.children) collectObjects(ch, out);
+};
+export function beginFineRotate(): void {
+  const leaves: LeafSnap[] = [];
+  const seen = new Set<ObjectNode>();
+  const all = emptyBox(); // combined world AABB -> the shared pivot
+  for (const id of S.selection) {
+    const ch = childById(id);
+    if (!ch) continue;
+    const objs: ObjectNode[] = [];
+    collectObjects(ch, objs);
+    for (const o of objs) {
+      if (seen.has(o)) continue; // a node selected both directly and via a group
+      seen.add(o);
+      const x = worldXform(o);
+      const wb = o.boxes.map((b) => worldBox(b, x.rot, x.off));
+      leaves.push({ node: o, boxes: o.boxes.map((b) => ({ ...b })), off: x.off, rot: x.rot });
+      growBounds(wb, all);
+    }
+  }
+  const piv = boxEmpty(all) ? { x: 0, y: 0, z: 0 } : {
+    x: (all.min.x + all.max.x) / 2,
+    y: (all.min.y + all.max.y) / 2,
+    z: (all.min.z + all.max.z) / 2,
+  };
+  fineBase = { leaves, piv };
+}
+// rotate the snapshot by `deg` about world `axis` (0=X,1=Y,2=Z) through the pivot
+export function fineRotateSelectionTo(deg: number, axis: number): void {
+  if (!fineBase || !fineBase.leaves.length) return;
+  const p = fineBase.piv;
+  // the two in-plane pivot coords for this rotation axis
+  const [pu, pv] = axis === 0 ? [p.y, p.z] : axis === 1 ? [p.x, p.z] : [p.x, p.y];
+  for (const lf of fineBase.leaves) {
+    const wb = lf.boxes.map((b) => worldBox(b, lf.rot, lf.off));
+    // rotate in world, then map back through the object's own (unchanged) pose,
+    // so its pos/rot stay put and the turn lives entirely in the baked voxels
+    lf.node.boxes = rigidRotateWorld(wb, deg, axis, pu, pv, (x, y, z) =>
+      rotY({ x: x - lf.off.x, y: y - lf.off.y, z: z - lf.off.z }, -lf.rot));
+  }
+  rebuild();
+}
+export function endFineRotate(): void { // drop the snapshot; the baked boxes stay
+  fineBase = null;
 }
 export function nudgeY(d: number): void {
   for (const id of S.selection) {

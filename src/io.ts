@@ -11,7 +11,11 @@ import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
 
 export function exportScene(): void {
-  const data = JSON.stringify({ uid: peekUid(), root: ser(S.root) });
+  const data = JSON.stringify({
+    uid: peekUid(),
+    root: ser(S.root),
+    collapsed: [...S.collapsed],
+  });
   const url = URL.createObjectURL(
     new Blob([data], { type: "application/json" }),
   );
@@ -45,7 +49,7 @@ export function importScene(): void {
         S.editObject = null;
         S.sel3d = null;
         S.selection.clear();
-        S.measMode = false; // turn measurement off for the new scene
+        if (S.tool === "measure") S.tool = "view"; // leave the measure tool for the new scene
         clearMeasure(); // discard the live reading from the old one
         rebuild();
         updateChrome();

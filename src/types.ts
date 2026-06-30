@@ -12,7 +12,10 @@ export type Xform = { off: Vec; rot: Rot };
 export type Box = { min: Vec; max: Vec };
 
 // ---- the document model ----
-export type Vis = "visible" | "transparent" | "invisible";
+// An object's explicit visibility. "temporarily deemphasized" is NOT one of
+// these — it's a render-only state applied to anything outside the current focus
+// (the edited object, or the group you've entered); see render.ts.
+export type Vis = "visible" | "deemphasized" | "hidden";
 // An axis-aligned box of cells, half-open [x0,x1) x [y0,y1) x [z0,z1), with a
 // single 0xRRGGBB colour. An object's shape is a set of disjoint such boxes.
 export type Box3 = {
@@ -39,7 +42,14 @@ export type SceneNode = NodeBase & { type: "scene"; children: Node[] };
 export type Node = ObjectNode | SceneNode;
 
 // ---- editor tools ----
-export type Tool = "view" | "add" | "erase" | "paint" | "eyedropper" | "select";
+export type Tool =
+  | "view"
+  | "add"
+  | "erase"
+  | "paint"
+  | "eyedropper"
+  | "select"
+  | "measure";
 
 // ---- voxel selection (the object-editor "select" tool) ----
 // A MSPaint-style marquee over object-local voxels. `region` is the current
@@ -61,6 +71,7 @@ export type Seg = {
   len: number;
   filled: boolean;
   nolabel?: boolean;
+  gray?: boolean; // neutral colour (the anchored measure box), vs filled/empty cyan/blue
 };
 export type MeasLabel = { el: HTMLElement; w: THREE.Vector3 };
 export type MeasField = {
@@ -90,8 +101,10 @@ export type Drag = {
   start?: Vec | null;
   steps?: number;
   dirty?: boolean; // rotobj: a rotation was applied during the drag (commit even if net steps == 0)
+  fine?: boolean; // rotobj: baked-rotation mode engaged (Alt = 15° steps, Shift = other axis)
+  deg?: number; // rotobj baked mode: the angle (°) currently baked from the snapshot
+  axis?: number; // rotobj baked mode: rotation axis (0=X, 1=Y, 2=Z)
   clickId?: string | null;
-  mid?: boolean; // middle-button drag: a non-moved release toggles measurement mode
   // in-progress box-brush footprint, oriented to the face the drag began on. `s`
   // is the start cell; the footprint lies in the plane perpendicular to axis `na`
   // (0/1/2) at s[na], its opposite corner tracked in `c` (na coord stays s[na]);

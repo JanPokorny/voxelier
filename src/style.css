@@ -33,6 +33,20 @@ body {
   grid-template-columns: 1fr 200px;
   grid-template-areas: "stage right";
 }
+/* sidebar collapsed: the stage takes the whole width and the floating reveal
+   button replaces the in-panel hide button */
+#app.side-hidden {
+  grid-template-columns: 1fr 0;
+}
+#app.side-hidden #side {
+  display: none;
+}
+#btn-show-side {
+  display: none;
+}
+#app.side-hidden #btn-show-side {
+  display: block;
+}
 
 button {
   font: inherit;
@@ -54,9 +68,9 @@ button.active {
   font-weight: 600;
 }
 
-/* floating tool rail: a transparent full-height overlay on the stage's left edge
-   that pins one button group to the top and one to the bottom. The overlay itself
-   ignores pointer events so the canvas stays draggable between the groups. */
+/* floating tool rail: a transparent overlay pinning the tool group to the top
+   of the stage's left edge. The overlay itself ignores pointer events so the
+   canvas stays draggable around the group. */
 #tools {
   position: absolute;
   left: 0;
@@ -64,7 +78,6 @@ button.active {
   bottom: 0;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   padding: 10px;
   gap: 10px;
   pointer-events: none;
@@ -83,11 +96,6 @@ button.active {
   border: 1px solid var(--line);
   border-radius: 14px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-}
-/* the measurement group is pinned to the bottom of the rail whether or not the
-   voxel-tool group is present above it */
-.toolgroup.bottom {
-  margin-top: auto;
 }
 .tool {
   width: 50px;
@@ -167,6 +175,7 @@ button.active {
 
 #side {
   grid-area: right;
+  position: relative;
   background: var(--panel);
   border-left: 1px solid var(--line);
   padding: 12px;
@@ -174,8 +183,36 @@ button.active {
   display: flex;
   flex-direction: column;
 }
+/* show/hide-sidebar icon buttons: the hide one sits in the panel's top-right
+   corner; the show one floats at the screen's top-right when the panel is gone */
+.sidetoggle {
+  padding: 3px 7px;
+  font-size: 14px;
+  line-height: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink-dim);
+}
+.sidetoggle:hover {
+  color: var(--ink);
+  border-color: #3a4252;
+}
+#btn-hide-side {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+}
+#btn-show-side {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 20;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
 h3 {
-  margin: 0 0 8px;
+  margin: 0 0 16px;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.7px;

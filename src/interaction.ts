@@ -5,7 +5,7 @@
 // Attaches its canvas listeners on import (side effect).
 import type * as THREE from "three";
 import { S } from "./state.ts";
-import { addv, key, rotY } from "./math.ts";
+import { key, rotY } from "./math.ts";
 import {
   camera,
   canvas,
@@ -38,29 +38,40 @@ import {
 import { boxesOverlap, worldBox } from "./boxes.ts";
 import { childById, clone, contextXform } from "./model.ts";
 import { orbitView, panCamera } from "./camera.ts";
-import { pointerMeasure, renderMeasure } from "./measure.ts";
+import {
+  boxSegments,
+  clearMeasureAnchor,
+  markMeasure,
+  pointerMeasure,
+  renderMeasure,
+} from "./measure.ts";
 import {
   beginRotate,
   captureSelection,
   clearSelection,
   dropSelection,
+  fineRotateSel3d,
   liftSelection,
   rotateSelectionTo,
   selectionHit,
   translateSelection,
 } from "./select.ts";
 import { enterNode } from "./navigation.ts";
-import { rotateSelectionBy } from "./commands.ts";
+import {
+  beginFineRotate,
+  endFineRotate,
+  fineRotateSelectionTo,
+  rotateSelectionBy,
+} from "./commands.ts";
 import {
   recordRecent,
   selectColor,
   setSelAnchor,
-  toggleMeasure,
   TOOL_ICON,
   updateChrome,
 } from "./ui.ts";
 import { save } from "./persistence.ts";
-import type { Box3, Drag, Node, Seg, Vec } from "./types.ts";
+import type { Box3, Drag, Node, Vec } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
@@ -73,7 +84,9 @@ toolCursor.id = "toolcursor";
 toolCursor.style.display = "none";
 document.body.appendChild(toolCursor);
 function updateToolCursor(e: PointerEvent): void {
-  if (!S.editObject) {
+  // every tool trails its glyph by the pointer, in any mode — except View, which
+  // is the plain navigate tool and shows none
+  if (S.tool === "view") {
     toolCursor.style.display = "none";
     return;
   }
@@ -83,11 +96,11 @@ function updateToolCursor(e: PointerEvent): void {
   toolCursor.style.display = "block";
 }
 
-// Refresh the floating dimension overlay. While measurement mode is on it reads
-// the runs through the cell under the pointer, in any mode and alongside any tool
-// — except the box brush, which already draws its own dimensions into liveMeas.
+// Refresh the floating dimension overlay. While the measure tool is active it
+// reads the runs through the cell under the pointer (the tool only pans/orbits,
+// so this runs alongside that). The box brush draws its own dimensions, so skip.
 function updateMeas(): void {
-  if (!S.measMode || S.painting) return;
+  if (S.tool !== "measure" || S.painting) return;
   if (S.drag && S.drag.mode === "box") return;
   pointerMeasure();
 }
@@ -243,13 +256,48 @@ function commitMove(copy: boolean): void {
   updateChrome(); // refresh tree rows (copies add nodes) + group thumbnails
   save();
 }
+// the world horizontal axis (X or Z) closest to screen-right — the one a Shift
+// rotation tips the whole selection about
+function sceneHorizAxis(): number {
+  const m = camera.matrixWorld.elements; // column 0 = camera right
+  return Math.abs(m[0]) >= Math.abs(m[2]) ? 0 : 2;
+}
 function rotDragTo(e: PointerEvent): void {
   const d = S.drag!;
-  const steps = Math.round((d.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
-  if (steps !== d.steps) {
-    rotateSelectionBy(steps - d.steps!);
-    d.steps = steps;
-    d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
+  // Alt and/or Shift leave plain 90°-Y snapping for a baked rotation: the model
+  // only stores Y poses, so a finer angle (Alt) or a horizontal axis (Shift) is
+  // re-voxelised. The whole selection turns rigidly about one shared pivot.
+  if (e.altKey || e.shiftKey) {
+    const axis = e.shiftKey ? sceneHorizAxis() : 1; // Shift -> tip about a horizontal axis
+    if (!d.fine || d.axis !== axis) { // (re)enter baked mode, or the tip axis changed
+      if (d.fine) endFineRotate(); // keep the baked result so far, then re-snapshot
+      beginFineRotate();
+      d.fine = true;
+      d.axis = axis;
+      d.sx = e.clientX;
+      d.deg = 0;
+    }
+    const step = e.altKey ? 15 : 90; // Alt refines the increment; Shift alone snaps to 90°
+    const pxPerStep = e.altKey ? 25 : 70;
+    const deg = Math.round((d.sx - e.clientX) / pxPerStep) * step;
+    if (deg !== d.deg) {
+      fineRotateSelectionTo(deg, axis);
+      d.deg = deg;
+      d.dirty = true;
+    }
+  } else { // 90°-snap rotation about the selection centre (rigid, no baking)
+    if (d.fine) { // leaving baked mode — keep the result, restart the 90° count here
+      endFineRotate();
+      d.fine = false;
+      d.sx = e.clientX;
+      d.steps = 0;
+    }
+    const steps = Math.round((d.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
+    if (steps !== d.steps) {
+      rotateSelectionBy(steps - d.steps!);
+      d.steps = steps;
+      d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
+    }
   }
 }
 
@@ -264,14 +312,24 @@ function eyedrop(): void { // pick the draw colour from the voxel under the curs
   selectColor(c); // sets the draw colour + chrome refresh (recents track use, not picks)
 }
 
-function applyVoxel(): void { // bucket: flood-fill the connected same-colour region under the cursor
+// Fill tool. Normally flood-fills the connected same-colour region under the
+// cursor; with Shift it recolours just the single hovered cell, and keeps
+// recolouring cell-by-cell as the pointer is dragged across the surface.
+function applyVoxel(single: boolean): void {
   const t = pickVoxel();
   const c = voxelTarget(t);
   if (!c) return;
   const k = key(c.x, c.y, c.z);
   if (k !== S.lastVox) {
-    // recolours the whole face-connected same-colour run; record only on a real fill
-    if (editFill(c, S.selColor)) recordRecent(S.selColor);
+    // Shift -> overwrite this one cell with the draw colour; otherwise recolour
+    // the whole face-connected same-colour run. Record only on a real change.
+    if (single) {
+      editAdd(
+        { x0: c.x, y0: c.y, z0: c.z, x1: c.x + 1, y1: c.y + 1, z1: c.z + 1 },
+        S.selColor,
+      );
+      recordRecent(S.selColor);
+    } else if (editFill(c, S.selColor)) recordRecent(S.selColor);
     S.lastVox = k;
   }
   updateVoxHover(t);
@@ -282,12 +340,15 @@ function updateVoxHover(t: Pick = pickVoxel()): void {
     hoverVox.visible = false;
     return;
   }
-  const w = addv(rotY(cell, S.editXform.rot), S.editXform.off);
+  // centre the cube on the cell in OBJECT-LOCAL space, then map to world — the
+  // half-cell offset has to rotate with the edit pose (as the real voxel does
+  // through editGroup), or the preview drifts when the object/context is turned.
+  const w = locToW(cell.x + 0.5, cell.y + 0.5, cell.z + 0.5);
   hoverVox.visible = true;
   (hoverVox.material as THREE.LineBasicMaterial).color.set(
     S.tool === "erase" ? 0xb5838d : 0xa7c4bc,
   );
-  hoverVox.position.set(w.x + 0.5, w.y + 0.5, w.z + 0.5);
+  hoverVox.position.copy(w);
 }
 
 // ---- box brush (add/erase): drag a footprint in the started face's plane,
@@ -415,49 +476,11 @@ function commitBox(): void {
   updateChrome();
   save();
 }
-// build the box wireframe as measure-style segments (3 labelled dimension edges + the rest unlabelled)
+// the box-brush footprint as a labelled dimension wireframe (a "1" stays
+// unlabelled — crammed and self-evident), in object-local space via locToW
 function renderBox(): void {
   const r = boxRegion(S.drag!.box!);
-  const X0 = r.x0, X1 = r.x1, Y0 = r.y0, Y1 = r.y1, Z0 = r.z0, Z1 = r.z1;
-  const nx = X1 - X0, ny = Y1 - Y0, nz = Z1 - Z0;
-  const seg = (
-    ax: number,
-    ay: number,
-    az: number,
-    bx: number,
-    by: number,
-    bz: number,
-    len: number,
-    label: boolean,
-  ): Seg => ({
-    a: locToW(ax, ay, az),
-    b: locToW(bx, by, bz),
-    mid: locToW((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2),
-    len,
-    filled: true,
-    nolabel: !label,
-  });
-  const o: Seg[] = [];
-  // label a dimension only when it's >= 2: a "1" is crammed and self-evident
-  o.push(seg(X0, Y0, Z0, X1, Y0, Z0, nx, nx >= 2)); // X dimension
-  o.push(seg(X0, Y0, Z0, X0, Y0, Z1, nz, nz >= 2)); // Z dimension
-  o.push(seg(X0, Y0, Z0, X0, Y1, Z0, ny, ny >= 2)); // Y dimension
-  o.push(
-    seg(X1, Y0, Z0, X1, Y0, Z1, 0, false),
-    seg(X0, Y0, Z1, X1, Y0, Z1, 0, false),
-  ); // rest of bottom
-  o.push(
-    seg(X0, Y1, Z0, X1, Y1, Z0, 0, false),
-    seg(X0, Y1, Z0, X0, Y1, Z1, 0, false), // top
-    seg(X1, Y1, Z0, X1, Y1, Z1, 0, false),
-    seg(X0, Y1, Z1, X1, Y1, Z1, 0, false),
-  );
-  o.push(
-    seg(X1, Y0, Z0, X1, Y1, Z0, 0, false),
-    seg(X0, Y0, Z1, X0, Y1, Z1, 0, false), // verticals
-    seg(X1, Y0, Z1, X1, Y1, Z1, 0, false),
-  );
-  S.liveMeas = o;
+  S.liveMeas = boxSegments(r.x0, r.y0, r.z0, r.x1, r.y1, r.z1, locToW, 2);
   renderMeasure();
 }
 
@@ -506,14 +529,38 @@ function selMoveTo(e: PointerEvent): void {
 }
 function selRotTo(e: PointerEvent): void {
   const d = S.drag!;
-  const steps = Math.round((d.sx - e.clientX) / 70);
-  if (steps === d.steps) return;
-  if (!S.sel3d!.lifted) { // carve out + snapshot the base orientation on first turn
-    liftSelection();
-    beginRotate();
+  const fine = e.altKey; // Alt: 15° steps (baked via three shears), else 90° snap
+  if (fine !== !!d.fine) {
+    d.fine = fine;
+    // Only re-baseline when Alt is toggled AFTER a turn was already applied (the
+    // selection is lifted). At the start of the drag, keep the pointerdown origin
+    // so the whole drag delta counts toward the first step.
+    if (S.sel3d!.lifted) {
+      beginRotate();
+      d.sx = e.clientX;
+      d.steps = 0;
+      d.deg = 0;
+    }
   }
-  d.steps = steps;
-  rotateSelectionTo(steps, e.shiftKey); // absolute turn from the base; Shift -> horizontal
+  const lift = () => { // carve out + snapshot the base orientation on first turn
+    if (!S.sel3d!.lifted) {
+      liftSelection();
+      beginRotate();
+    }
+  };
+  if (fine) {
+    const deg = Math.round((d.sx - e.clientX) / 25) * 15;
+    if (deg === (d.deg ?? 0)) return;
+    lift();
+    d.deg = deg;
+    fineRotateSel3d(deg, e.shiftKey); // absolute turn from the base; Shift -> horizontal
+  } else {
+    const steps = Math.round((d.sx - e.clientX) / 70);
+    if (steps === d.steps) return;
+    lift();
+    d.steps = steps;
+    rotateSelectionTo(steps, e.shiftKey); // absolute turn from the base; Shift -> horizontal
+  }
 }
 // finalise a marquee drag: a real drag captures the box, a click just deselects
 function commitMarquee(didMove: boolean): void {
@@ -532,17 +579,17 @@ canvas.addEventListener("pointerdown", (e) => {
   setNdc(e.clientX, e.clientY);
   const base = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY };
 
-  // middle button: pan the view, but a non-moved release toggles measurement mode
+  // middle button: pan the view
   if (e.button === 1) {
-    S.drag = { ...base, mode: "pan", mid: true };
+    S.drag = { ...base, mode: "pan" };
     return;
   }
   if (S.editObject) {
     if (e.button === 0) {
-      // view pans the camera (non-destructive, the default); select grabs/extends
-      // the marquee; add/erase drag out a box footprint; eyedropper picks a colour
+      // view/measure pan the camera (non-destructive); select grabs/extends the
+      // marquee; add/erase drag out a box footprint; eyedropper picks a colour
       // (one-shot); paint floods the hovered cell
-      if (S.tool === "view") S.drag = { ...base, mode: "pan" };
+      if (S.tool === "view" || S.tool === "measure") S.drag = { ...base, mode: "pan" };
       else if (S.tool === "select") {
         if (S.sel3d && selectionHit()) startSelMove(base);
         else {
@@ -554,7 +601,7 @@ canvas.addEventListener("pointerdown", (e) => {
       else {
         S.painting = true;
         S.lastVox = null;
-        applyVoxel();
+        applyVoxel(e.shiftKey);
       }
     } else if (e.button === 2) {
       if (S.tool === "select" && S.sel3d && selectionHit()) startSelRot(base);
@@ -566,7 +613,9 @@ canvas.addEventListener("pointerdown", (e) => {
   const hitId = pickChild();
   const onSel = hitId && S.selection.has(hitId);
   if (e.button === 0) {
-    if (onSel) {
+    if (S.tool === "measure") {
+      S.drag = { ...base, mode: "pan" }; // measure: click marks a point, drag pans
+    } else if (onSel) {
       S.drag = {
         ...base,
         mode: "move",
@@ -579,7 +628,8 @@ canvas.addEventListener("pointerdown", (e) => {
       };
     } else S.drag = { ...base, mode: "pan", clickId: hitId };
   } else if (e.button === 2) {
-    if (onSel) S.drag = { ...base, mode: "rotobj", steps: 0 };
+    // measure: right-click cancels box mode (handled on release), never rotates
+    if (onSel && S.tool !== "measure") S.drag = { ...base, mode: "rotobj", steps: 0 };
     else S.drag = { ...base, mode: "orbit" };
   }
 });
@@ -587,10 +637,14 @@ canvas.addEventListener("pointerdown", (e) => {
 canvas.addEventListener("pointermove", (e) => {
   setNdc(e.clientX, e.clientY);
   if (S.editObject && S.painting) {
-    applyVoxel();
+    applyVoxel(e.shiftKey);
   } else if (!S.drag) {
-    // the hover cube is only meaningful for the editing tools, not view/select
-    if (S.editObject && S.tool !== "select" && S.tool !== "view") updateVoxHover();
+    // the hover cube is only meaningful for the placing tools (add/erase/paint/
+    // eyedropper), not view/select/measure
+    if (
+      S.editObject && S.tool !== "select" && S.tool !== "view" &&
+      S.tool !== "measure"
+    ) updateVoxHover();
     else hoverVox.visible = false;
   } else if (!dragPanOrbit(e)) {
     if (S.drag.mode === "move") moveDragTo(e);
@@ -607,11 +661,20 @@ canvas.addEventListener("pointerup", (e) => {
   try {
     canvas.releasePointerCapture(e.pointerId);
   } catch (_) { /* not captured */ }
-  // middle button: a click (no drag) toggles measurement mode; a drag just panned
-  if (S.drag && S.drag.mid) {
-    if (!moved(e)) toggleMeasure();
-    S.drag = null;
-    return;
+  // measure tool clicks (no drag), ahead of the usual pan/orbit handling: left
+  // marks/unmarks the anchor; right cancels box mode back to the free read. A
+  // moved drag just panned/orbited.
+  if (S.tool === "measure" && S.drag && !moved(e)) {
+    if (e.button === 0) {
+      markMeasure();
+      S.drag = null;
+      return;
+    }
+    if (e.button === 2) {
+      clearMeasureAnchor();
+      S.drag = null;
+      return;
+    }
   }
   if (S.editObject) {
     if (S.painting) {
@@ -630,7 +693,8 @@ canvas.addEventListener("pointerup", (e) => {
     return;
   }
   if (S.drag) {
-    if (S.drag.mode === "pan" && !moved(e)) { // a click -> select / deselect
+    // a left click (no drag) -> select / deselect; a middle-button pan never does
+    if (S.drag.mode === "pan" && !moved(e) && e.button === 0) {
       const id = S.drag.clickId;
       // no range in 3D, so Shift behaves like Ctrl here: add/remove a single item
       const add = e.shiftKey || e.ctrlKey || e.metaKey;
@@ -650,9 +714,12 @@ canvas.addEventListener("pointerup", (e) => {
       // only copy on a real drag — a Ctrl+click without movement must not
       // silently duplicate the object in place
       commitMove(moved(e) && (e.ctrlKey || e.metaKey));
-    } else if (S.drag.mode === "rotobj" && S.drag.dirty) {
-      updateChrome(); // tree thumbnails track the new pose
-      save();
+    } else if (S.drag.mode === "rotobj") {
+      if (S.drag.fine) endFineRotate(); // drop the fine-rotation snapshot
+      if (S.drag.dirty) {
+        updateChrome(); // tree thumbnails track the new pose
+        save();
+      }
     }
   }
   S.drag = null;
@@ -668,6 +735,7 @@ canvas.addEventListener("pointercancel", () => {
   if (S.drag && (S.drag.mode === "selmove" || S.drag.mode === "selrot")) {
     dropSelection();
   }
+  if (S.drag && S.drag.mode === "rotobj" && S.drag.fine) endFineRotate();
   S.drag = null;
   S.painting = false;
   S.liveMeas = null; // drop any in-progress box-brush / measure wireframe
@@ -681,7 +749,7 @@ canvas.addEventListener("pointercancel", () => {
 canvas.addEventListener("pointerleave", () => {
   hoverVox.visible = false;
   toolCursor.style.display = "none"; // the trailing tool glyph belongs over the canvas
-  if (S.measMode && !S.drag && !S.painting && S.liveMeas) {
+  if (S.tool === "measure" && !S.drag && !S.painting && S.liveMeas) {
     S.liveMeas = null; // drop the floating dimensions once the pointer leaves
     renderMeasure();
   }

@@ -42,6 +42,12 @@ export const pathXform = (p: Node[]): Xform =>
 export const hex = (v: number): string =>
   "#" + (v & 0xffffff).toString(16).padStart(6, "0");
 
+// round half away from zero (symmetric). Math.round rounds half toward +∞, so
+// rotation re-centring of an even×odd footprint (half-integer centre delta)
+// wouldn't cancel over a full turn — the object would creep across the scene.
+export const rndSym = (v: number): number =>
+  v < 0 ? -Math.round(-v) : Math.round(v);
+
 // node ids — a single monotonic counter, seeded from storage on load
 let _uid = 1;
 export const uid = (): string => "n" + (_uid++);

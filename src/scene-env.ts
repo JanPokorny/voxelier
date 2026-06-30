@@ -94,10 +94,8 @@ export const wake = (): void => {
 };
 
 export const _up = new THREE.Vector3(), _upN = new THREE.Vector3();
-const bg = new THREE.Color("#0f1115");
-// Voxels store a 0xRRGGBB int; resolve to a (cached) THREE.Color, full or dimmed.
-const _palCache = new Map<number, THREE.Color>(),
-  _dimCache = new Map<number, THREE.Color>();
+// Voxels store a 0xRRGGBB int; resolve to a (cached) THREE.Color.
+const _palCache = new Map<number, THREE.Color>();
 export function col(v: number): THREE.Color {
   let c = _palCache.get(v);
   if (!c) {
@@ -106,32 +104,31 @@ export function col(v: number): THREE.Color {
   }
   return c;
 }
-export function dimCol(v: number): THREE.Color {
-  let c = _dimCache.get(v);
-  if (!c) {
-    c = new THREE.Color().setHex(v).lerp(bg, 0.62);
-    _dimCache.set(v, c);
-  }
-  return c;
-}
 
 export const matSurf = new THREE.MeshLambertMaterial({
   vertexColors: true,
   side: THREE.FrontSide,
 }); // opaque surfaces (smooth per-vertex corner AO baked into vertex colours)
-// Transparent voxels render as a surface of only the exterior faces, back-face
-// culled — depth-correct yet reading as one glass pane.
-const TRANSP_OPACITY = 0.42;
-export const matGlass = new THREE.MeshLambertMaterial({
-  vertexColors: true,
-  transparent: true,
-  opacity: TRANSP_OPACITY,
-  side: THREE.FrontSide,
-  depthWrite: false,
-});
-matGlass.shadowSide = THREE.DoubleSide; // still cast a solid shadow
-// Depth pre-pass for glass: write only depth so that, per pixel, only the nearest
-// glass layer composites (order-independent, no flicker as the camera rotates).
+// De-emphasised voxels render as a surface of only the exterior faces, back-face
+// culled — depth-correct yet reading as one translucent pane. Two strengths:
+//  - DEEMPH (more transparent): an object explicitly set to "deemphasized".
+//  - TEMP   (more opaque): "temporarily deemphasized" — anything outside the
+//    current focus (the edited object / entered group). Not an explicit state.
+const deemphMat = (opacity: number): THREE.MeshLambertMaterial => {
+  const m = new THREE.MeshLambertMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity,
+    side: THREE.FrontSide,
+    depthWrite: false,
+  });
+  m.shadowSide = THREE.DoubleSide; // still cast a solid shadow
+  return m;
+};
+export const matDeemph = deemphMat(0.24); // explicit de-emphasis — more transparent
+export const matTemp = deemphMat(0.55); // temporary de-emphasis — more opaque
+// Depth pre-pass for translucent tiers: write only depth so that, per pixel, only
+// the nearest layer composites (order-independent, no flicker as the camera turns).
 export const matGlassDepth = new THREE.MeshBasicMaterial({
   colorWrite: false,
   side: THREE.FrontSide,

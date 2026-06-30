@@ -43,7 +43,7 @@ export function seed(): SceneNode {
   wb = eraseBox(wb, eraseRgn(farX, 1, D - T, farX + dw, dh + 1, D)); // far door
   wb = eraseBox(wb, eraseRgn(0, mm(900), mm(600), T, mm(2100), D - mm(600))); // window
   const walls = object("Walls", wb);
-  walls.vis = "transparent"; // glass so the furnished interior stays visible
+  walls.vis = "deemphasized"; // translucent so the furnished interior stays visible
 
   // --- Bed: legs, mattress, duvet ---
   const BW = mm(1500), BL = mm(2000);

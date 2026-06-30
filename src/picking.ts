@@ -42,18 +42,25 @@ export const cellOf = (p: Vec, n: Vec): Vec => ({
   y: Math.floor(p.y - n.y * 0.5),
   z: Math.floor(p.z - n.z * 0.5),
 });
+const _nrm = new THREE.Vector3();
 export function pickVoxel(): Pick { // -> {cell, addCell} in object-local space, or null
   const h = firstHit();
   if (!h) return null;
-  // chunk geometry is built in object-local space (editGroup carries the pose), so
-  // the face normal is already local; convert the world hit point back to local.
+  // convert the world hit point back to the edited object's local space.
   const off = S.editXform.off;
   const lp = rotY({
     x: h.point.x - off.x,
     y: h.point.y - off.y,
     z: h.point.z - off.z,
   }, -S.editXform.rot); // inverse rotation (rotY normalises the negative count)
-  const n = h.face ? h.face.normal : { x: 0, y: 1, z: 0 };
+  // the hit may be the edited object (geometry in edit-local space under editGroup)
+  // or a temporarily-deemphasized neighbour (world space) — so take each face
+  // normal to world via its own mesh, then into edit-local, to stay consistent.
+  let n: Vec = { x: 0, y: 1, z: 0 };
+  if (h.face) {
+    const wn = _nrm.copy(h.face.normal).transformDirection(h.object.matrixWorld);
+    n = rotY({ x: wn.x, y: wn.y, z: wn.z }, -S.editXform.rot);
+  }
   const s = cellOf(lp, n);
   return {
     cell: s,

@@ -80,6 +80,7 @@ export const TOOL_ICON: Record<Tool, string> = {
   paint: "🪣",
   eyedropper: "💧",
   select: "⬚",
+  measure: "📏",
 };
 const VOX_TOOLS: { id: Tool; label: string }[] = [
   { id: "view", label: "View" },
@@ -87,12 +88,12 @@ const VOX_TOOLS: { id: Tool; label: string }[] = [
   { id: "erase", label: "Erase" },
   { id: "paint", label: "Fill" },
   { id: "select", label: "Select" },
-]; // eyedropper lives in the colour flyout, not the rail
+]; // eyedropper lives in the colour flyout; measure is appended in any mode
 // tree visibility-toggle glyphs, by current vis state
 const VIS_GLYPH: Record<string, string> = {
   visible: "◉",
-  transparent: "◐",
-  invisible: "⦰",
+  deemphasized: "◐",
+  hidden: "⦰",
 };
 
 // a tool-rail button (rounded square with an icon glyph over a small label)
@@ -108,41 +109,46 @@ const toolButton = (
     onclick,
   });
 
-// Measurement is a global toggle (works in any mode, alongside any tool); its
-// button lives in the bottom-left tool rail. Shared with the middle-click toggle
-// in interaction.ts.
-export function toggleMeasure(): void {
-  S.measMode = !S.measMode;
-  if (!S.measMode) clearMeasure();
+// Switch the active tool. Tools are mutually exclusive, so this drops any voxel
+// marquee, cancels a pending eyedropper return, hides the hover cube and clears
+// the live measurement — then redraws the chrome to reflect the new selection.
+export function setTool(id: Tool): void {
+  if (S.tool === id) return;
+  clearSelection();
+  S.tool = id;
+  S.eyedropReturn = null;
+  hoverVox.visible = false;
+  clearMeasure();
   updateChrome();
 }
 
 export function updateChrome(): void {
   const tw = document.getElementById("tools")!;
   tw.innerHTML = "";
-  // top group: the voxel tools while editing an object (scene actions live in the
-  // tree's right-click menu). Omitted entirely outside edit mode.
-  if (S.editObject) {
-    const top = el("div", { className: "toolgroup" });
-    for (const t of VOX_TOOLS) {
-      top.appendChild(toolButton(TOOL_ICON[t.id], t.label, S.tool === t.id, () => {
-        if (S.tool !== t.id) clearSelection(); // switching tools drops the marquee
-        S.tool = t.id;
-        S.eyedropReturn = null; // a manual switch cancels any pending eyedropper return
-        hoverVox.visible = false;
-        updateChrome();
-      }));
-    }
-    top.appendChild(colorControl()); // draw-colour picker (only meaningful while editing)
-    tw.append(top);
+  // outside edit mode the only tools are View and Measure; keep one always
+  // selected by normalising a leftover voxel tool back to View
+  if (!S.editObject && S.tool !== "measure") S.tool = "view";
+  // single top-left tool rail. While editing an object it holds the voxel tools
+  // (scene actions live in the tree's right-click menu); in scene mode just View.
+  // Measure sits alongside them as a tool of its own (reachable in either mode),
+  // and the colour picker trails the row when editing.
+  const top = el("div", { className: "toolgroup" });
+  const tools: { id: Tool; label: string }[] = S.editObject
+    ? VOX_TOOLS
+    : [{ id: "view", label: "View" }];
+  for (const t of tools) {
+    top.appendChild(
+      toolButton(TOOL_ICON[t.id], t.label, S.tool === t.id, () => setTool(t.id)),
+    );
   }
-  // bottom group: the measurement toggle, available in every mode
-  const bottom = el("div", { className: "toolgroup bottom" });
-  bottom.appendChild(toolButton("📏", "Measure", S.measMode, toggleMeasure));
-  tw.append(bottom);
-  // the tool-cursor glyph is edit-mode only; hide it on the transition to scene
-  // mode (a pointer move may not follow, e.g. exiting via the keyboard)
-  if (!S.editObject) {
+  top.appendChild(
+    toolButton(TOOL_ICON.measure, "Measure", S.tool === "measure", () => setTool("measure")),
+  );
+  if (S.editObject) top.appendChild(colorControl()); // draw-colour picker (edit mode only)
+  tw.append(top);
+  // the View tool shows no trailing glyph; hide it the moment View is selected
+  // (a pointer move may not follow, e.g. switching tool via the keyboard)
+  if (S.tool === "view") {
     const tc = document.getElementById("toolcursor");
     if (tc) tc.style.display = "none";
   }
@@ -475,7 +481,7 @@ function rowClick(node: Node, e: MouseEvent): void {
 // Inline rename: swap a row's name span for a text input, committing on Enter or
 // blur and cancelling on Escape. updateChrome() rebuilds the tree afterwards,
 // restoring the plain name span. Used by the name-click gesture and the menu.
-function startRename(node: Node): void {
+export function startRename(node: Node): void {
   closeItemMenu(); // when invoked from the context menu
   const r = document.querySelector<HTMLElement>(`#tree .trow[data-id="${node.id}"]`);
   const nm = r?.querySelector(".nm");
@@ -593,7 +599,7 @@ function buildTree(): void {
       r.append(el("button", {
         className: "tb" + (v === "visible" ? " on" : ""),
         textContent: VIS_GLYPH[v],
-        title: "visible → transparent → invisible",
+        title: "visible → deemphasized → hidden",
         onclick: (e) => {
           e.stopPropagation();
           cycleVis(node);
@@ -821,6 +827,40 @@ function doDrop(): void {
     }
   });
 }
+
+// Collapse / reveal the scene sidebar. Hiding gives the canvas the full width;
+// a "resize" event re-fits the renderer to the new stage size (the grid track
+// changes without the window itself resizing). The reveal button floats at the
+// top-right and is shown by CSS only while the panel is collapsed.
+{
+  const app = document.getElementById("app")!;
+  const setSidebar = (hidden: boolean) => {
+    app.classList.toggle("side-hidden", hidden);
+    window.dispatchEvent(new Event("resize"));
+  };
+  document.getElementById("btn-hide-side")!.onclick = () => setSidebar(true);
+  document.getElementById("btn-show-side")!.onclick = () => setSidebar(false);
+}
+
+// Clicking empty space in the side panel — anywhere that isn't a tree row,
+// button or input — clears the scene selection, an easy way to deselect all.
+document.getElementById("side")!.addEventListener("click", (e) => {
+  if ((e.target as HTMLElement).closest(".trow, button, input")) return;
+  if (!S.selection.size) return;
+  const prevSel = new Set(S.selection);
+  S.selection.clear();
+  selAnchor = null;
+  selectionRender(prevSel);
+  updateChrome();
+});
+// Right-clicking empty side-panel space opens the same menu as the project
+// root — New object / New group (and Paste) acting at the top level. Tree rows
+// stop propagation and show their own menu, so this only fires off a row.
+document.getElementById("side")!.addEventListener("contextmenu", (e) => {
+  if ((e.target as HTMLElement).closest(".trow, button, input")) return;
+  e.preventDefault();
+  showItemMenu(S.root, e.clientX, e.clientY);
+});
 
 window.addEventListener("keydown", (e) => {
   if ((e.target as HTMLElement).tagName === "INPUT") return;

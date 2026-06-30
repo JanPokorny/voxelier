@@ -37,13 +37,18 @@ export function ser(n: Node): SerNode {
     }
     : { t: "s", ...b, c: n.children.map(ser) };
 }
+// older saves stored the pre-rename visibility names
+const VIS_MIGRATE: Record<string, Vis> = {
+  transparent: "deemphasized",
+  invisible: "hidden",
+};
 export function de(d: SerNode): Node {
   const b = {
     id: d.id,
     name: d.nm || "",
     pos: d.p,
     rot: d.r,
-    vis: d.vs || "visible",
+    vis: VIS_MIGRATE[d.vs] || d.vs || "visible",
   };
   return d.t === "o"
     ? {
@@ -71,7 +76,11 @@ export function flush(): void {
   const rootJSON = JSON.stringify(ser(S.root)); // serialise once, share with record()
   record(rootJSON); // undo snapshot (no-op during restore)
   try {
-    localStorage.setItem(LS, `{"uid":${peekUid()},"root":${rootJSON}}`);
+    const collapsed = JSON.stringify([...S.collapsed]); // keep groups' fold state across reloads
+    localStorage.setItem(
+      LS,
+      `{"uid":${peekUid()},"root":${rootJSON},"collapsed":${collapsed}}`,
+    );
   } catch (_) { /* quota / private mode */ }
 }
 export function save(): void {
@@ -82,11 +91,12 @@ export function save(): void {
 // counter and deserialise the root. Returns false (and installs nothing) when the
 // envelope has no root, so callers can branch on a malformed file/blob.
 export function installScene(
-  d: { uid?: number; root?: SerNode } | null,
+  d: { uid?: number; root?: SerNode; collapsed?: string[] } | null,
 ): boolean {
   if (!d || !d.root) return false;
   seedUid(d.uid || 1);
   S.root = de(d.root) as SceneNode;
+  S.collapsed = new Set(d.collapsed ?? []); // restore (or reset) the tree fold state
   return true;
 }
 export function load(): boolean {

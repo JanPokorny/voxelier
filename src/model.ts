@@ -36,16 +36,17 @@ export const DEFAULT_COLORS = [
   0xa7c4bc,
 ];
 
-// vis: 'visible' | 'transparent' | 'invisible' (inherited by descendants)
+// vis: 'visible' | 'deemphasized' | 'hidden' (inherited by descendants). The
+// ordinal is the strength of de-emphasis, so a child inherits max(self, ancestor).
 export const VIS: Record<Vis, number> = {
   visible: 0,
-  transparent: 1,
-  invisible: 2,
+  deemphasized: 1,
+  hidden: 2,
 };
 export const VIS_CYCLE: Record<Vis, Vis> = {
-  visible: "transparent",
-  transparent: "invisible",
-  invisible: "visible",
+  visible: "deemphasized",
+  deemphasized: "hidden",
+  hidden: "visible",
 };
 
 export const newObject = (): ObjectNode => ({
