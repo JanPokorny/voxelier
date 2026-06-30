@@ -481,7 +481,7 @@ function rowClick(node: Node, e: MouseEvent): void {
 // Inline rename: swap a row's name span for a text input, committing on Enter or
 // blur and cancelling on Escape. updateChrome() rebuilds the tree afterwards,
 // restoring the plain name span. Used by the name-click gesture and the menu.
-function startRename(node: Node): void {
+export function startRename(node: Node): void {
   closeItemMenu(); // when invoked from the context menu
   const r = document.querySelector<HTMLElement>(`#tree .trow[data-id="${node.id}"]`);
   const nm = r?.querySelector(".nm");

@@ -20,7 +20,7 @@ import {
 import { growBounds, worldBox } from "./boxes.ts";
 import { goal } from "./scene-env.ts";
 import { rebuild } from "./render.ts";
-import { updateChrome } from "./ui.ts";
+import { startRename, updateChrome } from "./ui.ts";
 import { enterNode, selectNode } from "./navigation.ts";
 import { save } from "./persistence.ts";
 import { clipKind, getNodeClip, getVoxClip, setNodeClip } from "./clipboard.ts";
@@ -53,6 +53,7 @@ const spawnObject = (parent: SceneNode, fit: boolean): void => {
   S.collapsed.delete(parent.id);
   enterNode(o, fit); // fit only when spawning into the open context; nested stays put
   save();
+  startRename(o); // a fresh object opens ready to be named
 };
 export function createObject(): void {
   spawnObject(S.context, true);
@@ -185,6 +186,7 @@ export function wrapNodeInGroup(node: Node): void {
   S.collapsed.delete(g.id);
   selectNode(g);
   save();
+  startRename(g); // a fresh group opens ready to be named
 }
 // Group the whole selection into one fresh group that takes `anchor`'s slot and
 // pose (the right-clicked item), then reparent each selected sibling into it with
@@ -244,6 +246,7 @@ export function addGroupIn(group: SceneNode): void { // new empty group inside a
   S.collapsed.delete(group.id);
   selectNode(g);
   save();
+  startRename(g); // a fresh group opens ready to be named
 }
 // Rotate the selection in 90° steps about the COMBINED centre of all selected
 // items, so a multi-selection turns as one rigid unit (each piece both spins and
