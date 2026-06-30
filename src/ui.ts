@@ -853,6 +853,14 @@ document.getElementById("side")!.addEventListener("click", (e) => {
   selectionRender(prevSel);
   updateChrome();
 });
+// Right-clicking empty side-panel space opens the same menu as the project
+// root — New object / New group (and Paste) acting at the top level. Tree rows
+// stop propagation and show their own menu, so this only fires off a row.
+document.getElementById("side")!.addEventListener("contextmenu", (e) => {
+  if ((e.target as HTMLElement).closest(".trow, button, input")) return;
+  e.preventDefault();
+  showItemMenu(S.root, e.clientX, e.clientY);
+});
 
 window.addEventListener("keydown", (e) => {
   if ((e.target as HTMLElement).tagName === "INPUT") return;
