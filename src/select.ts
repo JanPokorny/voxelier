@@ -11,6 +11,7 @@ import { camera, ndc, raycaster } from "./scene-env.ts";
 import { locToW } from "./picking.ts";
 import { editErase, editStamp, scheduleEditRemesh } from "./render.ts";
 import { clipBoxes, growBounds } from "./boxes.ts";
+import { rigidRotateWorld } from "./shear.ts";
 import { emptyBox } from "./model.ts";
 import { setVoxClip } from "./clipboard.ts";
 import { flush, save } from "./persistence.ts";
@@ -221,6 +222,23 @@ export function rotateSelectionTo(steps: number, horizontal: boolean): void {
   }
   s.boxes = rot;
   s.region = regionOf(rot);
+  scheduleEditRemesh();
+}
+// Fine (Alt) rotation of the selection by an arbitrary 15°-stepped angle, baked
+// via the three-shear algorithm — the object-editor counterpart of the scene's
+// fine object rotation. Works from the same base snapshot, turning about the
+// selection's centre (Shift -> a horizontal axis, else Y).
+export function fineRotateSelectionTo(deg: number, horizontal: boolean): void {
+  const s = S.sel3d, base = rotBase;
+  if (!s || !base || !base.boxes.length) return;
+  const axis = horizontal ? horizAxis() : 1;
+  const [pu, pv] = axis === 0
+    ? [base.cy, base.cz]
+    : axis === 1
+    ? [base.cx, base.cz]
+    : [base.cx, base.cy];
+  s.boxes = rigidRotateWorld(base.boxes, deg, axis, pu, pv, (x, y, z) => ({ x, y, z }));
+  s.region = regionOf(s.boxes);
   scheduleEditRemesh();
 }
 

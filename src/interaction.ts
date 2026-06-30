@@ -50,6 +50,7 @@ import {
   captureSelection,
   clearSelection,
   dropSelection,
+  fineRotateSelectionTo,
   liftSelection,
   rotateSelectionTo,
   selectionHit,
@@ -528,14 +529,33 @@ function selMoveTo(e: PointerEvent): void {
 }
 function selRotTo(e: PointerEvent): void {
   const d = S.drag!;
-  const steps = Math.round((d.sx - e.clientX) / 70);
-  if (steps === d.steps) return;
-  if (!S.sel3d!.lifted) { // carve out + snapshot the base orientation on first turn
-    liftSelection();
-    beginRotate();
+  const fine = e.altKey; // Alt: 15° steps (baked via three shears), else 90° snap
+  if (fine !== !!d.fine) { // toggled Alt mid-drag: re-baseline from the current pose
+    if (S.sel3d!.lifted) beginRotate();
+    d.fine = fine;
+    d.sx = e.clientX;
+    d.steps = 0;
+    d.deg = 0;
   }
-  d.steps = steps;
-  rotateSelectionTo(steps, e.shiftKey); // absolute turn from the base; Shift -> horizontal
+  const lift = () => { // carve out + snapshot the base orientation on first turn
+    if (!S.sel3d!.lifted) {
+      liftSelection();
+      beginRotate();
+    }
+  };
+  if (fine) {
+    const deg = Math.round((d.sx - e.clientX) / 25) * 15;
+    if (deg === (d.deg ?? 0)) return;
+    lift();
+    d.deg = deg;
+    fineRotateSelectionTo(deg, e.shiftKey); // absolute turn from the base; Shift -> horizontal
+  } else {
+    const steps = Math.round((d.sx - e.clientX) / 70);
+    if (steps === d.steps) return;
+    lift();
+    d.steps = steps;
+    rotateSelectionTo(steps, e.shiftKey); // absolute turn from the base; Shift -> horizontal
+  }
 }
 // finalise a marquee drag: a real drag captures the box, a click just deselects
 function commitMarquee(didMove: boolean): void {
