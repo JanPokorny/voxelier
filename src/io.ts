@@ -11,7 +11,11 @@ import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
 
 export function exportScene(): void {
-  const data = JSON.stringify({ uid: peekUid(), root: ser(S.root) });
+  const data = JSON.stringify({
+    uid: peekUid(),
+    root: ser(S.root),
+    collapsed: [...S.collapsed],
+  });
   const url = URL.createObjectURL(
     new Blob([data], { type: "application/json" }),
   );

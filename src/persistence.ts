@@ -76,7 +76,11 @@ export function flush(): void {
   const rootJSON = JSON.stringify(ser(S.root)); // serialise once, share with record()
   record(rootJSON); // undo snapshot (no-op during restore)
   try {
-    localStorage.setItem(LS, `{"uid":${peekUid()},"root":${rootJSON}}`);
+    const collapsed = JSON.stringify([...S.collapsed]); // keep groups' fold state across reloads
+    localStorage.setItem(
+      LS,
+      `{"uid":${peekUid()},"root":${rootJSON},"collapsed":${collapsed}}`,
+    );
   } catch (_) { /* quota / private mode */ }
 }
 export function save(): void {
@@ -87,11 +91,12 @@ export function save(): void {
 // counter and deserialise the root. Returns false (and installs nothing) when the
 // envelope has no root, so callers can branch on a malformed file/blob.
 export function installScene(
-  d: { uid?: number; root?: SerNode } | null,
+  d: { uid?: number; root?: SerNode; collapsed?: string[] } | null,
 ): boolean {
   if (!d || !d.root) return false;
   seedUid(d.uid || 1);
   S.root = de(d.root) as SceneNode;
+  S.collapsed = new Set(d.collapsed ?? []); // restore (or reset) the tree fold state
   return true;
 }
 export function load(): boolean {
