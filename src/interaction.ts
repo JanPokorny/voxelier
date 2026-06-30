@@ -50,7 +50,7 @@ import {
   captureSelection,
   clearSelection,
   dropSelection,
-  fineRotateSelectionTo,
+  fineRotateSel3d,
   liftSelection,
   rotateSelectionTo,
   selectionHit,
@@ -553,7 +553,7 @@ function selRotTo(e: PointerEvent): void {
     if (deg === (d.deg ?? 0)) return;
     lift();
     d.deg = deg;
-    fineRotateSelectionTo(deg, e.shiftKey); // absolute turn from the base; Shift -> horizontal
+    fineRotateSel3d(deg, e.shiftKey); // absolute turn from the base; Shift -> horizontal
   } else {
     const steps = Math.round((d.sx - e.clientX) / 70);
     if (steps === d.steps) return;

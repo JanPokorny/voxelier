@@ -228,7 +228,7 @@ export function rotateSelectionTo(steps: number, horizontal: boolean): void {
 // via the three-shear algorithm — the object-editor counterpart of the scene's
 // fine object rotation. Works from the same base snapshot, turning about the
 // selection's centre (Shift -> a horizontal axis, else Y).
-export function fineRotateSelectionTo(deg: number, horizontal: boolean): void {
+export function fineRotateSel3d(deg: number, horizontal: boolean): void {
   const s = S.sel3d, base = rotBase;
   if (!s || !base || !base.boxes.length) return;
   const axis = horizontal ? horizAxis() : 1;
