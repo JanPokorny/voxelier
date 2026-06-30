@@ -125,23 +125,24 @@ export function setTool(id: Tool): void {
 export function updateChrome(): void {
   const tw = document.getElementById("tools")!;
   tw.innerHTML = "";
+  // outside edit mode the only tools are View and Measure; keep one always
+  // selected by normalising a leftover voxel tool back to View
+  if (!S.editObject && S.tool !== "measure") S.tool = "view";
   // single top-left tool rail. While editing an object it holds the voxel tools
-  // (scene actions live in the tree's right-click menu); Measure sits alongside
-  // them as a tool of its own, and the colour picker trails the row. The rail is
-  // always present so Measure stays reachable outside edit mode too.
+  // (scene actions live in the tree's right-click menu); in scene mode just View.
+  // Measure sits alongside them as a tool of its own (reachable in either mode),
+  // and the colour picker trails the row when editing.
   const top = el("div", { className: "toolgroup" });
-  if (S.editObject) {
-    for (const t of VOX_TOOLS) {
-      top.appendChild(
-        toolButton(TOOL_ICON[t.id], t.label, S.tool === t.id, () => setTool(t.id)),
-      );
-    }
+  const tools: { id: Tool; label: string }[] = S.editObject
+    ? VOX_TOOLS
+    : [{ id: "view", label: "View" }];
+  for (const t of tools) {
+    top.appendChild(
+      toolButton(TOOL_ICON[t.id], t.label, S.tool === t.id, () => setTool(t.id)),
+    );
   }
-  // Measure is a tool like the rest; outside edit mode it's the only one, so its
-  // button toggles back to View to switch measuring off.
   top.appendChild(
-    toolButton(TOOL_ICON.measure, "Measure", S.tool === "measure", () =>
-      setTool(S.tool === "measure" ? "view" : "measure")),
+    toolButton(TOOL_ICON.measure, "Measure", S.tool === "measure", () => setTool("measure")),
   );
   if (S.editObject) top.appendChild(colorControl()); // draw-colour picker (edit mode only)
   tw.append(top);
