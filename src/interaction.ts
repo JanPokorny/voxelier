@@ -38,7 +38,13 @@ import {
 import { boxesOverlap, worldBox } from "./boxes.ts";
 import { childById, clone, contextXform } from "./model.ts";
 import { orbitView, panCamera } from "./camera.ts";
-import { boxSegments, markMeasure, pointerMeasure, renderMeasure } from "./measure.ts";
+import {
+  boxSegments,
+  clearMeasureAnchor,
+  markMeasure,
+  pointerMeasure,
+  renderMeasure,
+} from "./measure.ts";
 import {
   beginRotate,
   captureSelection,
@@ -77,7 +83,9 @@ toolCursor.id = "toolcursor";
 toolCursor.style.display = "none";
 document.body.appendChild(toolCursor);
 function updateToolCursor(e: PointerEvent): void {
-  if (!S.editObject) {
+  // every tool trails its glyph by the pointer, in any mode — except View, which
+  // is the plain navigate tool and shows none
+  if (S.tool === "view") {
     toolCursor.style.display = "none";
     return;
   }
@@ -595,7 +603,8 @@ canvas.addEventListener("pointerdown", (e) => {
       };
     } else S.drag = { ...base, mode: "pan", clickId: hitId };
   } else if (e.button === 2) {
-    if (onSel) S.drag = { ...base, mode: "rotobj", steps: 0 };
+    // measure: right-click cancels box mode (handled on release), never rotates
+    if (onSel && S.tool !== "measure") S.drag = { ...base, mode: "rotobj", steps: 0 };
     else S.drag = { ...base, mode: "orbit" };
   }
 });
@@ -627,12 +636,20 @@ canvas.addEventListener("pointerup", (e) => {
   try {
     canvas.releasePointerCapture(e.pointerId);
   } catch (_) { /* not captured */ }
-  // measure tool: a left click (no drag) marks/unmarks the anchor point — in any
-  // mode, ahead of the usual pan/select handling (a moved drag just panned)
-  if (S.tool === "measure" && S.drag && !moved(e) && e.button === 0) {
-    markMeasure();
-    S.drag = null;
-    return;
+  // measure tool clicks (no drag), ahead of the usual pan/orbit handling: left
+  // marks/unmarks the anchor; right cancels box mode back to the free read. A
+  // moved drag just panned/orbited.
+  if (S.tool === "measure" && S.drag && !moved(e)) {
+    if (e.button === 0) {
+      markMeasure();
+      S.drag = null;
+      return;
+    }
+    if (e.button === 2) {
+      clearMeasureAnchor();
+      S.drag = null;
+      return;
+    }
   }
   if (S.editObject) {
     if (S.painting) {

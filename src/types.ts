@@ -71,6 +71,7 @@ export type Seg = {
   len: number;
   filled: boolean;
   nolabel?: boolean;
+  gray?: boolean; // neutral colour (the anchored measure box), vs filled/empty cyan/blue
 };
 export type MeasLabel = { el: HTMLElement; w: THREE.Vector3 };
 export type MeasField = {

@@ -12,6 +12,7 @@ import { emptyBox } from "./model.ts";
 import type { Box3, MeasField, MeasLabel, Seg, Vec } from "./types.ts";
 
 const M_FILL = new THREE.Color(0xa7c4bc), M_EMPTY = new THREE.Color(0x5c677d);
+const M_GRAY = new THREE.Color(0xcfcfcf); // the anchored measure box (neutral)
 // Measurement state owned solely by this module: the memoised occupancy field
 // (invalidated via invalidateField()) and the live DOM label elements with their
 // world anchors.
@@ -133,6 +134,7 @@ export function boxSegments(
   Z1: number,
   toW: (x: number, y: number, z: number) => THREE.Vector3,
   labelMin: number,
+  gray = false, // neutral colour (the anchored measure box) instead of the cyan brush
 ): Seg[] {
   const nx = X1 - X0, ny = Y1 - Y0, nz = Z1 - Z0;
   const seg = (
@@ -151,6 +153,7 @@ export function boxSegments(
     len,
     filled: true,
     nolabel: !label,
+    gray,
   });
   return [
     seg(X0, Y0, Z0, X1, Y0, Z0, nx, nx >= labelMin), // X dimension
@@ -180,6 +183,12 @@ export function markMeasure(): void {
     : c;
   pointerMeasure();
 }
+// Drop the anchor (right-click), returning to the default three-axis read.
+export function clearMeasureAnchor(): void {
+  if (!anchor) return;
+  anchor = null;
+  pointerMeasure();
+}
 // box from the anchor to the cursor cell (inclusive), as labelled dimensions
 function measureBox(a: Vec, c: Vec): Seg[] {
   const f = measureField();
@@ -192,6 +201,7 @@ function measureBox(a: Vec, c: Vec): Seg[] {
     Math.max(a.z, c.z) + 1,
     f.toW,
     1, // label every dimension, including a span of 1
+    true, // neutral grey, not the cyan box-brush colour
   );
 }
 export function pointerMeasure(): void {
@@ -209,7 +219,7 @@ export function renderMeasure(): void {
   const pos: number[] = [], colr: number[] = [];
   if (S.liveMeas) {
     for (const seg of S.liveMeas) {
-      const c = seg.filled ? M_FILL : M_EMPTY;
+      const c = seg.gray ? M_GRAY : seg.filled ? M_FILL : M_EMPTY;
       pos.push(seg.a.x, seg.a.y, seg.a.z, seg.b.x, seg.b.y, seg.b.z);
       colr.push(c.r, c.g, c.b, c.r, c.g, c.b);
       if (seg.nolabel) continue;

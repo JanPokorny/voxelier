@@ -146,9 +146,9 @@ export function updateChrome(): void {
   );
   if (S.editObject) top.appendChild(colorControl()); // draw-colour picker (edit mode only)
   tw.append(top);
-  // the tool-cursor glyph is edit-mode only; hide it on the transition to scene
-  // mode (a pointer move may not follow, e.g. exiting via the keyboard)
-  if (!S.editObject) {
+  // the View tool shows no trailing glyph; hide it the moment View is selected
+  // (a pointer move may not follow, e.g. switching tool via the keyboard)
+  if (S.tool === "view") {
     const tc = document.getElementById("toolcursor");
     if (tc) tc.style.display = "none";
   }
