@@ -1,6 +1,7 @@
 // SketchUp-style floating dimensions: the "measure" tool (S.tool === "measure")
 // reads the filled/empty runs along all three axes through the voxel under the
-// pointer — in any mode. Hover-only: there is no freeze.
+// pointer — in any mode. Clicking marks an anchor cell; while one is set the
+// tool instead measures the box from it to the cursor (its three dimensions).
 import * as THREE from "three";
 import { S } from "./state.ts";
 import { _mv, camera, measLines, viewport } from "./scene-env.ts";
@@ -20,6 +21,7 @@ export const invalidateField = (): void => {
   fieldCache = null;
 };
 export function clearMeasure(): void {
+  anchor = null;
   S.liveMeas = null;
   renderMeasure();
 }
@@ -117,9 +119,86 @@ function measureAt(cell: Vec): Seg[] { // segments along all 3 axes through `cel
   }
   return out;
 }
+// A box wireframe as measure segments: three labelled dimension edges (X, Z, Y
+// from the low corner) plus the nine unlabelled remaining edges. `toW` maps the
+// half-open corner coords to world; a dimension is labelled only when it reaches
+// `labelMin` cells (the box brush hides "1"; the anchored measure shows it).
+// Shared by the add/erase box brush and the anchored measure below.
+export function boxSegments(
+  X0: number,
+  Y0: number,
+  Z0: number,
+  X1: number,
+  Y1: number,
+  Z1: number,
+  toW: (x: number, y: number, z: number) => THREE.Vector3,
+  labelMin: number,
+): Seg[] {
+  const nx = X1 - X0, ny = Y1 - Y0, nz = Z1 - Z0;
+  const seg = (
+    ax: number,
+    ay: number,
+    az: number,
+    bx: number,
+    by: number,
+    bz: number,
+    len: number,
+    label: boolean,
+  ): Seg => ({
+    a: toW(ax, ay, az),
+    b: toW(bx, by, bz),
+    mid: toW((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2),
+    len,
+    filled: true,
+    nolabel: !label,
+  });
+  return [
+    seg(X0, Y0, Z0, X1, Y0, Z0, nx, nx >= labelMin), // X dimension
+    seg(X0, Y0, Z0, X0, Y0, Z1, nz, nz >= labelMin), // Z dimension
+    seg(X0, Y0, Z0, X0, Y1, Z0, ny, ny >= labelMin), // Y dimension
+    seg(X1, Y0, Z0, X1, Y0, Z1, 0, false), // rest of the bottom
+    seg(X0, Y0, Z1, X1, Y0, Z1, 0, false),
+    seg(X0, Y1, Z0, X1, Y1, Z0, 0, false), // top
+    seg(X0, Y1, Z0, X0, Y1, Z1, 0, false),
+    seg(X1, Y1, Z0, X1, Y1, Z1, 0, false),
+    seg(X0, Y1, Z1, X1, Y1, Z1, 0, false),
+    seg(X1, Y0, Z0, X1, Y1, Z0, 0, false), // verticals
+    seg(X0, Y0, Z1, X0, Y1, Z1, 0, false),
+    seg(X1, Y0, Z1, X1, Y1, Z1, 0, false),
+  ];
+}
+
+// A point the measure tool has marked (field coords), or null for free hover.
+let anchor: Vec | null = null;
+// Mark / unmark the cell under the pointer as the measure anchor. Clicking the
+// current anchor again clears it (back to the free three-axis hover read).
+export function markMeasure(): void {
+  const c = measureRef();
+  if (!c) return;
+  anchor = anchor && anchor.x === c.x && anchor.y === c.y && anchor.z === c.z
+    ? null
+    : c;
+  pointerMeasure();
+}
+// box from the anchor to the cursor cell (inclusive), as labelled dimensions
+function measureBox(a: Vec, c: Vec): Seg[] {
+  const f = measureField();
+  return boxSegments(
+    Math.min(a.x, c.x),
+    Math.min(a.y, c.y),
+    Math.min(a.z, c.z),
+    Math.max(a.x, c.x) + 1,
+    Math.max(a.y, c.y) + 1,
+    Math.max(a.z, c.z) + 1,
+    f.toW,
+    1, // label every dimension, including a span of 1
+  );
+}
 export function pointerMeasure(): void {
   const c = measureRef();
-  S.liveMeas = c ? measureAt(c) : null;
+  // with an anchor set, measure the box from it to the cursor; otherwise read
+  // the filled/empty runs along the three axes through the hovered cell
+  S.liveMeas = c ? (anchor ? measureBox(anchor, c) : measureAt(c)) : null;
   renderMeasure();
 }
 

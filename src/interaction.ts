@@ -38,7 +38,7 @@ import {
 import { boxesOverlap, worldBox } from "./boxes.ts";
 import { childById, clone, contextXform } from "./model.ts";
 import { orbitView, panCamera } from "./camera.ts";
-import { pointerMeasure, renderMeasure } from "./measure.ts";
+import { boxSegments, markMeasure, pointerMeasure, renderMeasure } from "./measure.ts";
 import {
   beginRotate,
   captureSelection,
@@ -64,7 +64,7 @@ import {
   updateChrome,
 } from "./ui.ts";
 import { save } from "./persistence.ts";
-import type { Box3, Drag, Node, Seg, Vec } from "./types.ts";
+import type { Box3, Drag, Node, Vec } from "./types.ts";
 
 const moved = (e: PointerEvent) =>
   (Math.abs(e.clientX - S.drag!.sx) + Math.abs(e.clientY - S.drag!.sy)) > 3;
@@ -467,49 +467,11 @@ function commitBox(): void {
   updateChrome();
   save();
 }
-// build the box wireframe as measure-style segments (3 labelled dimension edges + the rest unlabelled)
+// the box-brush footprint as a labelled dimension wireframe (a "1" stays
+// unlabelled — crammed and self-evident), in object-local space via locToW
 function renderBox(): void {
   const r = boxRegion(S.drag!.box!);
-  const X0 = r.x0, X1 = r.x1, Y0 = r.y0, Y1 = r.y1, Z0 = r.z0, Z1 = r.z1;
-  const nx = X1 - X0, ny = Y1 - Y0, nz = Z1 - Z0;
-  const seg = (
-    ax: number,
-    ay: number,
-    az: number,
-    bx: number,
-    by: number,
-    bz: number,
-    len: number,
-    label: boolean,
-  ): Seg => ({
-    a: locToW(ax, ay, az),
-    b: locToW(bx, by, bz),
-    mid: locToW((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2),
-    len,
-    filled: true,
-    nolabel: !label,
-  });
-  const o: Seg[] = [];
-  // label a dimension only when it's >= 2: a "1" is crammed and self-evident
-  o.push(seg(X0, Y0, Z0, X1, Y0, Z0, nx, nx >= 2)); // X dimension
-  o.push(seg(X0, Y0, Z0, X0, Y0, Z1, nz, nz >= 2)); // Z dimension
-  o.push(seg(X0, Y0, Z0, X0, Y1, Z0, ny, ny >= 2)); // Y dimension
-  o.push(
-    seg(X1, Y0, Z0, X1, Y0, Z1, 0, false),
-    seg(X0, Y0, Z1, X1, Y0, Z1, 0, false),
-  ); // rest of bottom
-  o.push(
-    seg(X0, Y1, Z0, X1, Y1, Z0, 0, false),
-    seg(X0, Y1, Z0, X0, Y1, Z1, 0, false), // top
-    seg(X1, Y1, Z0, X1, Y1, Z1, 0, false),
-    seg(X0, Y1, Z1, X1, Y1, Z1, 0, false),
-  );
-  o.push(
-    seg(X1, Y0, Z0, X1, Y1, Z0, 0, false),
-    seg(X0, Y0, Z1, X0, Y1, Z1, 0, false), // verticals
-    seg(X1, Y0, Z1, X1, Y1, Z1, 0, false),
-  );
-  S.liveMeas = o;
+  S.liveMeas = boxSegments(r.x0, r.y0, r.z0, r.x1, r.y1, r.z1, locToW, 2);
   renderMeasure();
 }
 
@@ -618,7 +580,9 @@ canvas.addEventListener("pointerdown", (e) => {
   const hitId = pickChild();
   const onSel = hitId && S.selection.has(hitId);
   if (e.button === 0) {
-    if (onSel) {
+    if (S.tool === "measure") {
+      S.drag = { ...base, mode: "pan" }; // measure: click marks a point, drag pans
+    } else if (onSel) {
       S.drag = {
         ...base,
         mode: "move",
@@ -663,6 +627,13 @@ canvas.addEventListener("pointerup", (e) => {
   try {
     canvas.releasePointerCapture(e.pointerId);
   } catch (_) { /* not captured */ }
+  // measure tool: a left click (no drag) marks/unmarks the anchor point — in any
+  // mode, ahead of the usual pan/select handling (a moved drag just panned)
+  if (S.tool === "measure" && S.drag && !moved(e) && e.button === 0) {
+    markMeasure();
+    S.drag = null;
+    return;
+  }
   if (S.editObject) {
     if (S.painting) {
       S.painting = false;
