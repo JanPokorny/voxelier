@@ -530,12 +530,17 @@ function selMoveTo(e: PointerEvent): void {
 function selRotTo(e: PointerEvent): void {
   const d = S.drag!;
   const fine = e.altKey; // Alt: 15° steps (baked via three shears), else 90° snap
-  if (fine !== !!d.fine) { // toggled Alt mid-drag: re-baseline from the current pose
-    if (S.sel3d!.lifted) beginRotate();
+  if (fine !== !!d.fine) {
     d.fine = fine;
-    d.sx = e.clientX;
-    d.steps = 0;
-    d.deg = 0;
+    // Only re-baseline when Alt is toggled AFTER a turn was already applied (the
+    // selection is lifted). At the start of the drag, keep the pointerdown origin
+    // so the whole drag delta counts toward the first step.
+    if (S.sel3d!.lifted) {
+      beginRotate();
+      d.sx = e.clientX;
+      d.steps = 0;
+      d.deg = 0;
+    }
   }
   const lift = () => { // carve out + snapshot the base orientation on first turn
     if (!S.sel3d!.lifted) {
