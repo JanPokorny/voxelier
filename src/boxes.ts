@@ -71,10 +71,45 @@ export function eraseBox(boxes: Box3[], r: Region): Box3[] {
   for (const b of boxes) subtract(b, r, out);
   return out;
 }
-// Carve `r` out, then lay the region back on top with colour `c`.
+// Grow `nb` by absorbing boxes that share its colour and an exactly matching
+// face (equal extents on the other two axes, touching on the third), rescanning
+// after every merge since the grown box may now match more. This undoes
+// subtract()'s fragmentation for the common cases as it happens: erasing and
+// re-adding a cell of a large box heals it back into one box instead of leaving
+// the six carve fragments, and row-by-row builds coalesce into slabs.
+function absorb(out: Box3[], nb: Box3): void {
+  for (let i = 0; i < out.length;) {
+    const q = out[i];
+    if (q.c !== nb.c) {
+      i++;
+      continue;
+    }
+    const ey = q.y0 === nb.y0 && q.y1 === nb.y1,
+      ez = q.z0 === nb.z0 && q.z1 === nb.z1,
+      ex = q.x0 === nb.x0 && q.x1 === nb.x1;
+    if (ey && ez && (q.x1 === nb.x0 || nb.x1 === q.x0)) {
+      nb.x0 = Math.min(nb.x0, q.x0);
+      nb.x1 = Math.max(nb.x1, q.x1);
+    } else if (ex && ez && (q.y1 === nb.y0 || nb.y1 === q.y0)) {
+      nb.y0 = Math.min(nb.y0, q.y0);
+      nb.y1 = Math.max(nb.y1, q.y1);
+    } else if (ex && ey && (q.z1 === nb.z0 || nb.z1 === q.z0)) {
+      nb.z0 = Math.min(nb.z0, q.z0);
+      nb.z1 = Math.max(nb.z1, q.z1);
+    } else {
+      i++;
+      continue;
+    }
+    out.splice(i, 1);
+    i = 0;
+  }
+  out.push(nb);
+}
+// Carve `r` out, then lay the region back on top with colour `c`, merging it
+// with exactly-abutting same-colour boxes (see absorb).
 export function addBox(boxes: Box3[], r: Region, c: number): Box3[] {
   const out = eraseBox(boxes, r);
-  out.push({ ...r, c });
+  absorb(out, { ...r, c });
   return out;
 }
 // Flood-fill: recolour the connected (face-adjacent) run of same-colour cells

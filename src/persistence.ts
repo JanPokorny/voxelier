@@ -2,7 +2,8 @@
 // save is debounced; load restores the root and the id counter.
 import { S } from "./state.ts";
 import { peekUid, seedUid } from "./math.ts";
-import { record } from "./history.ts";
+import { amend, record } from "./history.ts";
+import { queueRebox } from "./rebox.ts";
 import type { Node, ObjectNode, SceneNode, Vis } from "./types.ts";
 
 const LS = "voxelier-v11"; // v11: box model — objects serialise as colour boxes
@@ -70,11 +71,7 @@ export function de(d: SerNode): Node {
 // model, so they're debounced together: a burst of edits collapses into a single
 // serialisation 250ms after the last change, keeping it off the interaction path.
 let saveT: number | undefined; // pending debounce timer (save -> flush)
-export function flush(): void {
-  clearTimeout(saveT);
-  saveT = undefined;
-  const rootJSON = JSON.stringify(ser(S.root)); // serialise once, share with record()
-  record(rootJSON); // undo snapshot (no-op during restore)
+function persistLS(rootJSON: string): void {
   try {
     const collapsed = JSON.stringify([...S.collapsed]); // keep groups' fold state across reloads
     localStorage.setItem(
@@ -82,6 +79,25 @@ export function flush(): void {
       `{"uid":${peekUid()},"root":${rootJSON},"collapsed":${collapsed}}`,
     );
   } catch (_) { /* quota / private mode */ }
+}
+export function flush(): void {
+  clearTimeout(saveT);
+  saveT = undefined;
+  const rootJSON = JSON.stringify(ser(S.root)); // serialise once, share with record()
+  record(rootJSON); // undo snapshot (no-op during restore)
+  persistLS(rootJSON);
+  queueRebox(); // the document settled — start the background-repack countdown
+}
+// Persist a document whose GEOMETRY is unchanged — only the box decomposition
+// differs (the background repack). Folds into the CURRENT top undo snapshot
+// instead of recording a new step, so undo never needs an extra press to cross
+// an invisible representation change. With a real save pending, do nothing:
+// that flush will serialise (and record) this state along with the edit.
+export function flushAmend(): void {
+  if (saveT !== undefined) return;
+  const rootJSON = JSON.stringify(ser(S.root));
+  amend(rootJSON);
+  persistLS(rootJSON);
 }
 export function save(): void {
   clearTimeout(saveT);
