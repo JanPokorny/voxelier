@@ -63,13 +63,8 @@ import {
   fineRotateSelectionTo,
   rotateSelectionBy,
 } from "./commands.ts";
-import {
-  recordRecent,
-  selectColor,
-  setSelAnchor,
-  TOOL_ICON,
-  updateChrome,
-} from "./ui.ts";
+import { recordRecent, selectColor, TOOL_ICON, updateChrome } from "./ui.ts";
+import { setSelAnchor } from "./tree.ts";
 import { save } from "./persistence.ts";
 import type { Box3, Drag, Node, Vec } from "./types.ts";
 
@@ -450,7 +445,9 @@ function boxDragTo(e: PointerEvent): void {
     const stepX = aR * px, stepY = -aU * px; // px per +1 cell (y down +)
     const dxp = e.clientX - d.shiftAnchorX!, dyp = e.clientY - d.shiftAnchorY!;
     const hy = d.hyBase! + (sin2 > 0.02 // axis usably on screen -> project onto it
-      ? Math.round((dxp * stepX + dyp * stepY) / (stepX * stepX + stepY * stepY))
+      ? Math.round(
+        (dxp * stepX + dyp * stepY) / (stepX * stepX + stepY * stepY),
+      )
       // axis ~along the view: no on-screen direction, fall back to vertical travel
       : Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel()));
     if (clear(b.c[ua], b.c[va], hy)) b.hy = hy; // else stop at the last clear depth
@@ -487,7 +484,9 @@ function renderBox(): void {
 // ---- select tool: grab/move/rotate the marquee selection ----
 // The content is lifted (carved out of the object) lazily, on the first actual
 // move/rotate, so a plain click on the selection neither edits nor records undo.
-function startSelMove(base: { x: number; y: number; sx: number; sy: number }): void {
+function startSelMove(
+  base: { x: number; y: number; sx: number; sy: number },
+): void {
   const y0 = S.sel3d!.region.y0; // drag on the selection's floor plane
   S.drag = {
     ...base,
@@ -499,7 +498,9 @@ function startSelMove(base: { x: number; y: number; sx: number; sy: number }): v
     shiftAnchorY: null,
   };
 }
-function startSelRot(base: { x: number; y: number; sx: number; sy: number }): void {
+function startSelRot(
+  base: { x: number; y: number; sx: number; sy: number },
+): void {
   S.drag = { ...base, mode: "selrot", steps: 0 };
 }
 function selMoveTo(e: PointerEvent): void {
@@ -510,7 +511,8 @@ function selMoveTo(e: PointerEvent): void {
       d.shiftAnchorY = e.clientY;
       d.dyBase = ty;
     }
-    ty = d.dyBase! + Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
+    ty = d.dyBase! +
+      Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
   } else { // slide on the start floor plane
     d.shiftAnchorY = null;
     const g = localGroundCell(d.start!.y);
@@ -589,8 +591,9 @@ canvas.addEventListener("pointerdown", (e) => {
       // view/measure pan the camera (non-destructive); select grabs/extends the
       // marquee; add/erase drag out a box footprint; eyedropper picks a colour
       // (one-shot); paint floods the hovered cell
-      if (S.tool === "view" || S.tool === "measure") S.drag = { ...base, mode: "pan" };
-      else if (S.tool === "select") {
+      if (S.tool === "view" || S.tool === "measure") {
+        S.drag = { ...base, mode: "pan" };
+      } else if (S.tool === "select") {
         if (S.sel3d && selectionHit()) startSelMove(base);
         else {
           clearSelection(); // clicking outside the selection deselects it
@@ -629,8 +632,9 @@ canvas.addEventListener("pointerdown", (e) => {
     } else S.drag = { ...base, mode: "pan", clickId: hitId };
   } else if (e.button === 2) {
     // measure: right-click cancels box mode (handled on release), never rotates
-    if (onSel && S.tool !== "measure") S.drag = { ...base, mode: "rotobj", steps: 0 };
-    else S.drag = { ...base, mode: "orbit" };
+    if (onSel && S.tool !== "measure") {
+      S.drag = { ...base, mode: "rotobj", steps: 0 };
+    } else S.drag = { ...base, mode: "orbit" };
   }
 });
 

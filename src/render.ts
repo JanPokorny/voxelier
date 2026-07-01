@@ -1,20 +1,21 @@
 // Scene meshing for the box model: gather each object's colour boxes in world
-// space and greedily mesh them (boxFaceGeo) — one merged quad per exposed face
-// rectangle, so cost is O(boxes), not O(surface cells). The edited object is
-// meshed on its own in object-local space, rebuilt (rAF-debounced) as boxes
-// change. Shading is directional light + cast shadows + smooth per-vertex ambient
-// occlusion baked into the face vertices (see boxFaceGeo) for soft corners.
+// space and greedily mesh them (boxFaceGeo, see mesh.ts) — one merged quad per
+// exposed face rectangle, so cost is O(boxes), not O(surface cells). The edited
+// object is meshed on its own in object-local space, rebuilt (rAF-debounced) as
+// boxes change. Shading is directional light + cast shadows + smooth per-vertex
+// ambient occlusion baked into the face vertices (see mesh.ts) for soft corners.
 import * as THREE from "three";
 import { S } from "./state.ts";
 import { addv, rotY, xcompose } from "./math.ts";
 import {
   addBox,
-  buildIndex,
+  contains,
   eraseBox,
   fillBox,
   growBounds,
   worldBox,
 } from "./boxes.ts";
+import { boxFaceGeo } from "./mesh.ts";
 import {
   camera,
   col,
@@ -122,205 +123,6 @@ function disposeSelWire(): void {
   selWire = null;
 }
 
-// Greedy box-face mesher: one merged quad per exposed face rectangle, so cost is
-// O(boxes), not O(surface cells) — a 1000³ box is six quads, not six million.
-// The six faces, each as { axis, high side, the two in-plane axes ordered so the
-// quad winds CCW toward an outward normal }.
-const FACE6 = [
-  { a: 0, hi: true, u: 1, v: 2, n: [1, 0, 0] },
-  { a: 0, hi: false, u: 2, v: 1, n: [-1, 0, 0] },
-  { a: 1, hi: true, u: 2, v: 0, n: [0, 1, 0] },
-  { a: 1, hi: false, u: 0, v: 2, n: [0, -1, 0] },
-  { a: 2, hi: true, u: 0, v: 1, n: [0, 0, 1] },
-  { a: 2, hi: false, u: 1, v: 0, n: [0, 0, -1] },
-] as const;
-type Rect = [number, number, number, number]; // [u0, v0, u1, v1]
-// Smooth, spread-out ambient occlusion baked into the mesh. Per exposed face we
-// build a 2D occupancy field of the outside cell layer (1 = solid occluder) over
-// the face's span plus an AO_R margin, then blur it with a few separable box
-// passes — a 3-pass box blur closely approximates a Gaussian. A vertex's
-// occlusion is the blurred (0..1) field at its position: the Gaussian-weighted
-// fraction of its neighbourhood that is solid, so the shadow fades smoothly
-// across the whole radius. The blur uses running sums, so its cost is
-// independent of AO_R — the spread can be widened freely. Gouraud-interpolated;
-// an interior vertex ≥ AO_R from every edge sees no occluder -> brightness 1, so
-// flat masses split into boxes stay seamless.
-const AO_PASSES = 3; // box-blur passes; 3 ≈ a Gaussian
-const AO_BOX = 2; // box radius per pass
-const AO_R = AO_PASSES * AO_BOX; // total blur half-width = spread radius, in cells
-const AO_DARK = 0.5; // brightness of a fully-occluded (rim/corner) vertex
-// One separable box-blur pass with zero padding (out-of-field reads as open),
-// dividing by the full window so each occluder spreads over 2·AO_BOX+1 cells.
-// Blurs `count` lines of `len` elements; line k starts at k·lineStride with
-// elements elemStride apart — call once per axis with the strides swapped.
-function aoBlur1D(
-  src: Float32Array,
-  dst: Float32Array,
-  count: number,
-  len: number,
-  lineStride: number,
-  elemStride: number,
-): void {
-  const div = 2 * AO_BOX + 1;
-  for (let k = 0; k < count; k++) {
-    const base = k * lineStride;
-    let sum = 0;
-    for (let t = 0; t <= AO_BOX && t < len; t++) sum += src[base + t * elemStride];
-    for (let p = 0; p < len; p++) {
-      dst[base + p * elemStride] = sum / div;
-      const add = p + AO_BOX + 1, rem = p - AO_BOX;
-      if (add < len) sum += src[base + add * elemStride];
-      if (rem >= 0) sum -= src[base + rem * elemStride];
-    }
-  }
-}
-function boxFaceGeo(
-  boxes: Box3[],
-  colorOf: (c: number) => THREE.Color,
-  ao: boolean,
-): THREE.BufferGeometry | null {
-  const pos: number[] = [], nor: number[] = [], colr: number[] = [];
-  const lo = boxes.map((b) => [b.x0, b.y0, b.z0]);
-  const hi = boxes.map((b) => [b.x1, b.y1, b.z1]);
-  const has = ao ? buildIndex(boxes) : null; // for AO occluder sampling
-  const aoCell = [0, 0, 0]; // reused occluder-sample scratch (see vbright)
-  for (let i = 0; i < boxes.length; i++) {
-    const c = colorOf(boxes[i].c), cr = c.r, cg = c.g, cb = c.b;
-    const blo = lo[i], bhi = hi[i];
-    for (const f of FACE6) {
-      const { a, u, v } = f, plane = f.hi ? bhi[a] : blo[a];
-      const wo = f.hi ? plane : plane - 1; // outside cell layer, for AO sampling
-      // faces of neighbouring boxes that abut (and so hide) this one
-      const covers: Rect[] = [];
-      for (let j = 0; j < boxes.length; j++) {
-        if (j === i) continue;
-        if ((f.hi ? lo[j][a] : hi[j][a]) !== plane) continue; // not abutting
-        const u0 = Math.max(lo[j][u], blo[u]), u1 = Math.min(hi[j][u], bhi[u]);
-        const v0 = Math.max(lo[j][v], blo[v]), v1 = Math.min(hi[j][v], bhi[v]);
-        if (u0 < u1 && v0 < v1) covers.push([u0, v0, u1, v1]);
-      }
-      // face rectangle minus the covered rectangles -> exposed sub-rectangles
-      let pieces: Rect[] = [[blo[u], blo[v], bhi[u], bhi[v]]];
-      for (const cv of covers) {
-        const next: Rect[] = [];
-        for (const p of pieces) {
-          const iu0 = Math.max(p[0], cv[0]),
-            iv0 = Math.max(p[1], cv[1]),
-            iu1 = Math.min(p[2], cv[2]),
-            iv1 = Math.min(p[3], cv[3]);
-          if (iu0 >= iu1 || iv0 >= iv1) {
-            next.push(p);
-            continue;
-          }
-          if (p[0] < iu0) next.push([p[0], p[1], iu0, p[3]]);
-          if (iu1 < p[2]) next.push([iu1, p[1], p[2], p[3]]);
-          if (p[1] < iv0) next.push([iu0, p[1], iu1, iv0]);
-          if (iv1 < p[3]) next.push([iu0, iv1, iu1, p[3]]);
-        }
-        pieces = next;
-        if (!pieces.length) break;
-      }
-      const o = [0, 0, 0];
-      const P = (uu: number, vv: number): [number, number, number] => {
-        o[a] = plane;
-        o[u] = uu;
-        o[v] = vv;
-        return [o[0], o[1], o[2]];
-      };
-      // AO at a face vertex: read the blurred outside-layer occupancy field (see
-      // the note by AO_PASSES). The field is built lazily and shared by every
-      // vertex of the face, so fully-covered faces (no exposed pieces) cost
-      // nothing, and each vertex is a single array read.
-      let field: Float32Array | null = null;
-      let fu0 = 0, fv0 = 0, fh = 0; // field origin (u,v) and v-row stride
-      const buildField = (): Float32Array => {
-        fu0 = blo[u] - AO_R;
-        fv0 = blo[v] - AO_R;
-        const fw = bhi[u] - blo[u] + 2 * AO_R + 1;
-        fh = bhi[v] - blo[v] + 2 * AO_R + 1;
-        const s = new Float32Array(fw * fh); // outside-layer occupancy (0/1)
-        const cell = aoCell; // {a,u,v} permute 0..2, so all 3 slots are written
-        cell[a] = wo;
-        for (let i2 = 0; i2 < fw; i2++) {
-          cell[u] = fu0 + i2;
-          const col = i2 * fh;
-          for (let j2 = 0; j2 < fh; j2++) {
-            cell[v] = fv0 + j2;
-            if (has!(cell[0], cell[1], cell[2])) s[col + j2] = 1;
-          }
-        }
-        const d = new Float32Array(fw * fh); // ping-pong scratch
-        for (let p = 0; p < AO_PASSES; p++) { // each pass blurs both axes
-          aoBlur1D(s, d, fw, fh, fh, 1); // along v (contiguous rows)
-          aoBlur1D(d, s, fh, fw, 1, fh); // along u (strided columns)
-        }
-        return (field = s); // both sweeps land the result back in s
-      };
-      const vbright = (vu: number, vv: number): number => {
-        if (!has) return 1;
-        const f = field ?? buildField();
-        const occ = f[(vu - fu0) * fh + (vv - fv0)]; // blurred solid fraction
-        return AO_DARK + (1 - AO_DARK) * (1 - occ);
-      };
-      // one quad with per-vertex AO baked into the vertex colours (Gouraud)
-      const quad = (qu0: number, qv0: number, qu1: number, qv1: number) => {
-        const A = P(qu0, qv0),
-          B = P(qu1, qv0),
-          C = P(qu1, qv1),
-          D = P(qu0, qv1);
-        const bA = vbright(qu0, qv0), bB = vbright(qu1, qv0);
-        const bC = vbright(qu1, qv1), bD = vbright(qu0, qv1);
-        const verts: [number[], number][] = [
-          [A, bA],
-          [B, bB],
-          [C, bC],
-          [A, bA],
-          [C, bC],
-          [D, bD],
-        ];
-        for (const [q, br] of verts) {
-          pos.push(q[0], q[1], q[2]);
-          nor.push(f.n[0], f.n[1], f.n[2]);
-          colr.push(cr * br, cg * br, cb * br);
-        }
-      };
-      for (const p of pieces) {
-        const [pu0, pv0, pu1, pv1] = p;
-        if (!has) { // glass: no AO, one quad
-          quad(pu0, pv0, pu1, pv1);
-          continue;
-        }
-        // AO only varies within AO_R of an edge, so mesh a per-cell band AO_R
-        // deep around the rim (the gradient needs the vertices) and leave the
-        // interior — every vertex ≥ AO_R from any edge, so AO == 1 — as one quad.
-        const iu0 = pu0 + AO_R, iu1 = pu1 - AO_R;
-        const iv0 = pv0 + AO_R, iv1 = pv1 - AO_R;
-        if (iu0 >= iu1 || iv0 >= iv1) { // too small to have a bright interior
-          for (let cu = pu0; cu < pu1; cu++) {
-            for (let cv = pv0; cv < pv1; cv++) quad(cu, cv, cu + 1, cv + 1);
-          }
-          continue;
-        }
-        for (let cu = pu0; cu < pu1; cu++) { // bottom & top bands (full width)
-          for (let cv = pv0; cv < iv0; cv++) quad(cu, cv, cu + 1, cv + 1);
-          for (let cv = iv1; cv < pv1; cv++) quad(cu, cv, cu + 1, cv + 1);
-        }
-        for (let cv = iv0; cv < iv1; cv++) { // left & right bands (interior rows)
-          for (let cu = pu0; cu < iu0; cu++) quad(cu, cv, cu + 1, cv + 1);
-          for (let cu = iu1; cu < pu1; cu++) quad(cu, cv, cu + 1, cv + 1);
-        }
-        quad(iu0, iv0, iu1, iv1); // bright interior (AO == 1)
-      }
-    }
-  }
-  if (!pos.length) return null;
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
-  g.setAttribute("color", new THREE.Float32BufferAttribute(colr, 3));
-  return g;
-}
-
 // Mesh one solid (a world box list) at one of three render tiers and return its
 // surface mesh: "opaque" (full colour + AO), "temp" (more opaque, temporarily
 // deemphasized) or "deemph" (more transparent, explicitly deemphasized). The two
@@ -338,7 +140,10 @@ function meshSurface(
   const translucent = tier !== "opaque";
   const g = boxFaceGeo(boxes, colorOf, !translucent);
   if (!g) return null;
-  const m = new THREE.Mesh(g, tier === "deemph" ? matDeemph : tier === "temp" ? matTemp : matSurf);
+  const m = new THREE.Mesh(
+    g,
+    tier === "deemph" ? matDeemph : tier === "temp" ? matTemp : matSurf,
+  );
   m.castShadow = true;
   m.receiveShadow = true;
   scene.add(m);
@@ -507,13 +312,10 @@ export function eyedropColor(): number | null {
     cy = Math.floor(h.point.y + d.y * 0.5),
     cz = Math.floor(h.point.z + d.z * 0.5);
   const colorAt = (boxes: Box3[], off: Vec, rot: Rot): number | null => {
-    for (const b of boxes) {
-      const w = worldBox(b, rot, off);
-      if (
-        cx >= w.x0 && cx < w.x1 && cy >= w.y0 && cy < w.y1 &&
-        cz >= w.z0 && cz < w.z1
-      ) return w.c;
-    }
+    // world cell -> object-local (the inverse of worldBox's cell mapping), so
+    // each box is tested in place instead of being transformed to world
+    const l = rotY({ x: cx - off.x, y: cy - off.y, z: cz - off.z }, -rot);
+    for (const b of boxes) if (contains(b, l.x, l.y, l.z)) return b.c;
     return null;
   };
   // edited object first (it's the opaque front surface), then everyone else
@@ -573,7 +375,8 @@ export function rebuild(): void {
       0,
       null,
       0,
-      (n, off, rot, _owner, tr) => worldBoxesInto(n, off, rot, tr ? deemphO : tempO),
+      (n, off, rot, _owner, tr) =>
+        worldBoxesInto(n, off, rot, tr ? deemphO : tempO),
     );
     growBounds(tempO, sceneBox);
     growBounds(deemphO, sceneBox);
@@ -586,7 +389,8 @@ export function rebuild(): void {
     // owner -> a current-context child (in focus, full colour); otherwise it's
     // outside the open group, so "temporarily deemphasized" (more opaque). An
     // object explicitly set to "deemphasized" goes more transparent either way.
-    const gFocus = new Map<string, Box3[]>(), gFocusDim = new Map<string, Box3[]>();
+    const gFocus = new Map<string, Box3[]>(),
+      gFocusDim = new Map<string, Box3[]>();
     const outTemp: Box3[] = [], outDeemph: Box3[] = [];
     eachObject(S.root, O, 0, null, 0, (n, off, rot, owner, tr) => {
       const wb = worldBoxesInto(n, off, rot, []);

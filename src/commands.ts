@@ -20,7 +20,8 @@ import {
 import { growBounds, worldBox } from "./boxes.ts";
 import { goal } from "./scene-env.ts";
 import { rebuild } from "./render.ts";
-import { startRename, updateChrome } from "./ui.ts";
+import { updateChrome } from "./ui.ts";
+import { startRename } from "./tree.ts";
 import { enterNode, selectNode } from "./navigation.ts";
 import { save } from "./persistence.ts";
 import { clipKind, getNodeClip, getVoxClip, setNodeClip } from "./clipboard.ts";
@@ -261,7 +262,12 @@ export function rotateSelectionBy(steps: number): void {
   const x = contextXform(), inv = xinvert(x);
   // world AABB of a context child under the current context transform
   const childWorldBox = (ch: Node) =>
-    nodeBox(ch, addv(x.off, rotY(ch.pos, x.rot)), (x.rot + ch.rot) & 3, emptyBox());
+    nodeBox(
+      ch,
+      addv(x.off, rotY(ch.pos, x.rot)),
+      (x.rot + ch.rot) & 3,
+      emptyBox(),
+    );
   for (let n = 0; n < Math.abs(steps); n++) {
     // combined world AABB centre of the whole selection -> the shared pivot
     const all = emptyBox();
@@ -331,7 +337,12 @@ export function beginFineRotate(): void {
       seen.add(o);
       const x = worldXform(o);
       const wb = o.boxes.map((b) => worldBox(b, x.rot, x.off));
-      leaves.push({ node: o, boxes: o.boxes.map((b) => ({ ...b })), off: x.off, rot: x.rot });
+      leaves.push({
+        node: o,
+        boxes: o.boxes.map((b) => ({ ...b })),
+        off: x.off,
+        rot: x.rot,
+      });
       growBounds(wb, all);
     }
   }
@@ -347,13 +358,24 @@ export function fineRotateSelectionTo(deg: number, axis: number): void {
   if (!fineBase || !fineBase.leaves.length) return;
   const p = fineBase.piv;
   // the two in-plane pivot coords for this rotation axis
-  const [pu, pv] = axis === 0 ? [p.y, p.z] : axis === 1 ? [p.x, p.z] : [p.x, p.y];
+  const [pu, pv] = axis === 0
+    ? [p.y, p.z]
+    : axis === 1
+    ? [p.x, p.z]
+    : [p.x, p.y];
   for (const lf of fineBase.leaves) {
     const wb = lf.boxes.map((b) => worldBox(b, lf.rot, lf.off));
     // rotate in world, then map back through the object's own (unchanged) pose,
     // so its pos/rot stay put and the turn lives entirely in the baked voxels
-    lf.node.boxes = rigidRotateWorld(wb, deg, axis, pu, pv, (x, y, z) =>
-      rotY({ x: x - lf.off.x, y: y - lf.off.y, z: z - lf.off.z }, -lf.rot));
+    lf.node.boxes = rigidRotateWorld(
+      wb,
+      deg,
+      axis,
+      pu,
+      pv,
+      (x, y, z) =>
+        rotY({ x: x - lf.off.x, y: y - lf.off.y, z: z - lf.off.z }, -lf.rot),
+    );
   }
   rebuild();
 }

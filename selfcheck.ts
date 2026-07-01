@@ -6,10 +6,13 @@
 // property those two functions are built on. If rotY's rotation or the inverse
 // convention breaks, placement silently lands on the wrong cell — this fails loudly.
 import { assert } from "@std/assert";
+import * as THREE from "three";
 import type { Box3, Region, Vec } from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
 import { addBox, buildIndex, eraseBox, fillBox } from "./src/boxes.ts";
 import { rigidRotateWorld } from "./src/shear.ts";
+import { boxFaceGeo } from "./src/mesh.ts";
+import { repackBoxes } from "./src/repack.ts";
 
 const toW = (cell: Vec, off: Vec, rot: number): Vec =>
   addv(rotY(cell, rot), off); // local -> world (locToW)
@@ -250,11 +253,18 @@ Deno.test("shear rotation is a hole-free, count-preserving bijection", () => {
       mxx = Math.max(mxx, b.x1 - 1);
       mxz = Math.max(mxz, b.z1 - 1);
     }
-    return rigidRotateWorld(bs, deg, 1, (mnx + mxx) / 2, (mnz + mxz) / 2, (x, y, z) => ({
-      x,
-      y,
-      z,
-    }));
+    return rigidRotateWorld(
+      bs,
+      deg,
+      1,
+      (mnx + mxx) / 2,
+      (mnz + mxz) / 2,
+      (x, y, z) => ({
+        x,
+        y,
+        z,
+      }),
+    );
   };
   // normalised (translation-independent) cell+colour signature of a box set
   const sig = (bs: Box3[]): Set<string> => {
@@ -266,8 +276,10 @@ Deno.test("shear rotation is a hole-free, count-preserving bijection", () => {
     }
     const s = new Set<string>();
     for (const b of bs) {
-      eachCell(b, (x, y, z) =>
-        s.add(`${x - mnx},${y - mny},${z - mnz}:${b.c}`));
+      eachCell(
+        b,
+        (x, y, z) => s.add(`${x - mnx},${y - mny},${z - mnz}:${b.c}`),
+      );
     }
     return s;
   };
@@ -276,7 +288,10 @@ Deno.test("shear rotation is a hole-free, count-preserving bijection", () => {
     for (let deg = 0; deg < 360; deg += 15) {
       const r = rotY90(sh, deg);
       materialize(r, `shear ${deg}°`); // asserts disjoint
-      assert(count(r) === base, `count drift at ${deg}° (${count(r)} != ${base})`);
+      assert(
+        count(r) === base,
+        `count drift at ${deg}° (${count(r)} != ${base})`,
+      );
     }
     for (const q of [1, 2, 3]) { // quarter-turns == exact rotY
       const got = sig(rotY90(sh, q * 90));
@@ -298,4 +313,174 @@ Deno.test("shear rotation is a hole-free, count-preserving bijection", () => {
       for (const k of want) assert(got.has(k), `quarter ${q} cell mismatch`);
     }
   }
+});
+
+// The greedy mesher (with its plane-bucketed cover lookup and rasterised AO
+// fields) must emit, per face direction, exactly the area of the exposed cell
+// faces — no more (doubled/overlapping quads) and no less (holes). Checked
+// against a brute-force cell-occupancy reference over random add/erase streams,
+// with AO both on (rim-banded quads) and off (one quad per exposed rectangle).
+Deno.test("mesher area matches exposed cell faces", () => {
+  const ri = mkRnd(777);
+  const cols = new Map<number, THREE.Color>();
+  const colorOf = (v: number): THREE.Color => {
+    let c = cols.get(v);
+    if (!c) cols.set(v, c = new THREE.Color().setHex(v));
+    return c;
+  };
+  const DIRS: [number, number, number][] = [
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
+  ];
+  for (let trial = 0; trial < 6; trial++) {
+    const N = 14;
+    let boxes: Box3[] = [];
+    for (let i = 0; i < 30; i++) {
+      const x0 = ri(0, N), y0 = ri(0, N), z0 = ri(0, N);
+      const r: Region = {
+        x0,
+        y0,
+        z0,
+        x1: ri(x0 + 1, N + 1),
+        y1: ri(y0 + 1, N + 1),
+        z1: ri(z0 + 1, N + 1),
+      };
+      if (ri(0, 3) === 0) boxes = eraseBox(boxes, r);
+      else boxes = addBox(boxes, r, ri(1, 5));
+    }
+    // reference: count exposed unit faces per direction from a cell occupancy set
+    const occ = new Set<number>();
+    for (const b of boxes) eachCell(b, (x, y, z) => occ.add(key(x, y, z)));
+    const want = [0, 0, 0, 0, 0, 0];
+    for (const b of boxes) {
+      eachCell(b, (x, y, z) => {
+        DIRS.forEach(([dx, dy, dz], d) => {
+          if (!occ.has(key(x + dx, y + dy, z + dz))) want[d]++;
+        });
+      });
+    }
+    for (const ao of [true, false]) {
+      const g = boxFaceGeo(boxes, colorOf, ao);
+      const got = [0, 0, 0, 0, 0, 0];
+      if (g) {
+        const p = g.getAttribute("position"), n = g.getAttribute("normal");
+        for (let t = 0; t < p.count; t += 3) { // triangle area via the cross product
+          const ux = p.getX(t + 1) - p.getX(t),
+            uy = p.getY(t + 1) - p.getY(t),
+            uz = p.getZ(t + 1) - p.getZ(t);
+          const vx = p.getX(t + 2) - p.getX(t),
+            vy = p.getY(t + 2) - p.getY(t),
+            vz = p.getZ(t + 2) - p.getZ(t);
+          const area = 0.5 * Math.hypot(
+            uy * vz - uz * vy,
+            uz * vx - ux * vz,
+            ux * vy - uy * vx,
+          );
+          const d = DIRS.findIndex(([dx, dy, dz]) =>
+            n.getX(t) === dx && n.getY(t) === dy && n.getZ(t) === dz
+          );
+          assert(d >= 0, "triangle normal is not axis-aligned");
+          got[d] += area;
+        }
+      }
+      for (let d = 0; d < 6; d++) {
+        assert(
+          Math.abs(got[d] - want[d]) < 1e-6,
+          `ao=${ao} dir=${d}: meshed area ${got[d]} != exposed faces ${
+            want[d]
+          }`,
+        );
+      }
+    }
+  }
+});
+
+// addBox's face-merge (absorb): re-adding the erased cell of a large box must
+// heal it back into exactly one box, not leave the six carve fragments — and
+// stacking exactly-abutting same-colour rows must coalesce instead of piling up.
+Deno.test("addBox merges exactly-abutting same-colour boxes", () => {
+  const big: Box3 = { x0: 0, y0: 0, z0: 0, x1: 10, y1: 8, z1: 6, c: 1 };
+  const cell: Region = { x0: 4, y0: 3, z0: 2, x1: 5, y1: 4, z1: 3 };
+  const carved = eraseBox([big], cell);
+  assert(
+    carved.length === 6,
+    `expected 6 carve fragments, got ${carved.length}`,
+  );
+  const healed = addBox(carved, cell, 1);
+  assert(healed.length === 1, `re-add left ${healed.length} boxes`);
+  const h = healed[0];
+  assert(
+    h.x0 === big.x0 && h.y0 === big.y0 && h.z0 === big.z0 &&
+      h.x1 === big.x1 && h.y1 === big.y1 && h.z1 === big.z1 && h.c === big.c,
+    "healed box differs from the original",
+  );
+  // row-by-row build: 10 abutting same-colour rows coalesce into one slab
+  let rows: Box3[] = [];
+  for (let z = 0; z < 10; z++) {
+    rows = addBox(rows, { x0: 0, y0: 0, z0: z, x1: 8, y1: 1, z1: z + 1 }, 2);
+  }
+  assert(rows.length === 1, `10 abutting rows left ${rows.length} boxes`);
+  // a different colour must NOT merge
+  const twoTone = addBox(
+    [{ x0: 0, y0: 0, z0: 0, x1: 4, y1: 1, z1: 1, c: 1 }],
+    { x0: 4, y0: 0, z0: 0, x1: 8, y1: 1, z1: 1 },
+    2,
+  );
+  assert(twoTone.length === 2, "different colours must not merge");
+});
+
+// The background repacker must preserve occupancy + colour exactly and never
+// return more boxes than the greedy baseline gives it room for. Fuzzed against
+// random erase-fragmented stacks, plus a known heavy-fragmentation case.
+Deno.test("repackBoxes preserves cells and reduces fragmentation", () => {
+  const ri = mkRnd(31337);
+  const N = 12;
+  for (let trial = 0; trial < 6; trial++) {
+    let boxes: Box3[] = [];
+    for (let i = 0; i < 40; i++) {
+      const x0 = ri(0, N), y0 = ri(0, N), z0 = ri(0, N);
+      const r: Region = {
+        x0,
+        y0,
+        z0,
+        x1: ri(x0 + 1, N + 1),
+        y1: ri(y0 + 1, N + 1),
+        z1: ri(z0 + 1, N + 1),
+      };
+      if (ri(0, 3) === 0) boxes = eraseBox(boxes, r);
+      else boxes = addBox(boxes, r, ri(1, 4));
+    }
+    if (!boxes.length) continue;
+    const want = materialize(boxes, "pre-repack");
+    const packed = repackBoxes(boxes);
+    const got = materialize(packed, "repacked");
+    assert(got.size === want.size, `cell count ${got.size} != ${want.size}`);
+    for (const [k, v] of want) assert(got.get(k) === v, "cell/colour mismatch");
+    assert(
+      packed.length <= boxes.length,
+      `repack grew the list (${boxes.length} -> ${packed.length})`,
+    );
+  }
+  // known case: a slab fragmented by scattered erases + re-adds of a second
+  // colour repacks to far fewer boxes than sequential subtraction leaves
+  let wall: Box3[] = [{ x0: 0, y0: 0, z0: 0, x1: 40, y1: 20, z1: 2, c: 7 }];
+  const rj = mkRnd(9);
+  for (let i = 0; i < 60; i++) {
+    const x = rj(0, 39), y = rj(0, 19), z = rj(0, 1);
+    const cell = { x0: x, y0: y, z0: z, x1: x + 1, y1: y + 1, z1: z + 1 };
+    wall = i % 2 ? addBox(wall, cell, 8) : eraseBox(wall, cell);
+  }
+  const packedWall = repackBoxes(wall);
+  const before = materialize(wall, "wall"),
+    after = materialize(packedWall, "packed wall");
+  assert(after.size === before.size, "wall cell count changed");
+  for (const [k, v] of before) assert(after.get(k) === v, "wall cell mismatch");
+  assert(
+    packedWall.length < wall.length,
+    `expected a reduction, got ${wall.length} -> ${packedWall.length}`,
+  );
 });
