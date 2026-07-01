@@ -17,8 +17,24 @@ export const region = (
 ): Box3 => ({ x0, y0, z0, x1, y1, z1, c });
 
 // Is cell (x,y,z) inside box b? (half-open [x0,x1) etc.)
-const contains = (b: Box3, x: number, y: number, z: number): boolean =>
+export const contains = (b: Box3, x: number, y: number, z: number): boolean =>
   x >= b.x0 && x < b.x1 && y >= b.y0 && y < b.y1 && z >= b.z0 && z < b.z1;
+
+// b translated by (dx,dy,dz), keeping its colour
+export const shiftBox = (
+  b: Box3,
+  dx: number,
+  dy: number,
+  dz: number,
+): Box3 => ({
+  x0: b.x0 + dx,
+  y0: b.y0 + dy,
+  z0: b.z0 + dz,
+  x1: b.x1 + dx,
+  y1: b.y1 + dy,
+  z1: b.z1 + dz,
+  c: b.c,
+});
 
 // b minus r, as up to six disjoint fragments that keep b's colour.
 function subtract(b: Box3, r: Region, out: Box3[]): void {
@@ -117,7 +133,9 @@ export function clipBoxes(boxes: Box3[], r: Region): Box3[] {
     const x1 = Math.min(b.x1, r.x1),
       y1 = Math.min(b.y1, r.y1),
       z1 = Math.min(b.z1, r.z1);
-    if (x0 < x1 && y0 < y1 && z0 < z1) out.push({ x0, y0, z0, x1, y1, z1, c: b.c });
+    if (x0 < x1 && y0 < y1 && z0 < z1) {
+      out.push({ x0, y0, z0, x1, y1, z1, c: b.c });
+    }
   }
   return out;
 }
@@ -212,18 +230,34 @@ export const boxesHas = (
   z: number,
 ): boolean => boxes.some((b) => contains(b, x, y, z));
 
-// Do any two boxes from the two lists overlap (selection shifted by d)?
-export const boxesOverlap = (
+// Do any two boxes from the two lists overlap (list `a` shifted by d)? Runs on
+// every collision probe of a move/box drag, so gate the pairwise test behind
+// `a`'s combined AABB: O(n + m) when clear (the common case) instead of O(n·m).
+export function boxesOverlap(
   a: Box3[],
   b: Box3[],
   dx: number,
   dy: number,
   dz: number,
-): boolean =>
-  a.some((p) =>
-    b.some((q) =>
-      p.x0 + dx < q.x1 && q.x0 < p.x1 + dx &&
-      p.y0 + dy < q.y1 && q.y0 < p.y1 + dy &&
-      p.z0 + dz < q.z1 && q.z0 < p.z1 + dz
-    )
-  );
+): boolean {
+  if (!a.length || !b.length) return false;
+  const bb = {
+    min: { x: 1e9, y: 1e9, z: 1e9 },
+    max: { x: -1e9, y: -1e9, z: -1e9 },
+  };
+  growBounds(a, bb);
+  const x0 = bb.min.x + dx, y0 = bb.min.y + dy, z0 = bb.min.z + dz;
+  const x1 = bb.max.x + dx, y1 = bb.max.y + dy, z1 = bb.max.z + dz;
+  for (const q of b) {
+    if (
+      x0 < q.x1 && q.x0 < x1 && y0 < q.y1 && q.y0 < y1 &&
+      z0 < q.z1 && q.z0 < z1 &&
+      a.some((p) =>
+        p.x0 + dx < q.x1 && q.x0 < p.x1 + dx &&
+        p.y0 + dy < q.y1 && q.y0 < p.y1 + dy &&
+        p.z0 + dz < q.z1 && q.z0 < p.z1 + dz
+      )
+    ) return true;
+  }
+  return false;
+}

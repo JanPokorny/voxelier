@@ -74,14 +74,19 @@ function rotateCells(
 // re-pack a cell set into a small disjoint box list (greedy: grow each seed cell
 // along X, then Z, then Y as far as same-colour unused cells allow)
 function compact(cells: Cell[]): Box3[] {
-  const colorAt = new Map<number, number>();
-  for (const c of cells) colorAt.set(key(c.x, c.y, c.z), c.c);
-  const used = new Set<number>();
-  const free = (x: number, y: number, z: number, col: number): boolean => {
-    const k = key(x, y, z);
-    return !used.has(k) && colorAt.get(k) === col;
-  };
-  const rowFree = (x0: number, x1: number, y: number, z: number, col: number) => {
+  // unused cell key -> colour; a consumed cell is deleted, so one map serves as
+  // both the colour lookup and the used set (half the hashing on this hot path)
+  const avail = new Map<number, number>();
+  for (const c of cells) avail.set(key(c.x, c.y, c.z), c.c);
+  const free = (x: number, y: number, z: number, col: number): boolean =>
+    avail.get(key(x, y, z)) === col;
+  const rowFree = (
+    x0: number,
+    x1: number,
+    y: number,
+    z: number,
+    col: number,
+  ) => {
     for (let x = x0; x < x1; x++) if (!free(x, y, z, col)) return false;
     return true;
   };
@@ -97,11 +102,13 @@ function compact(cells: Cell[]): Box3[] {
     return true;
   };
   // seed in a stable order so the decomposition is deterministic
-  const seeds = cells.slice().sort((a, b) => a.y - b.y || a.z - b.z || a.x - b.x);
+  const seeds = cells.slice().sort((a, b) =>
+    a.y - b.y || a.z - b.z || a.x - b.x
+  );
   const out: Box3[] = [];
   for (const cell of seeds) {
     const x0 = cell.x, y0 = cell.y, z0 = cell.z, col = cell.c;
-    if (used.has(key(x0, y0, z0))) continue;
+    if (!avail.has(key(x0, y0, z0))) continue;
     let x1 = x0 + 1;
     while (free(x1, y0, z0, col)) x1++;
     let z1 = z0 + 1;
@@ -110,7 +117,7 @@ function compact(cells: Cell[]): Box3[] {
     while (slabFree(x0, x1, z0, z1, y1, col)) y1++;
     for (let y = y0; y < y1; y++) {
       for (let z = z0; z < z1; z++) {
-        for (let x = x0; x < x1; x++) used.add(key(x, y, z));
+        for (let x = x0; x < x1; x++) avail.delete(key(x, y, z));
       }
     }
     out.push({ x0, y0, z0, x1, y1, z1, c: col });
