@@ -483,4 +483,20 @@ Deno.test("repackBoxes preserves cells and reduces fragmentation", () => {
     packedWall.length < wall.length,
     `expected a reduction, got ${wall.length} -> ${packedWall.length}`,
   );
+  // volume independence: repack works boxes -> boxes on compressed planes, so a
+  // world-sized solid (10^13 cells — hopeless to explode) heals instantly. Carve
+  // one interior cell out of a huge box and hand repack the 6 fragments plus the
+  // cell as a 7th box: it must reassemble exactly the original single box.
+  const huge: Box3 = { x0: 0, y0: 0, z0: 0, x1: 100000, y1: 100000, z1: 1000, c: 3 };
+  const hole: Region = { x0: 55555, y0: 44444, z0: 500, x1: 55556, y1: 44445, z1: 501 };
+  const parts = eraseBox([huge], hole);
+  parts.push({ ...hole, c: 3 });
+  const whole = repackBoxes(parts);
+  assert(whole.length === 1, `huge heal left ${whole.length} boxes`);
+  const w = whole[0];
+  assert(
+    w.x0 === 0 && w.y0 === 0 && w.z0 === 0 &&
+      w.x1 === 100000 && w.y1 === 100000 && w.z1 === 1000 && w.c === 3,
+    "huge healed box differs from the original",
+  );
 });

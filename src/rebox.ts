@@ -19,8 +19,9 @@ import { repackBoxes } from "./repack.ts";
 import type { Box3, ObjectNode } from "./types.ts";
 
 const MIN_BOXES = 24; // below this a repack can't win enough to matter
-const MAX_VOL = 1_000_000; // explode-to-cells cap: bounds worker time + memory
 
+// for the apply-time sanity check only — repack cost itself is volume-
+// independent (coordinate-compressed, see repack.ts), so there is no size gate
 const volume = (bs: Box3[]): number =>
   bs.reduce((n, b) => n + (b.x1 - b.x0) * (b.y1 - b.y0) * (b.z1 - b.z0), 0);
 
@@ -65,10 +66,6 @@ onmessage = (e) => {
 export function reboxObject(node: ObjectNode): void {
   if (disabled || typeof Worker === "undefined") return; // headless (tests)
   if (node.boxes.length < MIN_BOXES || settled.has(node.boxes)) return;
-  if (volume(node.boxes) > MAX_VOL) {
-    settled.add(node.boxes); // too big to explode — skip until it changes
-    return;
-  }
   const id = ++seq;
   inflight.set(id, { nodeId: node.id, sent: node.boxes });
   (worker ??= makeWorker()).postMessage({ reqId: id, boxes: node.boxes });
