@@ -11,7 +11,8 @@
 * {
   box-sizing: border-box;
 }
-html, body {
+html,
+body {
   height: 100%;
   margin: 0;
 }
@@ -30,7 +31,7 @@ body {
   position: fixed;
   inset: 0;
   display: grid;
-  grid-template-columns: 1fr 200px;
+  grid-template-columns: 1fr 250px;
   grid-template-areas: "stage right";
 }
 /* sidebar collapsed: the stage takes the whole width and the floating reveal
@@ -201,7 +202,7 @@ button.active {
 #btn-hide-side {
   position: absolute;
   top: 10px;
-  right: 10px;
+  right: 12px; /* flush with the panel's 12px padding, so it right-aligns with the Save/Load row */
   z-index: 5;
 }
 #btn-show-side {
@@ -229,7 +230,7 @@ h3 {
   flex: 1;
   background: var(--panel-2);
   border: 1px solid var(--line);
-  padding: 7px 6px;
+  padding: 9px 6px; /* 12px text + 18px padding + 2px border = 32px, the tree rows' height */
   font-size: 12px;
 }
 #iobar button:hover {
@@ -244,7 +245,37 @@ h3 {
   gap: 1px;
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden auto;
+  /* The scrollbar must not eat into row width (overflow: overlay is gone from
+     Chromium): park it inside the panel's 12px visual padding instead. The box
+     is pulled 10px into the padding; a fixed 8px scrollbar + 2px inner padding
+     puts the rows' right edge exactly back on the content line, flush with the
+     Save/Load row, whether or not the tree scrolls. The webkit pseudos (below)
+     force that deterministic 8px — OS overlay scrollbars would reserve nothing
+     and let the rows poke past — and the stable gutter keeps it reserved while
+     the tree still fits. */
+  margin-right: -10px;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+}
+#tree::-webkit-scrollbar {
+  width: 8px;
+}
+#tree::-webkit-scrollbar-thumb {
+  background: #3a4252;
+  border-radius: 4px;
+}
+#tree::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* Firefox has no webkit pseudos (and no way to force a fixed width); its thin
+   standard scrollbar is the nearest equivalent. Scoped so it can't disable the
+   pseudo styling in engines that support both. */
+@supports not selector(::-webkit-scrollbar) {
+  #tree {
+    scrollbar-width: thin;
+    scrollbar-color: #3a4252 transparent;
+  }
 }
 .trow {
   display: flex;

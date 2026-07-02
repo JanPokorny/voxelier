@@ -10,7 +10,7 @@ import { rndSym, rotY } from "./math.ts";
 import { camera, ndc, raycaster } from "./scene-env.ts";
 import { locToW } from "./picking.ts";
 import { editErase, editStamp, scheduleEditRemesh } from "./render.ts";
-import { clipBoxes, growBounds } from "./boxes.ts";
+import { clipBoxes, growBounds, shiftBox as shift } from "./boxes.ts";
 import { rigidRotateWorld } from "./shear.ts";
 import { emptyBox } from "./model.ts";
 import { setVoxClip } from "./clipboard.ts";
@@ -29,15 +29,6 @@ const regionOf = (boxes: Box3[]): Region => {
   const { mn, mx } = bounds(boxes);
   return { x0: mn.x, y0: mn.y, z0: mn.z, x1: mx.x, y1: mx.y, z1: mx.z };
 };
-const shift = (b: Box3, dx: number, dy: number, dz: number): Box3 => ({
-  x0: b.x0 + dx,
-  y0: b.y0 + dy,
-  z0: b.z0 + dz,
-  x1: b.x1 + dx,
-  y1: b.y1 + dy,
-  z1: b.z1 + dz,
-  c: b.c,
-});
 // translate a box list so its min corner sits at the origin
 function normalize(boxes: Box3[]): Box3[] {
   if (!boxes.length) return [];
@@ -189,7 +180,8 @@ function horizAxis(): number {
 // rather than re-rotating the already-rotated result each step, which ratchets a
 // mixed-parity footprint (e.g. any 1-cell-thick slab) half a cell per turn. With
 // this, a full turn is the exact identity and there is no drift.
-let rotBase: { boxes: Box3[]; cx: number; cy: number; cz: number } | null = null;
+let rotBase: { boxes: Box3[]; cx: number; cy: number; cz: number } | null =
+  null;
 export function beginRotate(): void {
   const s = S.sel3d;
   if (!s) return;
@@ -237,7 +229,14 @@ export function fineRotateSel3d(deg: number, horizontal: boolean): void {
     : axis === 1
     ? [base.cx, base.cz]
     : [base.cx, base.cy];
-  s.boxes = rigidRotateWorld(base.boxes, deg, axis, pu, pv, (x, y, z) => ({ x, y, z }));
+  s.boxes = rigidRotateWorld(
+    base.boxes,
+    deg,
+    axis,
+    pu,
+    pv,
+    (x, y, z) => ({ x, y, z }),
+  );
   s.region = regionOf(s.boxes);
   scheduleEditRemesh();
 }

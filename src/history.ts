@@ -55,6 +55,15 @@ export function record(rootJSON: string): void {
   index = stack.length - 1;
 }
 
+// Replace the top snapshot in place — for a document whose geometry is
+// unchanged but whose representation was optimised (the background repack).
+// Undo semantics must be unaffected, so no new step is recorded and stepping
+// back still lands on the same previous state.
+export function amend(rootJSON: string): void {
+  if (restoring || index < 0) return;
+  stack[index] = snapshot(rootJSON);
+}
+
 function restore(snap: Snap): void {
   restoring = true;
   seedUid(snap.uid);

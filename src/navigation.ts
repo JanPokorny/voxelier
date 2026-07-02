@@ -8,6 +8,8 @@ import { updateChrome } from "./ui.ts";
 import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
 import { clearSelection } from "./select.ts";
+import { reboxObject } from "./rebox.ts";
+import { flushAmend } from "./persistence.ts";
 import type { Node, ObjectNode } from "./types.ts";
 
 // Leave edit mode with exactly `id` selected in the current context — the shared
@@ -24,6 +26,10 @@ const selectOnly = (
 ): void => {
   const prevSel = new Set(S.selection);
   clearSelection(); // stamp/drop any voxel selection before leaving the object
+  // the editor is closing on prevEdit — repack whatever the session fragmented
+  // (before the rebuild below, so the scene re-meshes the packed boxes), and
+  // persist an applied result folded into the current undo snapshot
+  if (prevEdit && reboxObject(prevEdit)) flushAmend();
   S.selection = new Set([id]);
   S.editObject = null;
   clearMeasure();
@@ -55,7 +61,11 @@ export function selectNode(node: Node): void { // select a node from the tree (e
 export function enterNode(node: Node, fit?: boolean): void { // dbl-click in tree/canvas: descend or voxel-edit
   const p = findPath(node);
   if (!p) return;
+  const prevEdit = S.editObject;
   clearSelection(); // commit any voxel selection in the object we're leaving
+  // entering somewhere else also closes any open object editor — repack the
+  // object it was editing (before the rebuild, which then meshes the result)
+  if (prevEdit && prevEdit !== node && reboxObject(prevEdit)) flushAmend();
   if (node.type === "scene") {
     S.path = p;
     S.editObject = null;

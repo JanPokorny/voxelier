@@ -57,19 +57,9 @@ import {
   translateSelection,
 } from "./select.ts";
 import { enterNode } from "./navigation.ts";
-import {
-  beginFineRotate,
-  endFineRotate,
-  fineRotateSelectionTo,
-  rotateSelectionBy,
-} from "./commands.ts";
-import {
-  recordRecent,
-  selectColor,
-  setSelAnchor,
-  TOOL_ICON,
-  updateChrome,
-} from "./ui.ts";
+import { rotateSelectionBy } from "./commands.ts";
+import { recordRecent, selectColor, TOOL_ICON, updateChrome } from "./ui.ts";
+import { setSelAnchor } from "./tree.ts";
 import { save } from "./persistence.ts";
 import type { Box3, Drag, Node, Vec } from "./types.ts";
 
@@ -256,48 +246,16 @@ function commitMove(copy: boolean): void {
   updateChrome(); // refresh tree rows (copies add nodes) + group thumbnails
   save();
 }
-// the world horizontal axis (X or Z) closest to screen-right — the one a Shift
-// rotation tips the whole selection about
-function sceneHorizAxis(): number {
-  const m = camera.matrixWorld.elements; // column 0 = camera right
-  return Math.abs(m[0]) >= Math.abs(m[2]) ? 0 : 2;
-}
+// 90°-snap rotation about the selection centre — rigid and non-destructive.
+// Finer (baked, re-voxelising) rotation deliberately exists only inside the
+// object editor's select tool, where destructive edits are expected.
 function rotDragTo(e: PointerEvent): void {
   const d = S.drag!;
-  // Alt and/or Shift leave plain 90°-Y snapping for a baked rotation: the model
-  // only stores Y poses, so a finer angle (Alt) or a horizontal axis (Shift) is
-  // re-voxelised. The whole selection turns rigidly about one shared pivot.
-  if (e.altKey || e.shiftKey) {
-    const axis = e.shiftKey ? sceneHorizAxis() : 1; // Shift -> tip about a horizontal axis
-    if (!d.fine || d.axis !== axis) { // (re)enter baked mode, or the tip axis changed
-      if (d.fine) endFineRotate(); // keep the baked result so far, then re-snapshot
-      beginFineRotate();
-      d.fine = true;
-      d.axis = axis;
-      d.sx = e.clientX;
-      d.deg = 0;
-    }
-    const step = e.altKey ? 15 : 90; // Alt refines the increment; Shift alone snaps to 90°
-    const pxPerStep = e.altKey ? 25 : 70;
-    const deg = Math.round((d.sx - e.clientX) / pxPerStep) * step;
-    if (deg !== d.deg) {
-      fineRotateSelectionTo(deg, axis);
-      d.deg = deg;
-      d.dirty = true;
-    }
-  } else { // 90°-snap rotation about the selection centre (rigid, no baking)
-    if (d.fine) { // leaving baked mode — keep the result, restart the 90° count here
-      endFineRotate();
-      d.fine = false;
-      d.sx = e.clientX;
-      d.steps = 0;
-    }
-    const steps = Math.round((d.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
-    if (steps !== d.steps) {
-      rotateSelectionBy(steps - d.steps!);
-      d.steps = steps;
-      d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
-    }
+  const steps = Math.round((d.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
+  if (steps !== d.steps) {
+    rotateSelectionBy(steps - d.steps!);
+    d.steps = steps;
+    d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
   }
 }
 
@@ -450,7 +408,9 @@ function boxDragTo(e: PointerEvent): void {
     const stepX = aR * px, stepY = -aU * px; // px per +1 cell (y down +)
     const dxp = e.clientX - d.shiftAnchorX!, dyp = e.clientY - d.shiftAnchorY!;
     const hy = d.hyBase! + (sin2 > 0.02 // axis usably on screen -> project onto it
-      ? Math.round((dxp * stepX + dyp * stepY) / (stepX * stepX + stepY * stepY))
+      ? Math.round(
+        (dxp * stepX + dyp * stepY) / (stepX * stepX + stepY * stepY),
+      )
       // axis ~along the view: no on-screen direction, fall back to vertical travel
       : Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel()));
     if (clear(b.c[ua], b.c[va], hy)) b.hy = hy; // else stop at the last clear depth
@@ -487,7 +447,9 @@ function renderBox(): void {
 // ---- select tool: grab/move/rotate the marquee selection ----
 // The content is lifted (carved out of the object) lazily, on the first actual
 // move/rotate, so a plain click on the selection neither edits nor records undo.
-function startSelMove(base: { x: number; y: number; sx: number; sy: number }): void {
+function startSelMove(
+  base: { x: number; y: number; sx: number; sy: number },
+): void {
   const y0 = S.sel3d!.region.y0; // drag on the selection's floor plane
   S.drag = {
     ...base,
@@ -499,7 +461,9 @@ function startSelMove(base: { x: number; y: number; sx: number; sy: number }): v
     shiftAnchorY: null,
   };
 }
-function startSelRot(base: { x: number; y: number; sx: number; sy: number }): void {
+function startSelRot(
+  base: { x: number; y: number; sx: number; sy: number },
+): void {
   S.drag = { ...base, mode: "selrot", steps: 0 };
 }
 function selMoveTo(e: PointerEvent): void {
@@ -510,7 +474,8 @@ function selMoveTo(e: PointerEvent): void {
       d.shiftAnchorY = e.clientY;
       d.dyBase = ty;
     }
-    ty = d.dyBase! + Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
+    ty = d.dyBase! +
+      Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
   } else { // slide on the start floor plane
     d.shiftAnchorY = null;
     const g = localGroundCell(d.start!.y);
@@ -589,8 +554,9 @@ canvas.addEventListener("pointerdown", (e) => {
       // view/measure pan the camera (non-destructive); select grabs/extends the
       // marquee; add/erase drag out a box footprint; eyedropper picks a colour
       // (one-shot); paint floods the hovered cell
-      if (S.tool === "view" || S.tool === "measure") S.drag = { ...base, mode: "pan" };
-      else if (S.tool === "select") {
+      if (S.tool === "view" || S.tool === "measure") {
+        S.drag = { ...base, mode: "pan" };
+      } else if (S.tool === "select") {
         if (S.sel3d && selectionHit()) startSelMove(base);
         else {
           clearSelection(); // clicking outside the selection deselects it
@@ -629,8 +595,9 @@ canvas.addEventListener("pointerdown", (e) => {
     } else S.drag = { ...base, mode: "pan", clickId: hitId };
   } else if (e.button === 2) {
     // measure: right-click cancels box mode (handled on release), never rotates
-    if (onSel && S.tool !== "measure") S.drag = { ...base, mode: "rotobj", steps: 0 };
-    else S.drag = { ...base, mode: "orbit" };
+    if (onSel && S.tool !== "measure") {
+      S.drag = { ...base, mode: "rotobj", steps: 0 };
+    } else S.drag = { ...base, mode: "orbit" };
   }
 });
 
@@ -715,7 +682,6 @@ canvas.addEventListener("pointerup", (e) => {
       // silently duplicate the object in place
       commitMove(moved(e) && (e.ctrlKey || e.metaKey));
     } else if (S.drag.mode === "rotobj") {
-      if (S.drag.fine) endFineRotate(); // drop the fine-rotation snapshot
       if (S.drag.dirty) {
         updateChrome(); // tree thumbnails track the new pose
         save();
@@ -735,7 +701,6 @@ canvas.addEventListener("pointercancel", () => {
   if (S.drag && (S.drag.mode === "selmove" || S.drag.mode === "selrot")) {
     dropSelection();
   }
-  if (S.drag && S.drag.mode === "rotobj" && S.drag.fine) endFineRotate();
   S.drag = null;
   S.painting = false;
   S.liveMeas = null; // drop any in-progress box-brush / measure wireframe
