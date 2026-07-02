@@ -25,14 +25,15 @@ const selectOnly = (
 ): void => {
   const prevSel = new Set(S.selection);
   clearSelection(); // stamp/drop any voxel selection before leaving the object
+  // the editor is closing on prevEdit — repack whatever the session fragmented
+  // (before the rebuild below, so the scene re-meshes the packed boxes)
+  if (prevEdit) reboxObject(prevEdit);
   S.selection = new Set([id]);
   S.editObject = null;
   clearMeasure();
   if (S.context !== prevCtx || prevEdit) rebuild();
   else selectionRender(prevSel);
   updateChrome();
-  // the editor just closed on prevEdit — repack whatever the session fragmented
-  if (prevEdit) reboxObject(prevEdit);
 };
 
 export function ascend(): void {
@@ -60,6 +61,9 @@ export function enterNode(node: Node, fit?: boolean): void { // dbl-click in tre
   if (!p) return;
   const prevEdit = S.editObject;
   clearSelection(); // commit any voxel selection in the object we're leaving
+  // entering somewhere else also closes any open object editor — repack the
+  // object it was editing (before the rebuild, which then meshes the result)
+  if (prevEdit && prevEdit !== node) reboxObject(prevEdit);
   if (node.type === "scene") {
     S.path = p;
     S.editObject = null;
@@ -73,6 +77,4 @@ export function enterNode(node: Node, fit?: boolean): void { // dbl-click in tre
   rebuild(); // entering always changes the context or edit object -> re-mesh
   updateChrome();
   if (fit) frameView();
-  // entering somewhere else also closes any previously open object editor
-  if (prevEdit && prevEdit !== node) reboxObject(prevEdit);
 }

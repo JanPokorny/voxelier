@@ -8,9 +8,9 @@
 // Several axis orders are tried and the fewest-box result wins. Exact on
 // occupancy and colour — only the decomposition changes.
 //
-// SELF-CONTAINED ON PURPOSE: this function's source is stringified into the
-// background worker's blob (rebox.ts), so it must not reference imports or
-// module scope.
+// Runs synchronously on the main thread at editor close (rebox.ts), so cost is
+// kept bounded: pathologically fragmented solids get fewer greedy restarts, and
+// past a grid-size cap the list is returned unchanged.
 import type { Box3 } from "./types.ts";
 
 export function repackBoxes(boxes: Box3[]): Box3[] {
@@ -108,7 +108,12 @@ export function repackBoxes(boxes: Box3[]): Box3[] {
     }
     return out;
   };
-  const perms = [[0, 2, 1], [2, 0, 1], [1, 0, 2], [0, 1, 2], [2, 1, 0], [1, 2, 0]];
+  // full restart set for normal content; on pathologically fragmented solids
+  // (very many super-cells) restarts stop paying for themselves — keep two so
+  // the synchronous call stays well under a frame's worth of jank
+  const perms = seeds.length > 65_536
+    ? [[0, 2, 1], [2, 0, 1]]
+    : [[0, 2, 1], [2, 0, 1], [1, 0, 2], [0, 1, 2], [2, 1, 0], [1, 2, 0]];
   let best: Box3[] | null = null;
   for (const perm of perms) {
     const r = pack(perm);
