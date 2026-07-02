@@ -244,7 +244,28 @@ h3 {
   gap: 1px;
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden auto;
+  /* The scrollbar must not eat into row width (overflow: overlay is gone from
+     Chromium): park a thin, always-reserved gutter inside the panel's 12px
+     visual padding instead — pull the box into the padding with the negative
+     margin, and the rows neither shrink nor shift when the tree overflows. */
+  margin-right: -10px;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #3a4252 transparent;
+}
+/* older Chromium (<121, no scrollbar-width): same look via the webkit pseudos;
+   ignored by browsers that honour the standard properties above */
+#tree::-webkit-scrollbar {
+  width: 8px;
+}
+#tree::-webkit-scrollbar-thumb {
+  background: #3a4252;
+  border-radius: 4px;
+}
+#tree::-webkit-scrollbar-track {
+  background: transparent;
 }
 .trow {
   display: flex;
