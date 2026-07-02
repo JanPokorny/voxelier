@@ -57,12 +57,7 @@ import {
   translateSelection,
 } from "./select.ts";
 import { enterNode } from "./navigation.ts";
-import {
-  beginFineRotate,
-  endFineRotate,
-  fineRotateSelectionTo,
-  rotateSelectionBy,
-} from "./commands.ts";
+import { rotateSelectionBy } from "./commands.ts";
 import { recordRecent, selectColor, TOOL_ICON, updateChrome } from "./ui.ts";
 import { setSelAnchor } from "./tree.ts";
 import { save } from "./persistence.ts";
@@ -251,48 +246,16 @@ function commitMove(copy: boolean): void {
   updateChrome(); // refresh tree rows (copies add nodes) + group thumbnails
   save();
 }
-// the world horizontal axis (X or Z) closest to screen-right — the one a Shift
-// rotation tips the whole selection about
-function sceneHorizAxis(): number {
-  const m = camera.matrixWorld.elements; // column 0 = camera right
-  return Math.abs(m[0]) >= Math.abs(m[2]) ? 0 : 2;
-}
+// 90°-snap rotation about the selection centre — rigid and non-destructive.
+// Finer (baked, re-voxelising) rotation deliberately exists only inside the
+// object editor's select tool, where destructive edits are expected.
 function rotDragTo(e: PointerEvent): void {
   const d = S.drag!;
-  // Alt and/or Shift leave plain 90°-Y snapping for a baked rotation: the model
-  // only stores Y poses, so a finer angle (Alt) or a horizontal axis (Shift) is
-  // re-voxelised. The whole selection turns rigidly about one shared pivot.
-  if (e.altKey || e.shiftKey) {
-    const axis = e.shiftKey ? sceneHorizAxis() : 1; // Shift -> tip about a horizontal axis
-    if (!d.fine || d.axis !== axis) { // (re)enter baked mode, or the tip axis changed
-      if (d.fine) endFineRotate(); // keep the baked result so far, then re-snapshot
-      beginFineRotate();
-      d.fine = true;
-      d.axis = axis;
-      d.sx = e.clientX;
-      d.deg = 0;
-    }
-    const step = e.altKey ? 15 : 90; // Alt refines the increment; Shift alone snaps to 90°
-    const pxPerStep = e.altKey ? 25 : 70;
-    const deg = Math.round((d.sx - e.clientX) / pxPerStep) * step;
-    if (deg !== d.deg) {
-      fineRotateSelectionTo(deg, axis);
-      d.deg = deg;
-      d.dirty = true;
-    }
-  } else { // 90°-snap rotation about the selection centre (rigid, no baking)
-    if (d.fine) { // leaving baked mode — keep the result, restart the 90° count here
-      endFineRotate();
-      d.fine = false;
-      d.sx = e.clientX;
-      d.steps = 0;
-    }
-    const steps = Math.round((d.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
-    if (steps !== d.steps) {
-      rotateSelectionBy(steps - d.steps!);
-      d.steps = steps;
-      d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
-    }
+  const steps = Math.round((d.sx - e.clientX) / 70); // drag right -> rotate the intuitive way
+  if (steps !== d.steps) {
+    rotateSelectionBy(steps - d.steps!);
+    d.steps = steps;
+    d.dirty = true; // rotated during the drag -> commit + refresh chrome on pointerup
   }
 }
 
@@ -719,7 +682,6 @@ canvas.addEventListener("pointerup", (e) => {
       // silently duplicate the object in place
       commitMove(moved(e) && (e.ctrlKey || e.metaKey));
     } else if (S.drag.mode === "rotobj") {
-      if (S.drag.fine) endFineRotate(); // drop the fine-rotation snapshot
       if (S.drag.dirty) {
         updateChrome(); // tree thumbnails track the new pose
         save();
@@ -739,7 +701,6 @@ canvas.addEventListener("pointercancel", () => {
   if (S.drag && (S.drag.mode === "selmove" || S.drag.mode === "selrot")) {
     dropSelection();
   }
-  if (S.drag && S.drag.mode === "rotobj" && S.drag.fine) endFineRotate();
   S.drag = null;
   S.painting = false;
   S.liveMeas = null; // drop any in-progress box-brush / measure wireframe

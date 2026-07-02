@@ -8,6 +8,7 @@ import { updateChrome } from "./ui.ts";
 import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
 import { clearSelection } from "./select.ts";
+import { reboxObject } from "./rebox.ts";
 import type { Node, ObjectNode } from "./types.ts";
 
 // Leave edit mode with exactly `id` selected in the current context — the shared
@@ -30,6 +31,8 @@ const selectOnly = (
   if (S.context !== prevCtx || prevEdit) rebuild();
   else selectionRender(prevSel);
   updateChrome();
+  // the editor just closed on prevEdit — repack whatever the session fragmented
+  if (prevEdit) reboxObject(prevEdit);
 };
 
 export function ascend(): void {
@@ -55,6 +58,7 @@ export function selectNode(node: Node): void { // select a node from the tree (e
 export function enterNode(node: Node, fit?: boolean): void { // dbl-click in tree/canvas: descend or voxel-edit
   const p = findPath(node);
   if (!p) return;
+  const prevEdit = S.editObject;
   clearSelection(); // commit any voxel selection in the object we're leaving
   if (node.type === "scene") {
     S.path = p;
@@ -69,4 +73,6 @@ export function enterNode(node: Node, fit?: boolean): void { // dbl-click in tre
   rebuild(); // entering always changes the context or edit object -> re-mesh
   updateChrome();
   if (fit) frameView();
+  // entering somewhere else also closes any previously open object editor
+  if (prevEdit && prevEdit !== node) reboxObject(prevEdit);
 }

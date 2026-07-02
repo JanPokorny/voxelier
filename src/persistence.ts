@@ -3,7 +3,6 @@
 import { S } from "./state.ts";
 import { peekUid, seedUid } from "./math.ts";
 import { amend, record } from "./history.ts";
-import { queueRebox } from "./rebox.ts";
 import type { Node, ObjectNode, SceneNode, Vis } from "./types.ts";
 
 const LS = "voxelier-v11"; // v11: box model — objects serialise as colour boxes
@@ -86,7 +85,6 @@ export function flush(): void {
   const rootJSON = JSON.stringify(ser(S.root)); // serialise once, share with record()
   record(rootJSON); // undo snapshot (no-op during restore)
   persistLS(rootJSON);
-  queueRebox(); // the document settled — start the background-repack countdown
 }
 // Persist a document whose GEOMETRY is unchanged — only the box decomposition
 // differs (the background repack). Folds into the CURRENT top undo snapshot
