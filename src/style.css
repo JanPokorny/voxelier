@@ -30,7 +30,7 @@ body {
   position: fixed;
   inset: 0;
   display: grid;
-  grid-template-columns: 1fr 200px;
+  grid-template-columns: 1fr 250px;
   grid-template-areas: "stage right";
 }
 /* sidebar collapsed: the stage takes the whole width and the floating reveal
