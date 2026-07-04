@@ -41,7 +41,7 @@ function measureField(): MeasField {
       { x: 0, y: 0, z: 0 },
       0,
       null,
-      0,
+      null,
       (n, off, rot, owner) => {
         if (owner) {
           for (const b of n.boxes) {

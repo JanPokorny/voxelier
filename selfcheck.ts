@@ -10,6 +10,7 @@ import * as THREE from "three";
 import type { Box3, Region, Vec } from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
 import { addBox, buildIndex, eraseBox, fillBox } from "./src/boxes.ts";
+import { cutHeight } from "./src/cutplane.ts";
 import { rigidRotateWorld } from "./src/shear.ts";
 import { boxFaceGeo } from "./src/mesh.ts";
 import { repackBoxes } from "./src/rebox.ts";
@@ -487,8 +488,23 @@ Deno.test("repackBoxes preserves cells and reduces fragmentation", () => {
   // world-sized solid (10^13 cells — hopeless to explode) heals instantly. Carve
   // one interior cell out of a huge box and hand repack the 6 fragments plus the
   // cell as a 7th box: it must reassemble exactly the original single box.
-  const huge: Box3 = { x0: 0, y0: 0, z0: 0, x1: 100000, y1: 100000, z1: 1000, c: 3 };
-  const hole: Region = { x0: 55555, y0: 44444, z0: 500, x1: 55556, y1: 44445, z1: 501 };
+  const huge: Box3 = {
+    x0: 0,
+    y0: 0,
+    z0: 0,
+    x1: 100000,
+    y1: 100000,
+    z1: 1000,
+    c: 3,
+  };
+  const hole: Region = {
+    x0: 55555,
+    y0: 44444,
+    z0: 500,
+    x1: 55556,
+    y1: 44445,
+    z1: 501,
+  };
   const parts = eraseBox([huge], hole);
   parts.push({ ...hole, c: 3 });
   const whole = repackBoxes(parts);
@@ -499,4 +515,82 @@ Deno.test("repackBoxes preserves cells and reduces fragmentation", () => {
       w.x1 === 100000 && w.y1 === 100000 && w.z1 === 1000 && w.c === 3,
     "huge healed box differs from the original",
   );
+});
+
+// ---- half-visible cutaway plane (cutplane.ts) ----
+// A hollow 20×20 room of 2-thick walls (y 0..10) with a block inside, viewed
+// down the +x+y+z diagonal. The cut plane must remove every wall part that
+// fronts the block, keep the far shell, and the kept half must cover nothing.
+Deno.test("cutaway plane reveals interior content, keeps the far shell", () => {
+  const s3 = 1 / Math.sqrt(3);
+  const k = { x: s3, y: s3, z: s3 }; // unit view axis, pointing at the camera
+  const wall = (x0: number, z0: number, x1: number, z1: number): Box3 => ({
+    x0,
+    y0: 0,
+    z0,
+    x1,
+    y1: 10,
+    z1,
+    c: 1,
+  });
+  const walls = [
+    wall(0, 0, 20, 2),
+    wall(0, 18, 20, 20),
+    wall(0, 2, 2, 18),
+    wall(18, 2, 20, 18),
+  ];
+  const aabb = { min: { x: 0, y: 0, z: 0 }, max: { x: 20, y: 10, z: 20 } };
+  const block: Box3[] = [{ x0: 8, y0: 0, z0: 8, x1: 12, y1: 4, z1: 12, c: 2 }];
+  const H = cutHeight(walls, aabb, block, k);
+  const h = (x: number, y: number, z: number) => (x + y + z) * s3;
+  assert(H < Infinity, "near walls front the block: a cut is required");
+  assert(h(1, 1, 10) <= H, "far shell base must survive the cut");
+  // brute force the promise: no kept wall point (h ≤ H) may lie strictly in
+  // front of any block point along the view axis
+  const inWalls = (x: number, y: number, z: number) =>
+    walls.some((w) =>
+      x > w.x0 && x < w.x1 && y > w.y0 && y < w.y1 && z > w.z0 && z < w.z1
+    );
+  for (let sx = 8; sx <= 12; sx += 0.5) {
+    for (let sy = 0; sy <= 4; sy += 0.5) {
+      for (let sz = 8; sz <= 12; sz += 0.5) {
+        for (let t = 0.25; t < 40; t += 0.25) {
+          const px = sx + t * k.x, py = sy + t * k.y, pz = sz + t * k.z;
+          if (inWalls(px, py, pz)) {
+            assert(
+              h(px, py, pz) > H,
+              `kept wall at ${px},${py},${pz} covers block at ${sx},${sy},${sz}`,
+            );
+          }
+        }
+      }
+    }
+  }
+});
+Deno.test("cutaway plane: no cut when the group fronts nothing", () => {
+  const s3 = 1 / Math.sqrt(3);
+  const k = { x: s3, y: s3, z: s3 };
+  const walls: Box3[] = [
+    { x0: 0, y0: 0, z0: 0, x1: 20, y1: 10, z1: 2, c: 1 },
+    { x0: 0, y0: 0, z0: 18, x1: 20, y1: 10, z1: 20, c: 1 },
+    { x0: 0, y0: 0, z0: 2, x1: 2, y1: 10, z1: 18, c: 1 },
+    { x0: 18, y0: 0, z0: 2, x1: 20, y1: 10, z1: 18, c: 1 },
+  ];
+  const aabb = { min: { x: 0, y: 0, z: 0 }, max: { x: 20, y: 10, z: 20 } };
+  const block: Box3[] = [{ x0: 8, y0: 0, z0: 8, x1: 12, y1: 4, z1: 12, c: 2 }];
+  // visible geometry outside the group's AABB never constrains the plane
+  const beside: Box3[] = [{
+    x0: 30,
+    y0: 0,
+    z0: 8,
+    x1: 34,
+    y1: 4,
+    z1: 12,
+    c: 2,
+  }];
+  assert(cutHeight(walls, aabb, beside, k) === Infinity);
+  // straight top-down the rim walls cover only ground, not the block
+  assert(cutHeight(walls, aabb, block, { x: 0, y: 1, z: 0 }) === Infinity);
+  // and with nothing visible at all there is nothing to reveal
+  assert(cutHeight(walls, aabb, [], k) === Infinity);
 });

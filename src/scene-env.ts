@@ -15,6 +15,9 @@ export const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// per-material clipping planes cut "half-visible" (deemphasized) groups open
+// toward the camera (see render.ts meshCutGroup / updateCutPlanes)
+renderer.localClippingEnabled = true;
 
 export const scene = new THREE.Scene();
 scene.background = new THREE.Color("#7aa0c4"); // fallback; the sky quad covers it
@@ -109,26 +112,23 @@ export const matSurf = new THREE.MeshLambertMaterial({
   vertexColors: true,
   side: THREE.FrontSide,
 }); // opaque surfaces (smooth per-vertex corner AO baked into vertex colours)
-// De-emphasised voxels render as a surface of only the exterior faces, back-face
-// culled — depth-correct yet reading as one translucent pane. Two strengths:
-//  - DEEMPH (more transparent): an object explicitly set to "deemphasized".
-//  - TEMP   (more opaque): "temporarily deemphasized" — anything outside the
-//    current focus (the edited object / entered group). Not an explicit state.
-const deemphMat = (opacity: number): THREE.MeshLambertMaterial => {
-  const m = new THREE.MeshLambertMaterial({
-    vertexColors: true,
-    transparent: true,
-    opacity,
-    side: THREE.FrontSide,
-    depthWrite: false,
-  });
-  m.shadowSide = THREE.DoubleSide; // still cast a solid shadow
-  return m;
-};
-export const matDeemph = deemphMat(0.24); // explicit de-emphasis — more transparent
-export const matTemp = deemphMat(0.55); // temporary de-emphasis — more opaque
-// Depth pre-pass for translucent tiers: write only depth so that, per pixel, only
-// the nearest layer composites (order-independent, no flicker as the camera turns).
+// "Temporarily deemphasized" voxels — anything outside the current focus (the
+// edited object / entered group; not an explicit state) — render as a surface
+// of only the exterior faces, back-face culled: depth-correct yet reading as
+// one translucent pane. An object explicitly set to "deemphasized" is NOT
+// translucent — it renders as an opaque solid cut open by a camera-facing
+// clipping plane (see render.ts).
+export const matTemp = new THREE.MeshLambertMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.55,
+  side: THREE.FrontSide,
+  depthWrite: false,
+});
+matTemp.shadowSide = THREE.DoubleSide; // still cast a solid shadow
+// Depth pre-pass for the translucent tier: write only depth so that, per pixel,
+// only the nearest layer composites (order-independent, no flicker as the
+// camera turns).
 export const matGlassDepth = new THREE.MeshBasicMaterial({
   colorWrite: false,
   side: THREE.FrontSide,
