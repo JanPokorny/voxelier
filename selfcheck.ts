@@ -539,9 +539,8 @@ Deno.test("cutaway plane reveals interior content, keeps the far shell", () => {
     wall(0, 2, 2, 18),
     wall(18, 2, 20, 18),
   ];
-  const aabb = { min: { x: 0, y: 0, z: 0 }, max: { x: 20, y: 10, z: 20 } };
   const block: Box3[] = [{ x0: 8, y0: 0, z0: 8, x1: 12, y1: 4, z1: 12, c: 2 }];
-  const H = cutHeight(walls, aabb, block, k);
+  const H = cutHeight(walls, block, k);
   const h = (x: number, y: number, z: number) => (x + y + z) * s3;
   assert(H < Infinity, "near walls front the block: a cut is required");
   assert(h(1, 1, 10) <= H, "far shell base must survive the cut");
@@ -576,9 +575,8 @@ Deno.test("cutaway plane: no cut when the group fronts nothing", () => {
     { x0: 0, y0: 0, z0: 2, x1: 2, y1: 10, z1: 18, c: 1 },
     { x0: 18, y0: 0, z0: 2, x1: 20, y1: 10, z1: 18, c: 1 },
   ];
-  const aabb = { min: { x: 0, y: 0, z: 0 }, max: { x: 20, y: 10, z: 20 } };
   const block: Box3[] = [{ x0: 8, y0: 0, z0: 8, x1: 12, y1: 4, z1: 12, c: 2 }];
-  // visible geometry outside the group's AABB never constrains the plane
+  // visible geometry camera-side of the whole group never constrains the plane
   const beside: Box3[] = [{
     x0: 30,
     y0: 0,
@@ -588,9 +586,50 @@ Deno.test("cutaway plane: no cut when the group fronts nothing", () => {
     z1: 12,
     c: 2,
   }];
-  assert(cutHeight(walls, aabb, beside, k) === Infinity);
+  assert(cutHeight(walls, beside, k) === Infinity);
   // straight top-down the rim walls cover only ground, not the block
-  assert(cutHeight(walls, aabb, block, { x: 0, y: 1, z: 0 }) === Infinity);
+  assert(cutHeight(walls, block, { x: 0, y: 1, z: 0 }) === Infinity);
   // and with nothing visible at all there is nothing to reveal
-  assert(cutHeight(walls, aabb, [], k) === Infinity);
+  assert(cutHeight(walls, [], k) === Infinity);
+});
+// Walls standing on a coextensive visible floor slab: the contact faces under
+// the walls must not erase them, but the near walls do front the interior
+// floor surface — so they open up while the far shell survives, and straight
+// top-down (where the walls front no floor at all) nothing is cut.
+Deno.test("cutaway plane: a visible floor opens the room, contact keeps it", () => {
+  const s3 = 1 / Math.sqrt(3);
+  const k = { x: s3, y: s3, z: s3 };
+  const h = (x: number, y: number, z: number) => (x + y + z) * s3;
+  const walls: Box3[] = [
+    { x0: 0, y0: 0, z0: 0, x1: 20, y1: 10, z1: 2, c: 1 },
+    { x0: 0, y0: 0, z0: 18, x1: 20, y1: 10, z1: 20, c: 1 },
+    { x0: 0, y0: 0, z0: 2, x1: 2, y1: 10, z1: 18, c: 1 },
+    { x0: 18, y0: 0, z0: 2, x1: 20, y1: 10, z1: 18, c: 1 },
+  ];
+  const floor: Box3[] = [{ x0: 0, y0: -1, z0: 0, x1: 20, y1: 0, z1: 20, c: 3 }];
+  const H = cutHeight(walls, floor, k);
+  assert(H < h(19, 9, 19), "near walls front the interior floor: cut required");
+  assert(h(1, 1, 10) <= H, "far shell base must survive the cut");
+  assert(cutHeight(walls, floor, { x: 0, y: 1, z: 0 }) === Infinity);
+});
+// A solid block standing on a visible floor that runs on behind it: from an
+// oblique view the block fronts that floor, so all but a near-ground wedge
+// (whose size tracks the sample-lattice pitch) must be cut — but never past
+// the block's own h-minimum, and top-down it fronts only its own contact
+// patch, so it stays whole.
+Deno.test("cutaway plane: a grounded solid yields to the floor behind it", () => {
+  const s3 = 1 / Math.sqrt(3);
+  const k = { x: s3, y: s3, z: s3 };
+  const h = (x: number, y: number, z: number) => (x + y + z) * s3;
+  const block: Box3[] = [
+    { x0: 10, y0: 0, z0: 10, x1: 14, y1: 12, z1: 14, c: 1 },
+  ];
+  const floor: Box3[] = [{ x0: 0, y0: -1, z0: 0, x1: 40, y1: 0, z1: 40, c: 2 }];
+  const H = cutHeight(block, floor, k);
+  assert(
+    H < h(10, 6, 10),
+    "the block fronts the floor behind it: cut required",
+  );
+  assert(H >= h(10, 0, 10) - 0.02, "never cut past the block's own h-minimum");
+  assert(cutHeight(block, floor, { x: 0, y: 1, z: 0 }) === Infinity);
 });

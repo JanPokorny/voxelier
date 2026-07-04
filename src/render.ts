@@ -179,7 +179,7 @@ function meshSurface(
 // covers no fully-visible geometry (see cutplane.ts). cutOccluders is that
 // fully-visible geometry in world space, captured each rebuild; the edited
 // object is appended live since its boxes change without a rebuild.
-type CutGroup = { boxes: Box3[]; aabb: Box; plane: THREE.Plane };
+type CutGroup = { boxes: Box3[]; plane: THREE.Plane };
 let cutGroups: CutGroup[] = [];
 let cutMats: THREE.Material[] = []; // per-group materials (each holds its plane)
 let cutOccluders: Box3[] = [];
@@ -210,9 +210,7 @@ function meshCutGroup(boxes: Box3[]): void {
   scene.add(im);
   meshes.push(im);
   cutMats.push(surf, inside);
-  const aabb = emptyBox();
-  growBounds(boxes, aabb);
-  cutGroups.push({ boxes, aabb, plane });
+  cutGroups.push({ boxes, plane });
 }
 // Re-aim every cut group's clipping plane for the current camera angle (called
 // each rendered frame; cheap). Cached on (angle, geometry version): with an
@@ -239,7 +237,7 @@ export function updateCutPlanes(): void {
   for (const g of cutGroups) {
     // clipping keeps distanceToPoint = normal·p + constant ≥ 0, i.e. p·k ≤ H
     g.plane.normal.set(-k.x, -k.y, -k.z);
-    g.plane.constant = Math.min(cutHeight(g.boxes, g.aabb, occ, k), 1e9);
+    g.plane.constant = Math.min(cutHeight(g.boxes, occ, k), 1e9);
   }
 }
 
