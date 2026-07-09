@@ -36,13 +36,9 @@ export const DEFAULT_COLORS = [
   0xa7c4bc,
 ];
 
-// vis: 'visible' | 'deemphasized' | 'hidden' (inherited by descendants). The
-// ordinal is the strength of de-emphasis, so a child inherits max(self, ancestor).
-export const VIS: Record<Vis, number> = {
-  visible: 0,
-  deemphasized: 1,
-  hidden: 2,
-};
+// vis: 'visible' | 'deemphasized' | 'hidden', inherited by descendants (a child
+// renders under the strongest state on its path; see render's eachObject).
+// "deemphasized" is the half-visible cutaway; "hidden" prunes the subtree.
 export const VIS_CYCLE: Record<Vis, Vis> = {
   visible: "deemphasized",
   deemphasized: "hidden",

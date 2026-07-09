@@ -4,6 +4,9 @@
 // object is meshed on its own in object-local space, rebuilt (rAF-debounced) as
 // boxes change. Shading is directional light + cast shadows + smooth per-vertex
 // ambient occlusion baked into the face vertices (see mesh.ts) for soft corners.
+// "Half-visible" (deemphasized) groups render as opaque solids cut open
+// dollhouse-style by per-group axis-aligned clipping planes, re-aimed per view
+// sector (meshCutGroup / updateCutPlanes).
 import * as THREE from "three";
 import { S } from "./state.ts";
 import { addv, rotY, xcompose } from "./math.ts";
@@ -17,11 +20,11 @@ import {
 } from "./boxes.ts";
 import { boxFaceGeo } from "./mesh.ts";
 import {
+  cam,
   camera,
   col,
   dir,
   editGroup,
-  matDeemph,
   matGlassDepth,
   matSurf,
   matTemp,
@@ -31,7 +34,8 @@ import {
   scene,
   wake,
 } from "./scene-env.ts";
-import { boxEmpty, contextXform, emptyBox, nodeBox, VIS } from "./model.ts";
+import { boxEmpty, contextXform, emptyBox, nodeBox } from "./model.ts";
+import { type CutJob, cutJob, type Sign } from "./cutplane.ts";
 import { invalidateField } from "./measure.ts";
 import type { Box, Box3, Node, ObjectNode, Region, Rot, Vec } from "./types.ts";
 
@@ -93,6 +97,11 @@ function disposeMeshes(): void {
     }
   }
   meshes = [];
+  for (const m of cutMats) m.dispose();
+  cutMats = [];
+  cutGroups = [];
+  cutAim = null; // an in-flight aim job references the old groups: drop it
+  cutSector.vox = -1; // re-aim the rebuilt groups on the next frame
   editPickExtra = [];
   disposeSelWire();
   editGroup.clear();
@@ -123,11 +132,12 @@ function disposeSelWire(): void {
   selWire = null;
 }
 
-// Mesh one solid (a world box list) at one of three render tiers and return its
-// surface mesh: "opaque" (full colour + AO), "temp" (more opaque, temporarily
-// deemphasized) or "deemph" (more transparent, explicitly deemphasized). The two
-// translucent tiers skip AO and get a depth-prepass sibling for clean ordering.
-type Tier = "opaque" | "temp" | "deemph";
+// Mesh one solid (a world box list) at one of two render tiers and return its
+// surface mesh: "opaque" (full colour + AO) or "temp" (translucent, temporarily
+// deemphasized). The translucent tier skips AO and gets a depth-prepass sibling
+// for clean ordering. Explicitly deemphasized ("half-visible") groups take a
+// third path entirely: meshCutGroup below.
+type Tier = "opaque" | "temp";
 function meshSurface(
   boxes: Box3[],
   colorOf: (c: number) => THREE.Color,
@@ -140,10 +150,7 @@ function meshSurface(
   const translucent = tier !== "opaque";
   const g = boxFaceGeo(boxes, colorOf, !translucent);
   if (!g) return null;
-  const m = new THREE.Mesh(
-    g,
-    tier === "deemph" ? matDeemph : tier === "temp" ? matTemp : matSurf,
-  );
+  const m = new THREE.Mesh(g, tier === "temp" ? matTemp : matSurf);
   m.castShadow = true;
   m.receiveShadow = true;
   scene.add(m);
@@ -166,27 +173,179 @@ function meshSurface(
   return m;
 }
 
-// Visit every visible object (skipping the one being edited) with its accumulated
-// world transform, the context child it belongs to (owner) and whether it reads
-// as glass (tr). The single traversal behind meshing, collision and measuring.
+// ---- "half-visible" cutaway groups ----
+// Each deemphasized group is rendered whole — an opaque surface plus a flat-
+// coloured BackSide sibling standing in for the solid interior the cut exposes —
+// and clipped dollhouse-style by up to three axis-aligned planes on its
+// camera-facing sides (see cutplane.ts). The cuts are chosen per view SECTOR
+// (azimuth quadrant × elevation band) with hysteresis, so they hold perfectly
+// still while the camera orbits within a sector and whole walls swap at once
+// when it crosses a boundary. cutOccluders is the fully-visible geometry in
+// world space, captured each rebuild; the edited object is appended live since
+// its boxes change without a rebuild.
+type CutGroup = {
+  boxes: Box3[];
+  aabb: Box; // to park unused planes just past the geometry
+  planes: [THREE.Plane, THREE.Plane, THREE.Plane]; // x, y, z cuts
+};
+let cutGroups: CutGroup[] = [];
+let cutMats: THREE.Material[] = []; // per-group materials (each holds its planes)
+let cutOccluders: Box3[] = [];
+// the sector (+ geometry version) the current cuts were aimed for; vox: -1
+// forces a re-aim on the next rendered frame
+const cutSector = { q: -1, b: -1, vox: -1 };
+const CUT_INSIDE = 0x66594e; // flat colour of solids revealed inside the cut
+function meshCutGroup(boxes: Box3[]): void {
+  const g = boxFaceGeo(boxes, col, true);
+  if (!g) return;
+  const planes: [THREE.Plane, THREE.Plane, THREE.Plane] = [
+    new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e9), // aimed by updateCutPlanes
+    new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e9),
+    new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e9),
+  ];
+  const surf = new THREE.MeshLambertMaterial({
+    vertexColors: true,
+    side: THREE.FrontSide,
+    clippingPlanes: planes,
+    clipShadows: true, // the discarded parts must not shade the revealed interior
+  });
+  const m = new THREE.Mesh(g, surf);
+  m.castShadow = m.receiveShadow = true;
+  scene.add(m);
+  meshes.push(m);
+  // back faces of the same shell, flat-coloured: looking past the cut you see
+  // the shell's inner surface as solid "cut material" instead of through it
+  const inside = new THREE.MeshLambertMaterial({
+    color: CUT_INSIDE,
+    side: THREE.BackSide,
+    clippingPlanes: planes,
+  });
+  const im = new THREE.Mesh(g, inside);
+  scene.add(im);
+  meshes.push(im);
+  cutMats.push(surf, inside);
+  const aabb = emptyBox();
+  growBounds(boxes, aabb);
+  cutGroups.push({ boxes, aabb, planes });
+}
+// View sectors: azimuth quadrants × 30° elevation bands, with hysteresis so a
+// camera hovering at a boundary doesn't flap between the two cuts. Within a
+// sector the cuts satisfy its whole direction range (the job samples the
+// sector's corner directions and centre), so nothing needs recomputing until
+// the sector flips — and the recompute itself runs as a budgeted background
+// job (a few ms per rendered frame) with the previous cuts kept up meanwhile,
+// so a flip never blows a frame.
+const HYS_AZ = 8, HYS_EL = 6; // degrees past a boundary before the flip
+const EL_EDGES = [-90, -60, -30, 0, 30, 60, 90];
+const rad = Math.PI / 180;
+const AIM_MS = 5; // per-frame budget for stepping an in-flight aim job
+let cutAim: { job: CutJob; sgx: Sign; sgy: Sign; sgz: Sign } | null = null;
+function startAim(q: number, b: number): void {
+  const sgx: Sign = q <= 1 ? 1 : -1;
+  const sgz: Sign = q === 0 || q === 3 ? 1 : -1;
+  const sgy: Sign = b >= 3 ? 1 : -1;
+  // the sector's four corner directions plus its centre
+  const dir = (a: number, e: number): Vec => {
+    const ce = Math.cos(e * rad);
+    return {
+      x: ce * Math.sin(a * rad),
+      y: Math.sin(e * rad),
+      z: ce * Math.cos(a * rad),
+    };
+  };
+  const dirs: Vec[] = [
+    dir(q * 90, EL_EDGES[b]),
+    dir(q * 90, EL_EDGES[b + 1]),
+    dir(q * 90 + 90, EL_EDGES[b]),
+    dir(q * 90 + 90, EL_EDGES[b + 1]),
+    dir(q * 90 + 45, (EL_EDGES[b] + EL_EDGES[b + 1]) / 2),
+  ];
+  let occ = cutOccluders;
+  if (S.editObject) {
+    occ = occ.concat(
+      S.editObject.boxes.map((bx) =>
+        worldBox(bx, S.editXform.rot, S.editXform.off)
+      ),
+    );
+  }
+  cutAim = {
+    job: cutJob(cutGroups.map((g) => g.boxes), occ, dirs, sgx, sgy, sgz),
+    sgx,
+    sgy,
+    sgz,
+  };
+}
+// Track the camera's view sector each rendered frame (cheap), kick off an aim
+// job when it — or the geometry — changes, and step the in-flight job within
+// the frame budget, applying the new cuts once it completes.
+export function updateCutPlanes(): void {
+  if (!cutGroups.length) {
+    cutAim = null;
+    return;
+  }
+  const azd = ((cam.azim / rad) % 360 + 360) % 360;
+  const eld = cam.elev / rad;
+  let { q, b } = cutSector;
+  const qc = q * 90 + 45; // current quadrant centre; flip only past hysteresis
+  if (q < 0 || Math.abs(((azd - qc) % 360 + 540) % 360 - 180) > 45 + HYS_AZ) {
+    q = Math.min(3, Math.floor(azd / 90));
+  }
+  if (b < 0 || eld < EL_EDGES[b] - HYS_EL || eld > EL_EDGES[b + 1] + HYS_EL) {
+    b = Math.max(0, Math.min(5, Math.floor((eld + 90) / 30)));
+  }
+  if (q !== cutSector.q || b !== cutSector.b || S.voxVer !== cutSector.vox) {
+    cutSector.q = q;
+    cutSector.b = b;
+    cutSector.vox = S.voxVer;
+    startAim(q, b);
+  }
+  if (!cutAim) return;
+  const t0 = performance.now();
+  if (!cutAim.job.step(() => performance.now() - t0 > AIM_MS)) {
+    wake(); // keep frames coming so the job finishes even if the camera stops
+    return;
+  }
+  const { sgx, sgy, sgz } = cutAim;
+  const cuts = cutAim.job.cuts();
+  cutAim = null;
+  for (let i = 0; i < cutGroups.length; i++) {
+    const g = cutGroups[i], c = cuts[i];
+    // an unused (Infinity) cut parks just past the group so nothing is clipped
+    const lim = (s: Sign, lo: number, hi: number, v: number) =>
+      Math.min(v, (s > 0 ? hi : -lo) + 4);
+    g.planes[0].normal.set(-sgx, 0, 0);
+    g.planes[0].constant = lim(sgx, g.aabb.min.x, g.aabb.max.x, c.x);
+    g.planes[1].normal.set(0, -sgy, 0);
+    g.planes[1].constant = lim(sgy, g.aabb.min.y, g.aabb.max.y, c.y);
+    g.planes[2].normal.set(0, 0, -sgz);
+    g.planes[2].constant = lim(sgz, g.aabb.min.z, g.aabb.max.z, c.z);
+  }
+  wake();
+}
+
+// Visit every visible object (skipping the one being edited) with its
+// accumulated world transform, the context child it belongs to (owner) and the
+// topmost deemphasized node covering it (dRoot: the "half-visible" cut group it
+// renders under, or null when fully visible). The single traversal behind
+// meshing, collision and measuring.
 export type ObjCb = (
   node: ObjectNode,
   off: Vec,
   rot: Rot,
   owner: string | null,
-  tr: boolean,
+  dRoot: string | null,
 ) => void;
 export function eachObject(
   node: Node,
   off: Vec,
   rot: Rot,
   owner: string | null,
-  vis: number,
+  dRoot: string | null,
   cb: ObjCb,
 ): void {
-  const ev = Math.max(vis, VIS[node.vis]);
-  if (node === S.editObject || ev >= 2) return; // invisible -> skip
-  if (node.type === "object") cb(node, off, rot, owner, ev === 1);
+  if (node === S.editObject || node.vis === "hidden") return;
+  const dr = dRoot ?? (node.vis === "deemphasized" ? node.id : null);
+  if (node.type === "object") cb(node, off, rot, owner, dr);
   else {
     for (const ch of node.children) {
       eachObject(
@@ -194,12 +353,18 @@ export function eachObject(
         addv(off, rotY(ch.pos, rot)),
         (rot + ch.rot) & 3,
         node === S.context ? ch.id : owner,
-        ev,
+        dr,
         cb,
       );
     }
   }
 }
+// append to (and lazily create) a keyed box list — the per-group accumulators
+const groupInto = (m: Map<string, Box3[]>, id: string): Box3[] => {
+  let a = m.get(id);
+  if (!a) m.set(id, a = []);
+  return a;
+};
 const worldBoxesInto = (
   n: ObjectNode,
   off: Vec,
@@ -324,7 +489,7 @@ export function eyedropColor(): number | null {
     if (c != null) return c;
   }
   let result: number | null = null;
-  eachObject(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (n, off, rot) => {
+  eachObject(S.root, { x: 0, y: 0, z: 0 }, 0, null, null, (n, off, rot) => {
     if (result == null) result = colorAt(n.boxes, off, rot);
   });
   return result;
@@ -364,57 +529,66 @@ export function rebuild(): void {
       off: S.editObject.pos,
       rot: S.editObject.rot,
     });
-    // Everything else is outside the focus, so it's deemphasized: objects set to
-    // "deemphasized" go more transparent (and aren't pickable), the rest go
-    // "temporarily deemphasized" — more opaque, and still pickable so an Add can
-    // land against them.
-    const tempO: Box3[] = [], deemphO: Box3[] = [];
+    // Everything else is outside the focus: fully-visible objects go
+    // "temporarily deemphasized" — more opaque, and still pickable so an Add
+    // can land against them — while "half-visible" (deemphasized) groups render
+    // as plane-cut solids, not pickable.
+    const tempO: Box3[] = [];
+    const cut = new Map<string, Box3[]>();
     eachObject(
       S.root,
       O,
       0,
       null,
-      0,
-      (n, off, rot, _owner, tr) =>
-        worldBoxesInto(n, off, rot, tr ? deemphO : tempO),
+      null,
+      (n, off, rot, _owner, dRoot) =>
+        worldBoxesInto(n, off, rot, dRoot ? groupInto(cut, dRoot) : tempO),
     );
     growBounds(tempO, sceneBox);
-    growBounds(deemphO, sceneBox);
-    meshSurface(deemphO, col, { tier: "deemph" });
     const tm = meshSurface(tempO, col, { tier: "temp" });
     editPickExtra = tm ? [tm] : [];
+    for (const boxes of cut.values()) {
+      growBounds(boxes, sceneBox);
+      meshCutGroup(boxes);
+    }
+    cutOccluders = tempO; // + the edited object, appended live in updateCutPlanes
     buildEditMesh(); // edited object: opaque, in 3D
     nodeBox(S.editObject, S.editXform.off, S.editXform.rot, sceneBox); // eachObject skips it
   } else {
     // owner -> a current-context child (in focus, full colour); otherwise it's
-    // outside the open group, so "temporarily deemphasized" (more opaque). An
-    // object explicitly set to "deemphasized" goes more transparent either way.
-    const gFocus = new Map<string, Box3[]>(),
-      gFocusDim = new Map<string, Box3[]>();
-    const outTemp: Box3[] = [], outDeemph: Box3[] = [];
-    eachObject(S.root, O, 0, null, 0, (n, off, rot, owner, tr) => {
+    // outside the open group, so "temporarily deemphasized" (more opaque). A
+    // "half-visible" (deemphasized) group instead renders as a plane-cut solid,
+    // grouped under the node that set the state.
+    const gFocus = new Map<string, Box3[]>();
+    const cut = new Map<string, Box3[]>();
+    const outTemp: Box3[] = [], occ: Box3[] = [];
+    eachObject(S.root, O, 0, null, null, (n, off, rot, owner, dRoot) => {
       const wb = worldBoxesInto(n, off, rot, []);
       growBounds(wb, sceneBox);
+      let dr = dRoot;
       if (owner) {
-        if (tr) deemphOwners.add(owner); // explicitly deemphasized (selection-independent)
-        // a selected deemphasized object renders opaque so it stays pickable and
-        // its meshes are tracked (childMeshes) — otherwise it can't be clicked and
-        // doesn't follow the pointer while being dragged
-        const opaque = !tr || S.selection.has(owner);
-        const m = opaque ? gFocus : gFocusDim, arr = m.get(owner);
-        if (arr) arr.push(...wb);
-        else m.set(owner, wb);
+        if (dr) {
+          deemphOwners.add(owner); // explicitly deemphasized (selection-independent)
+          // a selected deemphasized object renders opaque so it stays pickable
+          // and its meshes are tracked (childMeshes) — otherwise it can't be
+          // clicked and doesn't follow the pointer while being dragged
+          if (S.selection.has(owner)) dr = null;
+        }
         growBounds(wb, S.childBox[owner] || (S.childBox[owner] = emptyBox()));
-      } else (tr ? outDeemph : outTemp).push(...wb);
+      }
+      if (dr) groupInto(cut, dr).push(...wb);
+      else {
+        occ.push(...wb); // rendered fully — constrains the cut planes
+        if (owner) groupInto(gFocus, owner).push(...wb);
+        else outTemp.push(...wb);
+      }
     });
     meshSurface(outTemp, col, { tier: "temp" }); // outside the group: more opaque
-    meshSurface(outDeemph, col, { tier: "deemph" }); // explicitly deemphasized: more transparent
-    for (const id of new Set([...gFocus.keys(), ...gFocusDim.keys()])) {
-      const e = gFocus.get(id);
-      if (e) meshSurface(e, col, { childId: id }); // in focus: opaque + pickable
-      const t = gFocusDim.get(id);
-      if (t) meshSurface(t, col, { tier: "deemph" }); // in focus but deemphasized, not pickable
+    for (const [id, boxes] of gFocus) {
+      meshSurface(boxes, col, { childId: id }); // in focus: opaque + pickable
     }
+    for (const boxes of cut.values()) meshCutGroup(boxes); // half-visible: plane-cut
+    cutOccluders = occ;
   }
   S.sceneBox = sceneBox; // camera depth range reads this (see updateCamera)
   fitShadow(sceneBox); // anchor the light/shadow frustum to the scene, not the view

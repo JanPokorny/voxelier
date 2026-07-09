@@ -13,7 +13,7 @@ import {
   viewport,
   wake,
 } from "./scene-env.ts";
-import { rebuild } from "./render.ts";
+import { rebuild, updateCutPlanes } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { frameView, updateCamera } from "./camera.ts";
 import { updateMeasureLabels } from "./measure.ts";
@@ -87,6 +87,7 @@ function tick(): void {
   reconcile();
   updateCamera();
   if (frame.tail > 0 || !cameraSettled()) {
+    updateCutPlanes(); // half-visible cutaway planes track the camera angle
     renderer.render(scene, camera);
     updateMeasureLabels();
     if (frame.tail > 0) frame.tail--;

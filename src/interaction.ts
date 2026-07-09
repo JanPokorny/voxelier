@@ -130,10 +130,17 @@ function moveCollision(): {
   hgt: number;
 } {
   const occ: Box3[] = [], sel: Box3[] = [];
-  eachObject(S.root, { x: 0, y: 0, z: 0 }, 0, null, 0, (n, off, rot, owner) => {
-    const tgt = owner && S.selection.has(owner) ? sel : occ;
-    for (const b of n.boxes) tgt.push(worldBox(b, rot, off));
-  });
+  eachObject(
+    S.root,
+    { x: 0, y: 0, z: 0 },
+    0,
+    null,
+    null,
+    (n, off, rot, owner) => {
+      const tgt = owner && S.selection.has(owner) ? sel : occ;
+      for (const b of n.boxes) tgt.push(worldBox(b, rot, off));
+    },
+  );
   let minY = Infinity, maxY = -Infinity;
   for (const b of sel) {
     if (b.y0 < minY) minY = b.y0;

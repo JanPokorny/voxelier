@@ -10,6 +10,7 @@ import * as THREE from "three";
 import type { Box3, Region, Vec } from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
 import { addBox, buildIndex, eraseBox, fillBox } from "./src/boxes.ts";
+import { cutCorner, cutJob } from "./src/cutplane.ts";
 import { rigidRotateWorld } from "./src/shear.ts";
 import { boxFaceGeo } from "./src/mesh.ts";
 import { repackBoxes } from "./src/rebox.ts";
@@ -487,8 +488,23 @@ Deno.test("repackBoxes preserves cells and reduces fragmentation", () => {
   // world-sized solid (10^13 cells — hopeless to explode) heals instantly. Carve
   // one interior cell out of a huge box and hand repack the 6 fragments plus the
   // cell as a 7th box: it must reassemble exactly the original single box.
-  const huge: Box3 = { x0: 0, y0: 0, z0: 0, x1: 100000, y1: 100000, z1: 1000, c: 3 };
-  const hole: Region = { x0: 55555, y0: 44444, z0: 500, x1: 55556, y1: 44445, z1: 501 };
+  const huge: Box3 = {
+    x0: 0,
+    y0: 0,
+    z0: 0,
+    x1: 100000,
+    y1: 100000,
+    z1: 1000,
+    c: 3,
+  };
+  const hole: Region = {
+    x0: 55555,
+    y0: 44444,
+    z0: 500,
+    x1: 55556,
+    y1: 44445,
+    z1: 501,
+  };
   const parts = eraseBox([huge], hole);
   parts.push({ ...hole, c: 3 });
   const whole = repackBoxes(parts);
@@ -498,5 +514,149 @@ Deno.test("repackBoxes preserves cells and reduces fragmentation", () => {
     w.x0 === 0 && w.y0 === 0 && w.z0 === 0 &&
       w.x1 === 100000 && w.y1 === 100000 && w.z1 === 1000 && w.c === 3,
     "huge healed box differs from the original",
+  );
+});
+
+// ---- half-visible cutaway cuts (cutplane.ts) ----
+// A hollow 20x20 room of 2-thick walls (y 0..10) with a block inside, viewed
+// down the +x+y+z diagonal. The volume-optimal cuts must clear the block from
+// every kept wall point while keeping the far shell.
+Deno.test("cutaway clears interior content, keeps the far shell", () => {
+  const s3 = 1 / Math.sqrt(3);
+  const k = { x: s3, y: s3, z: s3 }; // unit view axis, pointing at the camera
+  const wall = (x0: number, z0: number, x1: number, z1: number): Box3 => ({
+    x0,
+    y0: 0,
+    z0,
+    x1,
+    y1: 10,
+    z1,
+    c: 1,
+  });
+  const walls = [
+    wall(0, 0, 20, 2),
+    wall(0, 18, 20, 20),
+    wall(0, 2, 2, 18),
+    wall(18, 2, 20, 18),
+  ];
+  const block: Box3[] = [{ x0: 8, y0: 0, z0: 8, x1: 12, y1: 4, z1: 12, c: 2 }];
+  const c = cutCorner(walls, block, [k], 1, 1, 1);
+  // a lone block demands only a partial cut (here a single x-cut keeps the
+  // most volume — the walls-on-a-floor test below is what forces whole walls
+  // out); it must land past the block but before the near-x wall
+  assert(c.x >= 12 && c.x < 18, `cut must clear the block, got ${c.x}`);
+  assert(c.y === Infinity, `no walls-down cut needed, got ${c.y}`);
+  // brute force the promise: no kept wall point may lie strictly in front of
+  // any block point along the view axis
+  const kept = (x: number, y: number, z: number) =>
+    x <= c.x && y <= c.y && z <= c.z &&
+    walls.some((w) =>
+      x > w.x0 && x < w.x1 && y > w.y0 && y < w.y1 && z > w.z0 && z < w.z1
+    );
+  for (let sx = 8; sx <= 12; sx += 0.5) {
+    for (let sy = 0; sy <= 4; sy += 0.5) {
+      for (let sz = 8; sz <= 12; sz += 0.5) {
+        for (let t = 0.25; t < 40; t += 0.25) {
+          assert(
+            !kept(sx + t * k.x, sy + t * k.y, sz + t * k.z),
+            `kept wall covers block at ${sx},${sy},${sz} t=${t}`,
+          );
+        }
+      }
+    }
+  }
+});
+Deno.test("cutaway: no cut when the group fronts nothing", () => {
+  const s3 = 1 / Math.sqrt(3);
+  const k = { x: s3, y: s3, z: s3 };
+  const walls: Box3[] = [
+    { x0: 0, y0: 0, z0: 0, x1: 20, y1: 10, z1: 2, c: 1 },
+    { x0: 0, y0: 0, z0: 18, x1: 20, y1: 10, z1: 20, c: 1 },
+    { x0: 0, y0: 0, z0: 2, x1: 2, y1: 10, z1: 18, c: 1 },
+    { x0: 18, y0: 0, z0: 2, x1: 20, y1: 10, z1: 18, c: 1 },
+  ];
+  const block: Box3[] = [{ x0: 8, y0: 0, z0: 8, x1: 12, y1: 4, z1: 12, c: 2 }];
+  // visible geometry camera-side of the whole group never constrains the cuts
+  const beside: Box3[] = [{
+    x0: 30,
+    y0: 0,
+    z0: 8,
+    x1: 34,
+    y1: 4,
+    z1: 12,
+    c: 2,
+  }];
+  const noCut = (c: { x: number; y: number; z: number }) =>
+    c.x === Infinity && c.y === Infinity && c.z === Infinity;
+  assert(noCut(cutCorner(walls, beside, [k], 1, 1, 1)));
+  // straight top-down the rim walls cover only ground, not the block
+  assert(noCut(cutCorner(walls, block, [{ x: 0, y: 1, z: 0 }], 1, 1, 1)));
+  // and with nothing visible at all there is nothing to reveal
+  assert(noCut(cutCorner(walls, [], [k], 1, 1, 1)));
+});
+// Walls standing on a coextensive visible floor slab: the contact faces under
+// the walls must not erase them, but the near walls do front the interior
+// floor surface - so they drop whole while the far shell survives, and
+// straight top-down (where the walls front no floor at all) nothing is cut.
+Deno.test("cutaway: a visible floor opens the room, contact keeps it", () => {
+  const s3 = 1 / Math.sqrt(3);
+  const k = { x: s3, y: s3, z: s3 };
+  const walls: Box3[] = [
+    { x0: 0, y0: 0, z0: 0, x1: 20, y1: 10, z1: 2, c: 1 },
+    { x0: 0, y0: 0, z0: 18, x1: 20, y1: 10, z1: 20, c: 1 },
+    { x0: 0, y0: 0, z0: 2, x1: 2, y1: 10, z1: 18, c: 1 },
+    { x0: 18, y0: 0, z0: 2, x1: 20, y1: 10, z1: 18, c: 1 },
+  ];
+  const floor: Box3[] = [{ x0: 0, y0: -1, z0: 0, x1: 20, y1: 0, z1: 20, c: 3 }];
+  const c = cutCorner(walls, floor, [k], 1, 1, 1);
+  assert(c.x >= 16 && c.x < 18, `near-x wall must drop whole, got ${c.x}`);
+  assert(c.z >= 16 && c.z < 18, `near-z wall must drop whole, got ${c.z}`);
+  assert(c.y === Infinity, `far shell must keep its full height, got ${c.y}`);
+  const top = cutCorner(walls, floor, [{ x: 0, y: 1, z: 0 }], 1, 1, 1);
+  assert(top.x === Infinity && top.y === Infinity && top.z === Infinity);
+});
+// A solid block standing on a visible floor that runs on behind it: x/z cuts
+// would erase it outright, so the volume-optimal choice is a "walls-down"
+// y-cut leaving a near-ground stump (whose height tracks the sample-lattice
+// pitch). Top-down it fronts only its own contact patch, so it stays whole.
+Deno.test("cutaway: a grounded solid keeps a walls-down stump", () => {
+  const s3 = 1 / Math.sqrt(3);
+  const k = { x: s3, y: s3, z: s3 };
+  const block: Box3[] = [
+    { x0: 10, y0: 0, z0: 10, x1: 14, y1: 12, z1: 14, c: 1 },
+  ];
+  const floor: Box3[] = [{ x0: 0, y0: -1, z0: 0, x1: 40, y1: 0, z1: 40, c: 2 }];
+  const c = cutCorner(block, floor, [k], 1, 1, 1);
+  assert(c.x === Infinity && c.z === Infinity, "stump keeps its footprint");
+  assert(c.y >= 1 && c.y <= 6, `stump height tracks the lattice, got ${c.y}`);
+  const top = cutCorner(block, floor, [{ x: 0, y: 1, z: 0 }], 1, 1, 1);
+  assert(top.x === Infinity && top.y === Infinity && top.z === Infinity);
+});
+// The budgeted job must produce exactly the same cuts as the one-shot path no
+// matter where it is interrupted — render steps it a few units per frame.
+Deno.test("cutaway: the sliced aim job matches the one-shot result", () => {
+  const s3 = 1 / Math.sqrt(3);
+  const k = { x: s3, y: s3, z: s3 };
+  const dirs = [k, { x: 0.6, y: 0.53, z: 0.6 }, { x: 0, y: 1, z: 0 }];
+  const walls: Box3[] = [
+    { x0: 0, y0: 0, z0: 0, x1: 20, y1: 10, z1: 2, c: 1 },
+    { x0: 0, y0: 0, z0: 18, x1: 20, y1: 10, z1: 20, c: 1 },
+    { x0: 0, y0: 0, z0: 2, x1: 2, y1: 10, z1: 18, c: 1 },
+    { x0: 18, y0: 0, z0: 2, x1: 20, y1: 10, z1: 18, c: 1 },
+  ];
+  const block: Box3[] = [{ x0: 8, y0: 0, z0: 8, x1: 12, y1: 4, z1: 12, c: 2 }];
+  const occ: Box3[] = [
+    ...block,
+    { x0: 0, y0: -1, z0: 0, x1: 200, y1: 0, z1: 200, c: 3 }, // big: gets split
+  ];
+  const whole = cutCorner(walls, occ, dirs, 1, 1, 1);
+  const job = cutJob([walls, block], occ, dirs, 1, 1, 1);
+  let steps = 0;
+  while (!job.step(() => true)) steps++; // interrupt after every single unit
+  assert(steps > 1, "expected the job to be split into multiple units");
+  const [w2] = job.cuts();
+  assert(
+    w2.x === whole.x && w2.y === whole.y && w2.z === whole.z,
+    `sliced job diverged: ${JSON.stringify(w2)} != ${JSON.stringify(whole)}`,
   );
 });
