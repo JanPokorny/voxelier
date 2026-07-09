@@ -35,7 +35,7 @@ import {
   wake,
 } from "./scene-env.ts";
 import { boxEmpty, contextXform, emptyBox, nodeBox } from "./model.ts";
-import { cutCorner, type Sign } from "./cutplane.ts";
+import { type CutJob, cutJob, type Sign } from "./cutplane.ts";
 import { invalidateField } from "./measure.ts";
 import type { Box, Box3, Node, ObjectNode, Region, Rot, Vec } from "./types.ts";
 
@@ -100,6 +100,7 @@ function disposeMeshes(): void {
   for (const m of cutMats) m.dispose();
   cutMats = [];
   cutGroups = [];
+  cutAim = null; // an in-flight aim job references the old groups: drop it
   cutSector.vox = -1; // re-aim the rebuilt groups on the next frame
   editPickExtra = [];
   disposeSelWire();
@@ -229,32 +230,36 @@ function meshCutGroup(boxes: Box3[]): void {
 }
 // View sectors: azimuth quadrants × 30° elevation bands, with hysteresis so a
 // camera hovering at a boundary doesn't flap between the two cuts. Within a
-// sector the cuts satisfy its whole direction range (cutCorner samples the
-// corners and centre), so nothing needs recomputing until the sector flips.
+// sector the cuts satisfy its whole direction range (the job samples the
+// sector's corner directions and centre), so nothing needs recomputing until
+// the sector flips — and the recompute itself runs as a budgeted background
+// job (a few ms per rendered frame) with the previous cuts kept up meanwhile,
+// so a flip never blows a frame.
 const HYS_AZ = 8, HYS_EL = 6; // degrees past a boundary before the flip
 const EL_EDGES = [-90, -60, -30, 0, 30, 60, 90];
 const rad = Math.PI / 180;
-function aimCuts(q: number, b: number): void {
+const AIM_MS = 5; // per-frame budget for stepping an in-flight aim job
+let cutAim: { job: CutJob; sgx: Sign; sgy: Sign; sgz: Sign } | null = null;
+function startAim(q: number, b: number): void {
   const sgx: Sign = q <= 1 ? 1 : -1;
   const sgz: Sign = q === 0 || q === 3 ? 1 : -1;
   const sgy: Sign = b >= 3 ? 1 : -1;
-  const dirs: Vec[] = [];
-  for (const a of [q * 90, q * 90 + 45, q * 90 + 90]) {
-    for (
-      const e of [
-        EL_EDGES[b],
-        (EL_EDGES[b] + EL_EDGES[b + 1]) / 2,
-        EL_EDGES[b + 1],
-      ]
-    ) {
-      const ce = Math.cos(e * rad);
-      dirs.push({
-        x: ce * Math.sin(a * rad),
-        y: Math.sin(e * rad),
-        z: ce * Math.cos(a * rad),
-      });
-    }
-  }
+  // the sector's four corner directions plus its centre
+  const dir = (a: number, e: number): Vec => {
+    const ce = Math.cos(e * rad);
+    return {
+      x: ce * Math.sin(a * rad),
+      y: Math.sin(e * rad),
+      z: ce * Math.cos(a * rad),
+    };
+  };
+  const dirs: Vec[] = [
+    dir(q * 90, EL_EDGES[b]),
+    dir(q * 90, EL_EDGES[b + 1]),
+    dir(q * 90 + 90, EL_EDGES[b]),
+    dir(q * 90 + 90, EL_EDGES[b + 1]),
+    dir(q * 90 + 45, (EL_EDGES[b] + EL_EDGES[b + 1]) / 2),
+  ];
   let occ = cutOccluders;
   if (S.editObject) {
     occ = occ.concat(
@@ -263,24 +268,21 @@ function aimCuts(q: number, b: number): void {
       ),
     );
   }
-  for (const g of cutGroups) {
-    const c = cutCorner(g.boxes, occ, dirs, sgx, sgy, sgz);
-    // an unused (Infinity) cut parks just past the group so nothing is clipped
-    const lim = (s: Sign, lo: number, hi: number, v: number) =>
-      Math.min(v, (s > 0 ? hi : -lo) + 4);
-    g.planes[0].normal.set(-sgx, 0, 0);
-    g.planes[0].constant = lim(sgx, g.aabb.min.x, g.aabb.max.x, c.x);
-    g.planes[1].normal.set(0, -sgy, 0);
-    g.planes[1].constant = lim(sgy, g.aabb.min.y, g.aabb.max.y, c.y);
-    g.planes[2].normal.set(0, 0, -sgz);
-    g.planes[2].constant = lim(sgz, g.aabb.min.z, g.aabb.max.z, c.z);
-  }
-  wake();
+  cutAim = {
+    job: cutJob(cutGroups.map((g) => g.boxes), occ, dirs, sgx, sgy, sgz),
+    sgx,
+    sgy,
+    sgz,
+  };
 }
-// Track the camera's view sector each rendered frame (cheap) and re-aim the
-// cuts only when it — or the geometry — changes.
+// Track the camera's view sector each rendered frame (cheap), kick off an aim
+// job when it — or the geometry — changes, and step the in-flight job within
+// the frame budget, applying the new cuts once it completes.
 export function updateCutPlanes(): void {
-  if (!cutGroups.length) return;
+  if (!cutGroups.length) {
+    cutAim = null;
+    return;
+  }
   const azd = ((cam.azim / rad) % 360 + 360) % 360;
   const eld = cam.elev / rad;
   let { q, b } = cutSector;
@@ -295,8 +297,30 @@ export function updateCutPlanes(): void {
     cutSector.q = q;
     cutSector.b = b;
     cutSector.vox = S.voxVer;
-    aimCuts(q, b);
+    startAim(q, b);
   }
+  if (!cutAim) return;
+  const t0 = performance.now();
+  if (!cutAim.job.step(() => performance.now() - t0 > AIM_MS)) {
+    wake(); // keep frames coming so the job finishes even if the camera stops
+    return;
+  }
+  const { sgx, sgy, sgz } = cutAim;
+  const cuts = cutAim.job.cuts();
+  cutAim = null;
+  for (let i = 0; i < cutGroups.length; i++) {
+    const g = cutGroups[i], c = cuts[i];
+    // an unused (Infinity) cut parks just past the group so nothing is clipped
+    const lim = (s: Sign, lo: number, hi: number, v: number) =>
+      Math.min(v, (s > 0 ? hi : -lo) + 4);
+    g.planes[0].normal.set(-sgx, 0, 0);
+    g.planes[0].constant = lim(sgx, g.aabb.min.x, g.aabb.max.x, c.x);
+    g.planes[1].normal.set(0, -sgy, 0);
+    g.planes[1].constant = lim(sgy, g.aabb.min.y, g.aabb.max.y, c.y);
+    g.planes[2].normal.set(0, 0, -sgz);
+    g.planes[2].constant = lim(sgz, g.aabb.min.z, g.aabb.max.z, c.z);
+  }
+  wake();
 }
 
 // Visit every visible object (skipping the one being edited) with its

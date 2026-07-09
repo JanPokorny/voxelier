@@ -10,7 +10,7 @@ import * as THREE from "three";
 import type { Box3, Region, Vec } from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
 import { addBox, buildIndex, eraseBox, fillBox } from "./src/boxes.ts";
-import { cutCorner } from "./src/cutplane.ts";
+import { cutCorner, cutJob } from "./src/cutplane.ts";
 import { rigidRotateWorld } from "./src/shear.ts";
 import { boxFaceGeo } from "./src/mesh.ts";
 import { repackBoxes } from "./src/rebox.ts";
@@ -631,4 +631,32 @@ Deno.test("cutaway: a grounded solid keeps a walls-down stump", () => {
   assert(c.y >= 1 && c.y <= 6, `stump height tracks the lattice, got ${c.y}`);
   const top = cutCorner(block, floor, [{ x: 0, y: 1, z: 0 }], 1, 1, 1);
   assert(top.x === Infinity && top.y === Infinity && top.z === Infinity);
+});
+// The budgeted job must produce exactly the same cuts as the one-shot path no
+// matter where it is interrupted — render steps it a few units per frame.
+Deno.test("cutaway: the sliced aim job matches the one-shot result", () => {
+  const s3 = 1 / Math.sqrt(3);
+  const k = { x: s3, y: s3, z: s3 };
+  const dirs = [k, { x: 0.6, y: 0.53, z: 0.6 }, { x: 0, y: 1, z: 0 }];
+  const walls: Box3[] = [
+    { x0: 0, y0: 0, z0: 0, x1: 20, y1: 10, z1: 2, c: 1 },
+    { x0: 0, y0: 0, z0: 18, x1: 20, y1: 10, z1: 20, c: 1 },
+    { x0: 0, y0: 0, z0: 2, x1: 2, y1: 10, z1: 18, c: 1 },
+    { x0: 18, y0: 0, z0: 2, x1: 20, y1: 10, z1: 18, c: 1 },
+  ];
+  const block: Box3[] = [{ x0: 8, y0: 0, z0: 8, x1: 12, y1: 4, z1: 12, c: 2 }];
+  const occ: Box3[] = [
+    ...block,
+    { x0: 0, y0: -1, z0: 0, x1: 200, y1: 0, z1: 200, c: 3 }, // big: gets split
+  ];
+  const whole = cutCorner(walls, occ, dirs, 1, 1, 1);
+  const job = cutJob([walls, block], occ, dirs, 1, 1, 1);
+  let steps = 0;
+  while (!job.step(() => true)) steps++; // interrupt after every single unit
+  assert(steps > 1, "expected the job to be split into multiple units");
+  const [w2] = job.cuts();
+  assert(
+    w2.x === whole.x && w2.y === whole.y && w2.z === whole.z,
+    `sliced job diverged: ${JSON.stringify(w2)} != ${JSON.stringify(whole)}`,
+  );
 });
