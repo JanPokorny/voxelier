@@ -4,8 +4,9 @@
 // object is meshed on its own in object-local space, rebuilt (rAF-debounced) as
 // boxes change. Shading is directional light + cast shadows + smooth per-vertex
 // ambient occlusion baked into the face vertices (see mesh.ts) for soft corners.
-// "Half-visible" (deemphasized) groups render as opaque solids cut open by a
-// per-group camera-facing clipping plane (meshCutGroup / updateCutPlanes).
+// "Half-visible" (deemphasized) groups render as opaque solids cut open
+// dollhouse-style by per-group axis-aligned clipping planes, re-aimed per view
+// sector (meshCutGroup / updateCutPlanes).
 import * as THREE from "three";
 import { S } from "./state.ts";
 import { addv, rotY, xcompose } from "./math.ts";
@@ -34,7 +35,7 @@ import {
   wake,
 } from "./scene-env.ts";
 import { boxEmpty, contextXform, emptyBox, nodeBox } from "./model.ts";
-import { cutHeight } from "./cutplane.ts";
+import { cutCorner, type Sign } from "./cutplane.ts";
 import { invalidateField } from "./measure.ts";
 import type { Box, Box3, Node, ObjectNode, Region, Rot, Vec } from "./types.ts";
 
@@ -99,7 +100,7 @@ function disposeMeshes(): void {
   for (const m of cutMats) m.dispose();
   cutMats = [];
   cutGroups = [];
-  cutKey = "";
+  cutSector.vox = -1; // re-aim the rebuilt groups on the next frame
   editPickExtra = [];
   disposeSelWire();
   editGroup.clear();
@@ -174,26 +175,38 @@ function meshSurface(
 // ---- "half-visible" cutaway groups ----
 // Each deemphasized group is rendered whole — an opaque surface plus a flat-
 // coloured BackSide sibling standing in for the solid interior the cut exposes —
-// and clipped by a single camera-facing plane. updateCutPlanes re-aims the
-// planes as the camera turns so the kept half is the largest depth-slab that
-// covers no fully-visible geometry (see cutplane.ts). cutOccluders is that
-// fully-visible geometry in world space, captured each rebuild; the edited
-// object is appended live since its boxes change without a rebuild.
-type CutGroup = { boxes: Box3[]; plane: THREE.Plane };
+// and clipped dollhouse-style by up to three axis-aligned planes on its
+// camera-facing sides (see cutplane.ts). The cuts are chosen per view SECTOR
+// (azimuth quadrant × elevation band) with hysteresis, so they hold perfectly
+// still while the camera orbits within a sector and whole walls swap at once
+// when it crosses a boundary. cutOccluders is the fully-visible geometry in
+// world space, captured each rebuild; the edited object is appended live since
+// its boxes change without a rebuild.
+type CutGroup = {
+  boxes: Box3[];
+  aabb: Box; // to park unused planes just past the geometry
+  planes: [THREE.Plane, THREE.Plane, THREE.Plane]; // x, y, z cuts
+};
 let cutGroups: CutGroup[] = [];
-let cutMats: THREE.Material[] = []; // per-group materials (each holds its plane)
+let cutMats: THREE.Material[] = []; // per-group materials (each holds its planes)
 let cutOccluders: Box3[] = [];
-let cutKey = ""; // azim/elev/voxVer snapshot the current planes were aimed for
+// the sector (+ geometry version) the current cuts were aimed for; vox: -1
+// forces a re-aim on the next rendered frame
+const cutSector = { q: -1, b: -1, vox: -1 };
 const CUT_INSIDE = 0x66594e; // flat colour of solids revealed inside the cut
 function meshCutGroup(boxes: Box3[]): void {
   const g = boxFaceGeo(boxes, col, true);
   if (!g) return;
-  const plane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e9); // aimed by updateCutPlanes
+  const planes: [THREE.Plane, THREE.Plane, THREE.Plane] = [
+    new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e9), // aimed by updateCutPlanes
+    new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e9),
+    new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e9),
+  ];
   const surf = new THREE.MeshLambertMaterial({
     vertexColors: true,
     side: THREE.FrontSide,
-    clippingPlanes: [plane],
-    clipShadows: true, // the discarded half must not shade the revealed interior
+    clippingPlanes: planes,
+    clipShadows: true, // the discarded parts must not shade the revealed interior
   });
   const m = new THREE.Mesh(g, surf);
   m.castShadow = m.receiveShadow = true;
@@ -204,40 +217,85 @@ function meshCutGroup(boxes: Box3[]): void {
   const inside = new THREE.MeshLambertMaterial({
     color: CUT_INSIDE,
     side: THREE.BackSide,
-    clippingPlanes: [plane],
+    clippingPlanes: planes,
   });
   const im = new THREE.Mesh(g, inside);
   scene.add(im);
   meshes.push(im);
   cutMats.push(surf, inside);
-  cutGroups.push({ boxes, plane });
+  const aabb = emptyBox();
+  growBounds(boxes, aabb);
+  cutGroups.push({ boxes, aabb, planes });
 }
-// Re-aim every cut group's clipping plane for the current camera angle (called
-// each rendered frame; cheap). Cached on (angle, geometry version): with an
-// orthographic camera, pan and zoom can't change what covers what.
-export function updateCutPlanes(): void {
-  if (!cutGroups.length) return;
-  const key = `${cam.azim.toFixed(3)}/${cam.elev.toFixed(3)}/${S.voxVer}`;
-  if (key === cutKey) return;
-  cutKey = key;
-  const ce = Math.cos(cam.elev); // unit view axis, pointing at the camera
-  const k = {
-    x: ce * Math.sin(cam.azim),
-    y: Math.sin(cam.elev),
-    z: ce * Math.cos(cam.azim),
-  };
+// View sectors: azimuth quadrants × 30° elevation bands, with hysteresis so a
+// camera hovering at a boundary doesn't flap between the two cuts. Within a
+// sector the cuts satisfy its whole direction range (cutCorner samples the
+// corners and centre), so nothing needs recomputing until the sector flips.
+const HYS_AZ = 8, HYS_EL = 6; // degrees past a boundary before the flip
+const EL_EDGES = [-90, -60, -30, 0, 30, 60, 90];
+const rad = Math.PI / 180;
+function aimCuts(q: number, b: number): void {
+  const sgx: Sign = q <= 1 ? 1 : -1;
+  const sgz: Sign = q === 0 || q === 3 ? 1 : -1;
+  const sgy: Sign = b >= 3 ? 1 : -1;
+  const dirs: Vec[] = [];
+  for (const a of [q * 90, q * 90 + 45, q * 90 + 90]) {
+    for (
+      const e of [
+        EL_EDGES[b],
+        (EL_EDGES[b] + EL_EDGES[b + 1]) / 2,
+        EL_EDGES[b + 1],
+      ]
+    ) {
+      const ce = Math.cos(e * rad);
+      dirs.push({
+        x: ce * Math.sin(a * rad),
+        y: Math.sin(e * rad),
+        z: ce * Math.cos(a * rad),
+      });
+    }
+  }
   let occ = cutOccluders;
   if (S.editObject) {
     occ = occ.concat(
-      S.editObject.boxes.map((b) =>
-        worldBox(b, S.editXform.rot, S.editXform.off)
+      S.editObject.boxes.map((bx) =>
+        worldBox(bx, S.editXform.rot, S.editXform.off)
       ),
     );
   }
   for (const g of cutGroups) {
-    // clipping keeps distanceToPoint = normal·p + constant ≥ 0, i.e. p·k ≤ H
-    g.plane.normal.set(-k.x, -k.y, -k.z);
-    g.plane.constant = Math.min(cutHeight(g.boxes, occ, k), 1e9);
+    const c = cutCorner(g.boxes, occ, dirs, sgx, sgy, sgz);
+    // an unused (Infinity) cut parks just past the group so nothing is clipped
+    const lim = (s: Sign, lo: number, hi: number, v: number) =>
+      Math.min(v, (s > 0 ? hi : -lo) + 4);
+    g.planes[0].normal.set(-sgx, 0, 0);
+    g.planes[0].constant = lim(sgx, g.aabb.min.x, g.aabb.max.x, c.x);
+    g.planes[1].normal.set(0, -sgy, 0);
+    g.planes[1].constant = lim(sgy, g.aabb.min.y, g.aabb.max.y, c.y);
+    g.planes[2].normal.set(0, 0, -sgz);
+    g.planes[2].constant = lim(sgz, g.aabb.min.z, g.aabb.max.z, c.z);
+  }
+  wake();
+}
+// Track the camera's view sector each rendered frame (cheap) and re-aim the
+// cuts only when it — or the geometry — changes.
+export function updateCutPlanes(): void {
+  if (!cutGroups.length) return;
+  const azd = ((cam.azim / rad) % 360 + 360) % 360;
+  const eld = cam.elev / rad;
+  let { q, b } = cutSector;
+  const qc = q * 90 + 45; // current quadrant centre; flip only past hysteresis
+  if (q < 0 || Math.abs(((azd - qc) % 360 + 540) % 360 - 180) > 45 + HYS_AZ) {
+    q = Math.min(3, Math.floor(azd / 90));
+  }
+  if (b < 0 || eld < EL_EDGES[b] - HYS_EL || eld > EL_EDGES[b + 1] + HYS_EL) {
+    b = Math.max(0, Math.min(5, Math.floor((eld + 90) / 30)));
+  }
+  if (q !== cutSector.q || b !== cutSector.b || S.voxVer !== cutSector.vox) {
+    cutSector.q = q;
+    cutSector.b = b;
+    cutSector.vox = S.voxVer;
+    aimCuts(q, b);
   }
 }
 

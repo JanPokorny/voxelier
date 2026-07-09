@@ -16,7 +16,7 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 // per-material clipping planes cut "half-visible" (deemphasized) groups open
-// toward the camera (see render.ts meshCutGroup / updateCutPlanes)
+// dollhouse-style toward the camera (see render.ts meshCutGroup / updateCutPlanes)
 renderer.localClippingEnabled = true;
 
 export const scene = new THREE.Scene();
@@ -116,8 +116,8 @@ export const matSurf = new THREE.MeshLambertMaterial({
 // edited object / entered group; not an explicit state) — render as a surface
 // of only the exterior faces, back-face culled: depth-correct yet reading as
 // one translucent pane. An object explicitly set to "deemphasized" is NOT
-// translucent — it renders as an opaque solid cut open by a camera-facing
-// clipping plane (see render.ts).
+// translucent — it renders as an opaque solid cut open dollhouse-style by
+// axis-aligned clipping planes (see render.ts).
 export const matTemp = new THREE.MeshLambertMaterial({
   vertexColors: true,
   transparent: true,
