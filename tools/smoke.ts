@@ -1,11 +1,9 @@
 // End-to-end smoke test for the built site: boots dist/ in a real browser and
 // checks the things unit tests can't reach.
 //
-// 1. The wasm actually loads. `deno bundle` inlines Loro's JS glue but only
-//    references the wasm as a sibling asset, and the bundler/browser targets ship
-//    different binaries for the same version — so a wrong or missing copy (see
-//    tools/postbuild.ts) produces a site that builds cleanly and then dies on
-//    boot. Only a real browser catches that.
+// 1. The bundle boots at all. The CRDT layer runs before the first render, so a
+//    packaging fault takes the whole editor down rather than degrading — and only
+//    a real browser exercises the bundled, minified module graph.
 // 2. Cross-tab sync works. Two pages, an edit in one, and the other's scene tree
 //    has to follow — in both directions.
 // 3. Hosting a live share produces a link and a session. Pairing two peers needs
@@ -23,9 +21,6 @@ const TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8",
   js: "text/javascript; charset=utf-8",
   css: "text/css; charset=utf-8",
-  // must be exact: the glue instantiates via streaming, which rejects any other
-  // content type (GitHub Pages serves .wasm correctly, a naive dev server may not)
-  wasm: "application/wasm",
 };
 
 const server = Deno.serve({ port: PORT, onListen: () => {} }, async (req) => {
@@ -136,7 +131,8 @@ async function open(label: string, path = "/") {
     waitUntil: "domcontentloaded",
   });
   // the tree only renders once the document is loaded or seeded, which is
-  // downstream of wasm init — so getting any row at all is the boot assertion
+  // downstream of the whole CRDT layer — so getting any row at all is the boot
+  // assertion
   await waitRows(page, (n) => n > 0);
   return page;
 }
@@ -146,11 +142,11 @@ try {
   const seeded = await rows(a);
   check(
     seeded > 1,
-    `tab A boots, wasm loads, seed scene renders (${seeded} rows)`,
+    `tab A boots and renders the seed scene (${seeded} rows)`,
   );
   check(
-    await a.evaluate(() => localStorage.getItem("voxelier-v12") !== null),
-    "document persisted as a v12 Loro snapshot",
+    await a.evaluate(() => localStorage.getItem("voxelier-v13") !== null),
+    "document persisted as a v13 Yjs update",
   );
 
   const b = await open("B");

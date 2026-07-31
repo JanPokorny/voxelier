@@ -1,31 +1,31 @@
-// The live Loro store: owns the document, persists it, and mirrors it to other
+// The live store: owns the Yjs document, persists it, and mirrors it to other
 // tabs. doc.ts defines the shape; this is the plumbing around it.
 //
-// Loop guard: applying a remote update leaves the in-memory tree exactly equal to
-// the document, so the next reconcile() finds nothing to write and emits no ops —
-// which is what stops an update from echoing back and forth. The `applying` flag
-// only covers the synchronous window inside the receive handler; the real
-// invariant is that reconcile is idempotent (see doc.ts).
-import { LoroDoc } from "loro-crdt";
+// Echo control is Yjs's update origin rather than a flag: a remote update is
+// applied with the REMOTE origin, so the update handler can tell a peer's change
+// from ours and decline to send it back. Reconcile being idempotent (see doc.ts)
+// is the backstop — an applied remote update leaves the in-memory tree equal to
+// the document, so the next commit finds nothing to write anyway.
+import * as Y from "yjs";
 import { build, docFromTree, newDoc, reconcile, snapshot } from "./doc.ts";
 import type { SceneNode } from "../types.ts";
 
-const LS = "voxelier-v12"; // v12: the document is a Loro snapshot, not JSON
+const LS = "voxelier-v13"; // v13: the document is a Yjs update, not a Loro snapshot
 const CHAN = "voxelier-doc";
+const REMOTE = Symbol("remote"); // update origin: came from a peer, do not re-send
+const LOCAL = Symbol("local"); // update origin: ours, fan out to peers
 
-let doc: LoroDoc = newDoc();
+let doc: Y.Doc = newDoc();
 let chan: BroadcastChannel | null = null;
-let applying = false;
 let onRemote: ((root: SceneNode) => void) | null = null;
-let unsubLocal: (() => void) | null = null;
 // Storage key suffix. A live share session persists under its own key so joining
 // someone else's scene never overwrites your solo document (see share.ts).
 let lsKey = LS;
 
-export const theDoc = (): LoroDoc => doc;
+export const theDoc = (): Y.Doc => doc;
 export const currentSnapshot = (): Uint8Array => snapshot(doc);
 
-// Locally produced ops, for transports beyond the cross-tab channel (share.ts
+// Locally produced updates, for transports beyond the cross-tab channel (share.ts
 // pipes these to WebRTC peers). BroadcastChannel stays built in because it needs
 // no setup; anything else registers here.
 type OpsListener = (bytes: Uint8Array) => void;
@@ -35,8 +35,8 @@ export function onLocalOps(cb: OpsListener): () => void {
   return () => opsListeners.delete(cb);
 }
 
-// ---- localStorage carries binary, so base64. Chunked to keep the spread off the
-// argument-count limit on a large snapshot. ----
+// ---- localStorage carries text, so base64. Chunked to keep the spread off the
+// argument-count limit on a large document. ----
 const CHUNK = 0x8000;
 function toB64(u: Uint8Array): string {
   let s = "";
@@ -56,50 +56,37 @@ function persist(): void {
   try {
     localStorage.setItem(lsKey, toB64(snapshot(doc)));
   } catch (_) {
-    // Quota, or private mode. A Loro snapshot carries the document's history, so
-    // a long session can outgrow the ~5MB localStorage budget where the old plain
-    // JSON never would. Retry once with history dropped: the document survives,
-    // the ability to time-travel past this point does not.
-    try {
-      localStorage.setItem(
-        lsKey,
-        toB64(
-          doc.export({
-            mode: "shallow-snapshot",
-            frontiers: doc.oplogFrontiers(),
-          }),
-        ),
-      );
-    } catch (_) { /* nothing left to try */ }
+    // quota, or private mode. Yjs garbage-collects deleted content by default, so
+    // the encoded state tracks live document size rather than edit history —
+    // there is no history to shed here as a fallback.
   }
 }
 
-// Swap in a different document (load, import, migration). The local-update
-// subscription is bound to one LoroDoc instance, so it has to be re-established.
-function setDoc(next: LoroDoc): void {
-  unsubLocal?.();
-  unsubLocal = null;
+// Swap in a different document (load, import, migration). The update subscription
+// is bound to one Y.Doc, so it has to be re-established.
+function setDoc(next: Y.Doc): void {
+  doc.off("update", onUpdate);
   doc = next;
-  if (chan) subscribeLocal();
+  doc.on("update", onUpdate);
 }
-function subscribeLocal(): void {
-  unsubLocal = doc.subscribeLocalUpdates((bytes) => {
-    if (applying) return;
-    post({ k: "u", b: bytes });
-    for (const cb of opsListeners) cb(bytes);
-  });
+function onUpdate(update: Uint8Array, origin: unknown): void {
+  if (origin === REMOTE) return; // a peer's change — sending it back would echo
+  post({ k: "u", b: update });
+  for (const cb of opsListeners) cb(update);
 }
+doc.on("update", onUpdate);
+
 function post(m: Msg): void {
   try {
     chan?.postMessage(m);
   } catch (_) { /* channel closed, or a payload that can't cross the wire */ }
 }
 
-// Cross-tab wire format. "u" is an incremental op batch, which merges into the
+// Cross-tab wire format. "u" is an incremental update, which merges into the
 // receiver's document. "r" is a wholesale replacement (a .voxelier.json import, or
-// the first-run seed): that document shares no history with the peer's, so it
-// cannot be merged and has to be adopted outright — otherwise the two tabs drift
-// into unrelated documents and take turns overwriting each other's storage.
+// the first-run seed): Yjs would happily UNION that document with the receiver's,
+// leaving a tree with two roots, so it has to be adopted outright instead —
+// otherwise the two tabs drift and take turns overwriting each other's storage.
 type Msg = { k: "u" | "r"; b: Uint8Array };
 
 // Start mirroring to other tabs. `cb` receives a freshly built tree whenever a
@@ -116,17 +103,15 @@ export function attachSync(cb: (root: SceneNode) => void): void {
     if (m.k === "r") adoptSnapshot(m.b);
     else applyUpdate(m.b);
   };
-  subscribeLocal();
 }
 
 // ---- transport entry points, shared by the cross-tab channel and share.ts ----
 
-// Merge a peer's op batch into the document and refresh the editor's view.
-// Returns the rebuilt tree, or null when nothing usable arrived.
+// Merge a peer's update into the document and refresh the editor's view. Returns
+// the rebuilt tree, or null when nothing usable arrived.
 export function applyUpdate(bytes: Uint8Array): SceneNode | null {
-  applying = true;
   try {
-    doc.import(bytes);
+    Y.applyUpdate(doc, bytes, REMOTE);
     const root = build(doc);
     if (root) {
       onRemote?.(root);
@@ -135,20 +120,17 @@ export function applyUpdate(bytes: Uint8Array): SceneNode | null {
     return root;
   } catch (_) {
     return null; // malformed, or from a peer running incompatible code
-  } finally {
-    applying = false;
   }
 }
 
 // Adopt a document wholesale from a peer's snapshot. Needed when JOINING a live
-// share: the host's document shares no history with ours, so importing it would
-// merge two unrelated trees (and leave the tree with two roots) instead of
-// replacing ours. After this the two share history and ops merge normally.
+// share: the host's document shares no history with ours, so merging would union
+// two unrelated trees rather than replacing ours. After this the two share history
+// and every later update merges normally.
 export function adoptSnapshot(bytes: Uint8Array): SceneNode | null {
-  applying = true;
   try {
     const d = newDoc();
-    d.import(bytes);
+    Y.applyUpdate(d, bytes, REMOTE);
     const root = build(d);
     if (!root) return null; // unreadable payload — keep what we have
     setDoc(d);
@@ -157,23 +139,14 @@ export function adoptSnapshot(bytes: Uint8Array): SceneNode | null {
     return root;
   } catch (_) {
     return null;
-  } finally {
-    applying = false;
   }
 }
 
-// Point persistence at a session-scoped key, so editing in a live share never
-// overwrites the solo document. Pass null to go back to the solo key.
-export function useSessionStorage(id: string | null): void {
-  lsKey = id ? `${LS}:${id}` : LS;
-}
-
 // Write the editor's tree into the document. Returns true when something actually
-// changed — the ops are broadcast by the local-update subscription, and only a
-// real change reaches localStorage.
+// changed — the update handler fans the change out, and only a real change reaches
+// storage.
 export function commitLocal(root: SceneNode): boolean {
-  if (applying) return false;
-  if (!reconcile(doc, root)) return false;
+  if (!reconcile(doc, root, LOCAL)) return false;
   persist();
   return true;
 }
@@ -182,20 +155,20 @@ export function commitLocal(root: SceneNode): boolean {
 export function loadDocument(): SceneNode | null {
   let raw: string | null = null;
   try {
-    raw = localStorage.getItem(LS);
+    raw = localStorage.getItem(lsKey);
   } catch (_) {
     return null; // storage unavailable (private mode)
   }
   if (!raw) return null;
   try {
     const d = newDoc();
-    d.import(fromB64(raw));
+    Y.applyUpdate(d, fromB64(raw), REMOTE);
     const root = build(d);
     if (!root) return null;
     setDoc(d);
     return root;
   } catch (_) {
-    return null; // corrupt or foreign snapshot — fall back to a fresh document
+    return null; // corrupt or foreign document — fall back to a fresh one
   }
 }
 
@@ -206,4 +179,10 @@ export function installTree(root: SceneNode): void {
   setDoc(docFromTree(root));
   persist();
   post({ k: "r", b: snapshot(doc) });
+}
+
+// Point persistence at a session-scoped key, so editing in a live share never
+// overwrites the solo document. Pass null to go back to the solo key.
+export function useSessionStorage(id: string | null): void {
+  lsKey = id ? `${LS}:${id}` : LS;
 }

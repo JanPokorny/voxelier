@@ -4,10 +4,10 @@
     "jsr:@deno/installer-shell-setup@*": "0.3.4",
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.14",
-    "npm:loro-crdt@1.13.8": "1.13.8",
     "npm:playwright@1.49.1": "1.49.1",
     "npm:three@0.160.0": "0.160.0",
-    "npm:trystero@0.25.3": "0.25.3"
+    "npm:trystero@0.25.3": "0.25.3",
+    "npm:yjs@13.6.20": "13.6.20"
   },
   "jsr": {
     "@deno/installer-shell-setup@0.3.4": {
@@ -42,8 +42,15 @@
       "os": ["darwin"],
       "scripts": true
     },
-    "loro-crdt@1.13.8": {
-      "integrity": "sha512-GfhD4Q7UU8lghobRjQhw19qH3B80h5ilRj3snv/QsfxK0hbiVfnDpHsvnEXg8+iMfg5S6cNMczgXJh3haxXTbA=="
+    "isomorphic.js@0.2.5": {
+      "integrity": "sha512-PIeMbHqMt4DnUP3MA/Flc0HElYjMXArsw1qwJZcm9sqR8mq3l8NYizFMty0pWwE/tzIGH3EKK5+jes5mAr85yw=="
+    },
+    "lib0@0.2.117": {
+      "integrity": "sha512-DeXj9X5xDCjgKLU/7RR+/HQEVzuuEUiwldwOGsHK/sfAfELGWEyTcf0x+uOvCvK3O2zPmZePXWL85vtia6GyZw==",
+      "dependencies": [
+        "isomorphic.js"
+      ],
+      "bin": true
     },
     "playwright-core@1.49.1": {
       "integrity": "sha512-BzmpVcs4kE2CH15rWfzpjzVGhWERJfmnXmniSyKeRZUs9Ws65m+RGIi7mjJK/euCegfn3i7jvqWeWyHe9y3Vgg==",
@@ -67,14 +74,20 @@
       "dependencies": [
         "@trystero-p2p/nostr"
       ]
+    },
+    "yjs@13.6.20": {
+      "integrity": "sha512-Z2YZI+SYqK7XdWlloI3lhMiKnCdFCVC4PchpdO+mCYwtiTwncjUbnRK9R1JmkNfdmHyDXuWN3ibJAt0wsqTbLQ==",
+      "dependencies": [
+        "lib0"
+      ]
     }
   },
   "workspace": {
     "dependencies": [
       "jsr:@std/assert@1",
-      "npm:loro-crdt@1.13.8",
       "npm:three@0.160.0",
-      "npm:trystero@0.25.3"
+      "npm:trystero@0.25.3",
+      "npm:yjs@13.6.20"
     ]
   }
 }

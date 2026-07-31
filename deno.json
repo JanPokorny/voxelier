@@ -11,7 +11,7 @@
   },
   "imports": {
     "three": "npm:three@0.160.0",
-    "loro-crdt": "npm:loro-crdt@1.13.8",
+    "yjs": "npm:yjs@13.6.20",
     "trystero": "npm:trystero@0.25.3",
     "@std/assert": "jsr:@std/assert@^1.0.0"
   },
