@@ -18,10 +18,10 @@ import { renderShare, updateChrome } from "./ui.ts";
 import { resumeFromUrl } from "./crdt/share.ts";
 import { frameView, updateCamera } from "./camera.ts";
 import { updateMeasureLabels } from "./measure.ts";
-import { adoptRemote, flush, load } from "./persistence.ts";
-import { attachSync, installTree, theDoc } from "./crdt/store.ts";
+import { adoptRemote, flush, loadUI, readLegacy } from "./persistence.ts";
+import { setRemoteHandler, theDoc } from "./crdt/store.ts";
+import { bootDocument } from "./crdt/docs.ts";
 import { build } from "./crdt/doc.ts";
-import { seed } from "./seed.ts";
 import "./interaction.ts"; // attaches canvas pointer/wheel/dblclick listeners
 
 // On-demand rendering: draw only while the camera is still easing toward its
@@ -121,16 +121,18 @@ function tick(): void {
   }
 }
 
-function start(): void {
-  if (!load()) {
-    S.root = seed();
-    installTree(S.root); // the seeded scene becomes the live CRDT document
-  }
+async function start(): Promise<void> {
+  // Register before opening a document: openScope wires the cross-tab channel, and
+  // a peer's update can arrive the moment it does.
+  setRemoteHandler(noteRemote);
+  // Which document to open is crdt/docs.ts's decision (#doc= link, last opened,
+  // newest in the library, a migrated pre-library save, or a fresh seed).
+  S.root = await bootDocument(readLegacy);
+  S.collapsed = new Set(loadUI());
   S.path = [S.root];
   S.editObject = null;
   S.sel3d = null;
   S.selection.clear();
-  attachSync(noteRemote); // mirror edits to and from other tabs
   rebuild();
   updateChrome();
   frameView();

@@ -2,7 +2,7 @@
 //
 // Trystero does the matchmaking — peers find each other through a public relay
 // network (Nostr by default) and then talk directly over WebRTC data channels.
-// Once connected this is just another transport for the same Loro ops the
+// Once connected this is just another transport for the same Yjs updates the
 // cross-tab channel already carries, so the merge semantics in doc.ts hold
 // unchanged and nothing in the editor needs to know a peer is remote.
 //
@@ -19,11 +19,13 @@
 import { joinRoom } from "trystero";
 import {
   adoptSnapshot,
+  announceTree,
   applyUpdate,
   currentSnapshot,
   onLocalOps,
-  useSessionStorage,
+  openScope,
 } from "./store.ts";
+import { openDocument, openDocumentId } from "./docs.ts";
 
 const APP_ID = "voxelier-scene";
 const HASH_KEY = "s"; // #s=<secret>
@@ -45,6 +47,8 @@ let unsubOps: (() => void) | null = null;
 let role: Role | null = null;
 let secret: string | null = null;
 let onChange: (() => void) | null = null;
+// the library document to come back to when the session ends
+let prevDocId: string | null = null;
 // true once this peer's document has history in common with the session's, after
 // which an incoming snapshot must be merged rather than adopted
 let adopted = false;
@@ -90,9 +94,11 @@ async function connect(sec: string, as: Role): Promise<void> {
   secret = sec;
   role = as;
   const id = await roomIdFor(sec);
-  // Scope persistence to the session before the first edit lands, so a guest's
-  // solo scene survives the visit untouched.
-  useSessionStorage(id);
+  // Scope the store to the session before the first edit lands, so a guest's own
+  // documents survive the visit untouched — a session gets its own storage slot and
+  // its own cross-tab channel, and no entry in the library.
+  prevDocId ??= openDocumentId();
+  await openScope({ kind: "session", id });
   room = joinRoom({ appId: APP_ID, password: sec }, id);
 
   // one action per id: makeAction returns [send, onMessage, onProgress]
@@ -140,7 +146,11 @@ async function connect(sec: string, as: Role): Promise<void> {
 export async function startShare(): Promise<string> {
   const sec = rand();
   adopted = true; // the host's document IS the session's
-  location.hash = `${HASH_KEY}=${sec}`;
+  // keep any doc= already in our own URL; the link we hand out carries only the
+  // secret, so a guest never learns which of our documents this came from
+  const p = new URLSearchParams(location.hash.replace(/^#/, ""));
+  p.set(HASH_KEY, sec);
+  history.replaceState(null, "", `#${p.toString()}`);
   await connect(sec, "host");
   return linkFor(sec);
 }
@@ -165,7 +175,14 @@ export async function leave(): Promise<void> {
   secret = null;
   adopted = false;
   peers.clear();
-  useSessionStorage(null);
+  // Return to the document that was open before the session, and tell the editor
+  // to re-read it — otherwise the view would keep showing the host's scene.
+  const back = prevDocId;
+  prevDocId = null;
+  if (back) {
+    const root = await openDocument(back);
+    if (root) announceTree(root);
+  }
   onChange?.();
 }
 

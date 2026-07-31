@@ -23,6 +23,16 @@ import {
 import { buildTree } from "./tree.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
+import { rebuild } from "./render.ts";
+import { adoptRemote, flush } from "./persistence.ts";
+import {
+  createDocument,
+  deleteDocument,
+  listDocuments,
+  openDocumentId,
+  tryOpenDocument,
+} from "./crdt/docs.ts";
+import type { DocMeta } from "./crdt/docs.ts";
 import {
   leave,
   setShareListener,
@@ -37,7 +47,7 @@ import {
   pasteVox,
 } from "./select.ts";
 import { clipKind, getNodeClip, getVoxClip } from "./clipboard.ts";
-import type { Box3, Node, Tool } from "./types.ts";
+import type { Box3, Node, SceneNode, Tool } from "./types.ts";
 
 // glyph per voxel tool (also drives the tool-cursor follower in interaction.ts)
 export const TOOL_ICON: Record<Tool, string> = {
@@ -117,6 +127,7 @@ export function updateChrome(): void {
   );
   if (S.editObject) top.appendChild(colorControl()); // draw-colour picker (edit mode only)
   tw.append(top);
+  renderDocName(); // the root's name IS the document name, and it is renameable
   // the View tool shows no trailing glyph; hide it the moment View is selected
   // (a pointer move may not follow, e.g. switching tool via the keyboard)
   if (S.tool === "view") {
@@ -131,6 +142,107 @@ export function updateChrome(): void {
 // refresh, so the listeners never need re-attaching.
 document.getElementById("btn-save")!.onclick = exportScene;
 document.getElementById("btn-load")!.onclick = importScene;
+
+// ---- the document library ----
+// Documents have ids and a tab says which one it is showing in its URL, so this
+// panel is how you get between them. The store scopes storage and its cross-tab
+// channel per document, so two tabs on different documents never interact.
+const docsBtn = document.getElementById("btn-docs") as HTMLButtonElement;
+const docsList = document.getElementById("docslist")!;
+const docNameEl = document.getElementById("docname")!;
+
+// Point the whole editor at a different scene. Same reset the import path needs,
+// so both go through here rather than drifting apart.
+export function adoptDocument(root: SceneNode): void {
+  adoptRemote(root);
+  S.collapsed = new Set(); // fold state belongs to the document you left
+  S.path = [root];
+  S.editObject = null;
+  S.sel3d = null;
+  S.selection.clear();
+  if (S.tool === "measure") S.tool = "view";
+  clearMeasure();
+  rebuild();
+  updateChrome();
+  frameView();
+  flush(); // baseline undo snapshot for the newly opened document
+}
+
+export function renderDocName(): void {
+  docNameEl.textContent = S.root ? (S.root.name || "Project") : "Project";
+}
+
+async function renderDocsList(): Promise<void> {
+  const here = openDocumentId();
+  let metas: DocMeta[] = [];
+  try {
+    metas = await listDocuments();
+  } catch (_) { /* storage unavailable — the New button still works */ }
+  docsList.innerHTML = "";
+  for (const m of metas) {
+    const row = el("div", {
+      className: "docrow" + (m.id === here ? " here" : ""),
+    });
+    row.append(
+      el("button", {
+        className: "docopen",
+        textContent: m.name || "Project",
+        title: new Date(m.updated).toLocaleString(),
+        onclick: async () => {
+          if (m.id === here) return;
+          const root = await tryOpenDocument(m.id);
+          if (root) adoptDocument(root);
+          await renderDocsList();
+          renderDocName();
+        },
+      }),
+    );
+    row.append(
+      el("button", {
+        className: "docdel",
+        textContent: "✕",
+        title: "Delete this document",
+        onclick: async () => {
+          if (
+            !confirm(`Delete "${m.name || "Project"}"? This cannot be undone.`)
+          ) {
+            return;
+          }
+          await deleteDocument(m.id);
+          // Deleting the document you are looking at has to land somewhere, so
+          // fall through to whatever is left, or a fresh scene.
+          if (m.id === here) {
+            const [next] = await listDocuments().catch(() => [] as DocMeta[]);
+            const root = next
+              ? await tryOpenDocument(next.id) ?? await createDocument()
+              : await createDocument();
+            adoptDocument(root);
+            renderDocName();
+          }
+          await renderDocsList();
+        },
+      }),
+    );
+    docsList.append(row);
+  }
+  docsList.append(
+    el("button", {
+      className: "docnew",
+      textContent: "＋ New document",
+      onclick: async () => {
+        adoptDocument(await createDocument());
+        renderDocName();
+        await renderDocsList();
+      },
+    }),
+  );
+}
+
+docsBtn.onclick = async () => {
+  const show = docsList.hasAttribute("hidden");
+  docsList.hidden = !show;
+  if (show) await renderDocsList();
+};
 
 // ---- live share (peer-to-peer editing over WebRTC) ----
 // The bar below Save/Load reflects the session: idle it is hidden, hosting it

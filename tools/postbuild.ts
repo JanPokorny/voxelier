@@ -20,5 +20,7 @@ for (const e of Deno.readDirSync(DIST)) {
   pruned.push(e.name);
 }
 console.log(
-  pruned.length ? `postbuild: pruned stale ${pruned.join(", ")}` : "postbuild: clean",
+  pruned.length
+    ? `postbuild: pruned stale ${pruned.join(", ")}`
+    : "postbuild: clean",
 );

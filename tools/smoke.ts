@@ -4,9 +4,12 @@
 // 1. The bundle boots at all. The CRDT layer runs before the first render, so a
 //    packaging fault takes the whole editor down rather than degrading — and only
 //    a real browser exercises the bundled, minified module graph.
-// 2. Cross-tab sync works. Two pages, an edit in one, and the other's scene tree
-//    has to follow — in both directions.
-// 3. Hosting a live share produces a link and a session. Pairing two peers needs
+// 2. Cross-tab sync works. Two pages on the SAME document, an edit in one, and the
+//    other's scene tree has to follow — in both directions.
+// 3. Documents are isolated. Two pages on DIFFERENT documents must not see each
+//    other at all; before documents had ids, a single global storage slot and
+//    channel meant they merged and overwrote one another.
+// 4. Hosting a live share produces a link and a session. Pairing two peers needs
 //    a public relay and WebRTC, which an offline or sandboxed run cannot reach, so
 //    that half reports as skipped instead of failing — but the editor must stay
 //    usable and error-free while the relay is unreachable, which IS checked.
@@ -120,7 +123,8 @@ async function open(label: string, path = "/") {
     // A relay that won't accept a WebSocket is an environment fact, not an app
     // fault — it is exactly what the skipped pairing check reports. Everything
     // else counts, including anything the share code itself logs.
-    const env = t.includes("favicon") || /WebSocket connection to 'wss:/.test(t);
+    const env = t.includes("favicon") ||
+      /WebSocket connection to 'wss:/.test(t);
     if (m.type() === "error" && !env) errors.push(`${label} console: ${t}`);
   });
   // "domcontentloaded", not "load": a page opened from a share link immediately
@@ -145,8 +149,8 @@ try {
     `tab A boots and renders the seed scene (${seeded} rows)`,
   );
   check(
-    await a.evaluate(() => localStorage.getItem("voxelier-v13") !== null),
-    "document persisted as a v13 Yjs update",
+    await a.evaluate(() => /[#&]doc=[0-9a-z]+/.test(location.hash)),
+    "the open document is addressed in the URL fragment",
   );
 
   const b = await open("B");
@@ -166,6 +170,31 @@ try {
     `tab A saw tab B's new object (${after} -> ${backA} rows)`,
   );
 
+  // ---- document isolation ----
+  // A different document in a third tab. It gets its own storage slot and its own
+  // cross-tab channel, so nothing it does may reach A or B.
+  const beforeIsolation = await rows(a);
+  const c = await open("C", "/#doc=zzzzzzzzzzzzzzzz");
+  const cSeed = await rows(c);
+  check(cSeed > 1, `tab C seeded its own document (${cSeed} rows)`);
+  await c.bringToFront();
+  await c.keyboard.press("Escape");
+  await c.click(".trow:not(.root)");
+  await c.keyboard.press("n");
+  const cAfter = await waitRows(c, (n) => n === cSeed + 1);
+  check(
+    cAfter === cSeed + 1,
+    `tab C's own edit landed (${cSeed} -> ${cAfter})`,
+  );
+  // give any cross-talk the same window the sync checks above needed to arrive
+  await a.waitForTimeout(1500);
+  const aStill = await rows(a);
+  check(
+    aStill === beforeIsolation,
+    `tab A unaffected by the other document (${beforeIsolation} -> ${aStill} rows)`,
+  );
+  await c.close();
+
   // ---- live share ----
   // Hosting is local work (mint a secret, hash it, join a room), so the button and
   // the link must appear regardless of connectivity. Actually pairing two peers
@@ -184,8 +213,18 @@ try {
     `Share produced a link (${link || "none"})`,
   );
   check(
-    await a.evaluate(() => location.hash.startsWith("#s=")),
+    // a parameter within the fragment, not the whole fragment: the host's URL also
+    // still carries its doc= id, while the link handed out carries only the secret
+    await a.evaluate(() => /[#&]s=[0-9a-f]{16,}/.test(location.hash)),
     "the session secret is in the URL fragment, which is never sent to a server",
+  );
+  check(
+    await a.evaluate(() => /[#&]doc=/.test(location.hash)),
+    "hosting keeps the host's own document id in its URL",
+  );
+  check(
+    !link.includes("doc="),
+    "the shared link carries only the secret, not which document it came from",
   );
   check(
     await a.evaluate(() =>

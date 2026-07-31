@@ -1,12 +1,13 @@
-// Persistence. ser/de stay the pure (de)serialisers for a node tree — they're the
-// .voxelier.json format (io.ts), the undo snapshot form (history.ts) and the v11
-// migration path — but the persisted document itself now lives in the Loro store
-// (crdt/store.ts), which also mirrors it to other tabs. save is debounced; load
-// restores the document, falling back to migrating a v11 JSON blob.
+// Persistence. ser/de stay the pure (de)serialisers for a node tree — they are the
+// .voxelier.json format (io.ts), the undo snapshot form (history.ts) and the legacy
+// migration path — but the persisted document itself lives in the CRDT store
+// (crdt/store.ts), which scopes it per document and mirrors it to other tabs.
+// Choosing WHICH document to open belongs to crdt/docs.ts; this module only writes
+// whatever is currently open. save is debounced.
 import { S } from "./state.ts";
 import { seedUid } from "./math.ts";
 import { amend, record } from "./history.ts";
-import { commitLocal, installTree, loadDocument } from "./crdt/store.ts";
+import { commitLocal } from "./crdt/store.ts";
 import type { Node, ObjectNode, SceneNode, Vis } from "./types.ts";
 
 const LS_V11 = "voxelier-v11"; // pre-CRDT document: the whole tree as one JSON blob
@@ -85,7 +86,7 @@ export function flush(): void {
   saveT = undefined;
   // The undo stack still holds whole-document JSON snapshots — independent of the
   // CRDT, and cheap to keep as-is. commitLocal reconciles the same tree into the
-  // Loro document, which persists it and broadcasts the ops to other tabs.
+  // Yjs document, which persists it and broadcasts the update to other tabs.
   record(JSON.stringify(ser(S.root))); // undo snapshot (no-op during restore)
   commitLocal(S.root);
   persistUI();
@@ -104,18 +105,17 @@ export function save(): void {
   clearTimeout(saveT);
   saveT = setTimeout(flush, 250);
 }
-// Install a parsed { uid, root } envelope as the live document: seed the id
-// counter and deserialise the root. Returns false (and installs nothing) when the
-// envelope has no root, so callers can branch on a malformed file/blob.
-export function installScene(
+// Deserialise a { uid, root } envelope into a tree: a .voxelier.json file, or a
+// legacy save. Returns null for anything without a root, so callers can branch on
+// a malformed file. This no longer installs anything — under the document library
+// an imported file becomes a NEW document (see crdt/docs.ts), not an overwrite of
+// whatever happens to be open.
+export function sceneFromEnvelope(
   d: { uid?: number; root?: SerNode; collapsed?: string[] } | null,
-): boolean {
-  if (!d || !d.root) return false;
+): SceneNode | null {
+  if (!d || !d.root) return null;
   seedUid(d.uid || 1);
-  S.root = de(d.root) as SceneNode;
-  S.collapsed = new Set(d.collapsed ?? []); // restore (or reset) the tree fold state
-  installTree(S.root); // this tree becomes the live document, replacing any peer's
-  return true;
+  return de(d.root) as SceneNode;
 }
 // Adopt a tree that arrived from another tab. The document is already up to date
 // (the store merged the peer's ops into it), so this only moves the editor's view
@@ -124,7 +124,7 @@ export function installScene(
 export function adoptRemote(root: SceneNode): void {
   S.root = root;
 }
-const loadUI = (): string[] => {
+export const loadUI = (): string[] => {
   try {
     const v = JSON.parse(localStorage.getItem(LS_UI) as string);
     return Array.isArray(v) ? v : [];
@@ -132,22 +132,15 @@ const loadUI = (): string[] => {
     return [];
   }
 };
-export function load(): boolean {
-  const root = loadDocument();
-  if (root) {
-    S.root = root;
-    S.collapsed = new Set(loadUI());
-    return true;
-  }
-  return migrateV11();
-}
-// One-way migration of a pre-CRDT save. The v11 blob is left in place on purpose:
-// an older build of the app still finds its own document, and re-migrating on a
-// later run is harmless because the v12 document wins from here on.
-function migrateV11(): boolean {
+// A save from before documents had identity, if one is still there. Read once at
+// boot to seed the library; the blob is left in place rather than deleted, so an
+// older build of the app still finds its own document.
+export function readLegacy(): SceneNode | null {
   try {
-    return installScene(JSON.parse(localStorage.getItem(LS_V11) as string));
+    return sceneFromEnvelope(
+      JSON.parse(localStorage.getItem(LS_V11) as string),
+    );
   } catch (_) {
-    return false;
+    return null;
   }
 }

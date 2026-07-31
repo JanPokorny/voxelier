@@ -1,6 +1,11 @@
 // The live store: owns the Yjs document, persists it, and mirrors it to other
 // tabs. doc.ts defines the shape; this is the plumbing around it.
 //
+// Everything here is scoped to ONE document. Both the storage key and the
+// BroadcastChannel name carry the scope id, which is what lets two tabs on
+// DIFFERENT documents coexist: with a single global channel they would merge each
+// other's unrelated scenes and take turns overwriting one storage slot.
+//
 // Echo control is Yjs's update origin rather than a flag: a remote update is
 // applied with the REMOTE origin, so the update handler can tell a peer's change
 // from ours and decline to send it back. Reconcile being idempotent (see doc.ts)
@@ -8,22 +13,37 @@
 // the document, so the next commit finds nothing to write anyway.
 import * as Y from "yjs";
 import { build, docFromTree, newDoc, reconcile, snapshot } from "./doc.ts";
+import { delData, delMeta, getData, putData, putMeta } from "./idb.ts";
 import type { SceneNode } from "../types.ts";
 
-const LS = "voxelier-v13"; // v13: the document is a Yjs update, not a Loro snapshot
-const CHAN = "voxelier-doc";
 const REMOTE = Symbol("remote"); // update origin: came from a peer, do not re-send
 const LOCAL = Symbol("local"); // update origin: ours, fan out to peers
 
+// A document in the user's library, or a live share session. A session gets
+// storage (so a reload rejoins where it left off) but deliberately no library
+// entry — visiting someone else's scene should not file it among yours.
+export type Scope = { kind: "doc" | "session"; id: string };
+
 let doc: Y.Doc = newDoc();
+let scope: Scope | null = null;
 let chan: BroadcastChannel | null = null;
 let onRemote: ((root: SceneNode) => void) | null = null;
-// Storage key suffix. A live share session persists under its own key so joining
-// someone else's scene never overwrites your solo document (see share.ts).
-let lsKey = LS;
 
 export const theDoc = (): Y.Doc => doc;
+export const currentScope = (): Scope | null => scope;
 export const currentSnapshot = (): Uint8Array => snapshot(doc);
+export const setRemoteHandler = (cb: (root: SceneNode) => void): void => {
+  onRemote = cb;
+};
+// The open document changed underneath the editor without a peer update — leaving
+// a share session and returning to your own scene. Same meaning as a remote edit
+// from the view's point of view: re-read and re-render.
+export const announceTree = (root: SceneNode): void => {
+  onRemote?.(root);
+};
+
+const dataKey = (s: Scope): string => `${s.kind}:${s.id}`;
+const chanName = (s: Scope): string => `voxelier:${s.kind}:${s.id}`;
 
 // Locally produced updates, for transports beyond the cross-tab channel (share.ts
 // pipes these to WebRTC peers). BroadcastChannel stays built in because it needs
@@ -35,35 +55,23 @@ export function onLocalOps(cb: OpsListener): () => void {
   return () => opsListeners.delete(cb);
 }
 
-// ---- localStorage carries text, so base64. Chunked to keep the spread off the
-// argument-count limit on a large document. ----
-const CHUNK = 0x8000;
-function toB64(u: Uint8Array): string {
-  let s = "";
-  for (let i = 0; i < u.length; i += CHUNK) {
-    s += String.fromCharCode(...u.subarray(i, i + CHUNK));
-  }
-  return btoa(s);
-}
-function fromB64(s: string): Uint8Array {
-  const bin = atob(s);
-  const u = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
-  return u;
-}
-
+// Persist is fire-and-forget: IndexedDB is async, but every caller reaches it from
+// an already-debounced save (persistence.ts), and a queued write is exactly the
+// behaviour we want — the editor must never block on storage.
+let lastName = "";
 function persist(): void {
-  try {
-    localStorage.setItem(lsKey, toB64(snapshot(doc)));
-  } catch (_) {
-    // quota, or private mode. Yjs garbage-collects deleted content by default, so
-    // the encoded state tracks live document size rather than edit history —
-    // there is no history to shed here as a fallback.
+  if (!scope) return;
+  const s = scope;
+  putData(dataKey(s), snapshot(doc)).catch(() => {
+    /* storage unavailable or over quota — the document lives on in memory */
+  });
+  if (s.kind === "doc") {
+    putMeta({ id: s.id, name: lastName, updated: Date.now() }).catch(() => {});
   }
 }
 
-// Swap in a different document (load, import, migration). The update subscription
-// is bound to one Y.Doc, so it has to be re-established.
+// Swap in a different document. The update subscription is bound to one Y.Doc, so
+// it has to be re-established.
 function setDoc(next: Y.Doc): void {
   doc.off("update", onUpdate);
   doc = next;
@@ -83,26 +91,56 @@ function post(m: Msg): void {
 }
 
 // Cross-tab wire format. "u" is an incremental update, which merges into the
-// receiver's document. "r" is a wholesale replacement (a .voxelier.json import, or
-// the first-run seed): Yjs would happily UNION that document with the receiver's,
-// leaving a tree with two roots, so it has to be adopted outright instead —
-// otherwise the two tabs drift and take turns overwriting each other's storage.
+// receiver's document. "r" is a wholesale replacement (the first-run seed, or a
+// share guest adopting the host's scene): Yjs would happily UNION that document
+// with the receiver's, leaving a tree with two roots, so it has to be adopted
+// outright instead.
 type Msg = { k: "u" | "r"; b: Uint8Array };
 
-// Start mirroring to other tabs. `cb` receives a freshly built tree whenever a
-// peer's edit arrives; the caller installs it and re-renders.
-export function attachSync(cb: (root: SceneNode) => void): void {
-  onRemote = cb;
-  if (typeof BroadcastChannel === "undefined") return; // no cross-tab sync available
-  chan = new BroadcastChannel(CHAN);
-  chan.onmessage = (e) => {
-    const m = e.data as Msg | null;
-    if (!m || (m.k !== "u" && m.k !== "r") || !(m.b instanceof Uint8Array)) {
-      return;
-    }
-    if (m.k === "r") adoptSnapshot(m.b);
-    else applyUpdate(m.b);
-  };
+// Point the store at a document and start mirroring it to other tabs on the SAME
+// document. Returns its tree, or null when there is nothing stored yet — the
+// caller then seeds it.
+export async function openScope(s: Scope): Promise<SceneNode | null> {
+  chan?.close();
+  chan = null;
+  scope = s;
+  if (typeof BroadcastChannel !== "undefined") {
+    chan = new BroadcastChannel(chanName(s));
+    chan.onmessage = (e) => {
+      const m = e.data as Msg | null;
+      if (!m || (m.k !== "u" && m.k !== "r") || !(m.b instanceof Uint8Array)) {
+        return;
+      }
+      if (m.k === "r") adoptSnapshot(m.b);
+      else applyUpdate(m.b);
+    };
+  }
+  let bytes: Uint8Array | null = null;
+  try {
+    bytes = await getData(dataKey(s));
+  } catch (_) {
+    return null; // storage unavailable (private mode)
+  }
+  if (!bytes) return null;
+  try {
+    const d = newDoc();
+    Y.applyUpdate(d, bytes, REMOTE);
+    const root = build(d);
+    if (!root) return null;
+    setDoc(d);
+    lastName = root.name;
+    return root;
+  } catch (_) {
+    return null; // corrupt or foreign document — fall back to a fresh one
+  }
+}
+
+// Forget a document entirely: its bytes and its library entry.
+export async function dropScope(id: string): Promise<void> {
+  await Promise.all([
+    delData(dataKey({ kind: "doc", id })).catch(() => {}),
+    delMeta(id).catch(() => {}),
+  ]);
 }
 
 // ---- transport entry points, shared by the cross-tab channel and share.ts ----
@@ -114,6 +152,7 @@ export function applyUpdate(bytes: Uint8Array): SceneNode | null {
     Y.applyUpdate(doc, bytes, REMOTE);
     const root = build(doc);
     if (root) {
+      lastName = root.name;
       onRemote?.(root);
       persist();
     }
@@ -134,6 +173,7 @@ export function adoptSnapshot(bytes: Uint8Array): SceneNode | null {
     const root = build(d);
     if (!root) return null; // unreadable payload — keep what we have
     setDoc(d);
+    lastName = root.name;
     onRemote?.(root);
     persist();
     return root;
@@ -146,43 +186,18 @@ export function adoptSnapshot(bytes: Uint8Array): SceneNode | null {
 // changed — the update handler fans the change out, and only a real change reaches
 // storage.
 export function commitLocal(root: SceneNode): boolean {
+  lastName = root.name;
   if (!reconcile(doc, root, LOCAL)) return false;
   persist();
   return true;
 }
 
-// Restore the persisted document, or null when there's nothing to restore.
-export function loadDocument(): SceneNode | null {
-  let raw: string | null = null;
-  try {
-    raw = localStorage.getItem(lsKey);
-  } catch (_) {
-    return null; // storage unavailable (private mode)
-  }
-  if (!raw) return null;
-  try {
-    const d = newDoc();
-    Y.applyUpdate(d, fromB64(raw), REMOTE);
-    const root = build(d);
-    if (!root) return null;
-    setDoc(d);
-    return root;
-  } catch (_) {
-    return null; // corrupt or foreign document — fall back to a fresh one
-  }
-}
-
-// Replace the document wholesale from a plain tree: the first-run seed, the v11
-// migration, and .voxelier.json import all arrive this way. Peers are told to
-// adopt it rather than merge it — see the Msg comment.
+// Replace the current scope's document from a plain tree: the first-run seed, the
+// v11 migration, and .voxelier.json import all arrive this way. Peers on the same
+// scope are told to adopt it rather than merge it — see the Msg comment.
 export function installTree(root: SceneNode): void {
   setDoc(docFromTree(root));
+  lastName = root.name;
   persist();
   post({ k: "r", b: snapshot(doc) });
-}
-
-// Point persistence at a session-scoped key, so editing in a live share never
-// overwrites the solo document. Pass null to go back to the solo key.
-export function useSessionStorage(id: string | null): void {
-  lsKey = id ? `${LS}:${id}` : LS;
 }

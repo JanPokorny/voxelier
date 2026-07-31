@@ -112,7 +112,11 @@ function flatten(root: SceneNode): Want[] {
 // anything changed, so callers can skip a pointless persist/broadcast.
 // Everything happens in one transaction, so a commit produces a single update
 // rather than one per field.
-export function reconcile(doc: Y.Doc, root: SceneNode, origin?: unknown): boolean {
+export function reconcile(
+  doc: Y.Doc,
+  root: SceneNode,
+  origin?: unknown,
+): boolean {
   const nodes = nodesMap(doc);
   const want = flatten(root);
   const wanted = new Set(want.map((w) => w.node.id));
@@ -165,7 +169,8 @@ const asCoord = (v: unknown): number =>
 const asOrd = (v: unknown): number =>
   typeof v === "number" && Number.isFinite(v) ? v : 0;
 const VIS: Vis[] = ["visible", "deemphasized", "hidden"];
-const asVis = (v: unknown): Vis => VIS.includes(v as Vis) ? v as Vis : "visible";
+const asVis = (v: unknown): Vis =>
+  VIS.includes(v as Vis) ? v as Vis : "visible";
 
 // Resolve every node's effective parent, breaking any cycle two concurrent moves
 // may have created. Without a tree CRDT nothing stops peer A putting X under Y
