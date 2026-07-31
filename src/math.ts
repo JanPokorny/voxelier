@@ -48,9 +48,15 @@ export const hex = (v: number): string =>
 export const rndSym = (v: number): number =>
   v < 0 ? -Math.round(-v) : Math.round(v);
 
-// node ids — a single monotonic counter, seeded from storage on load
+// Node ids. A single monotonic counter is enough while a document has exactly one
+// writer, but two peers (a second tab, or an agent driving the JS API) both seed
+// from the same stored value and would then mint identical ids — and findById
+// would resolve to the wrong node. A per-session tag keeps them unique per
+// writer. Ids stay opaque strings that are only ever compared for equality, so
+// documents saved with the old "n12" form load unchanged.
+const TAG = Math.floor(Math.random() * 0x100000000).toString(36);
 let _uid = 1;
-export const uid = (): string => "n" + (_uid++);
+export const uid = (): string => `n${_uid++}.${TAG}`;
 export const peekUid = (): number => _uid;
 export const seedUid = (v: number): void => {
   _uid = v;

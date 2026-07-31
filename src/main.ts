@@ -17,7 +17,9 @@ import { rebuild, updateCutPlanes } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { frameView, updateCamera } from "./camera.ts";
 import { updateMeasureLabels } from "./measure.ts";
-import { flush, load } from "./persistence.ts";
+import { adoptRemote, flush, load } from "./persistence.ts";
+import { attachSync, installTree, theDoc } from "./crdt/store.ts";
+import { build } from "./crdt/doc.ts";
 import { seed } from "./seed.ts";
 import "./interaction.ts"; // attaches canvas pointer/wheel/dblclick listeners
 
@@ -82,8 +84,32 @@ window.addEventListener("resize", () => {
   reconcile();
 });
 
+// Another tab's edit has merged into the document and the editor's view of it is
+// behind. The store has already applied the ops, so nothing is at risk of being
+// lost — this only controls WHEN we re-read and re-render.
+let remoteDirty = false;
+function noteRemote(): void {
+  remoteDirty = true;
+  // Mid-drag, swapping the tree out from under the pointer handlers would strand
+  // the gesture, so hold off until it ends; tick() picks it up on the next frame.
+  if (!S.drag) applyRemote();
+  else wake();
+}
+function applyRemote(): void {
+  remoteDirty = false;
+  // Read the document rather than the tree captured at receive time: further ops
+  // may have merged in since, and this is the freshest merged state.
+  const root = build(theDoc());
+  if (!root) return;
+  adoptRemote(root);
+  rebuild();
+  updateChrome();
+  wake();
+}
+
 function tick(): void {
   requestAnimationFrame(tick);
+  if (remoteDirty && !S.drag) applyRemote();
   reconcile();
   updateCamera();
   if (frame.tail > 0 || !cameraSettled()) {
@@ -95,11 +121,15 @@ function tick(): void {
 }
 
 function start(): void {
-  if (!load()) S.root = seed();
+  if (!load()) {
+    S.root = seed();
+    installTree(S.root); // the seeded scene becomes the live CRDT document
+  }
   S.path = [S.root];
   S.editObject = null;
   S.sel3d = null;
   S.selection.clear();
+  attachSync(noteRemote); // mirror edits to and from other tabs
   rebuild();
   updateChrome();
   frameView();

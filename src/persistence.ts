@@ -1,11 +1,16 @@
-// localStorage persistence. ser/de are pure (de)serialisers for a node tree;
-// save is debounced; load restores the root and the id counter.
+// Persistence. ser/de stay the pure (de)serialisers for a node tree — they're the
+// .voxelier.json format (io.ts), the undo snapshot form (history.ts) and the v11
+// migration path — but the persisted document itself now lives in the Loro store
+// (crdt/store.ts), which also mirrors it to other tabs. save is debounced; load
+// restores the document, falling back to migrating a v11 JSON blob.
 import { S } from "./state.ts";
-import { peekUid, seedUid } from "./math.ts";
+import { seedUid } from "./math.ts";
 import { amend, record } from "./history.ts";
+import { commitLocal, installTree, loadDocument } from "./crdt/store.ts";
 import type { Node, ObjectNode, SceneNode, Vis } from "./types.ts";
 
-const LS = "voxelier-v11"; // v11: box model — objects serialise as colour boxes
+const LS_V11 = "voxelier-v11"; // pre-CRDT document: the whole tree as one JSON blob
+const LS_UI = "voxelier-ui-v1"; // tree fold state — per-tab view state, not document
 
 // The on-disk / localStorage shape (compact field names), distinct from `Node`.
 // A box serialises as the 7-tuple [x0,y0,z0,x1,y1,z1,colour].
@@ -70,21 +75,20 @@ export function de(d: SerNode): Node {
 // model, so they're debounced together: a burst of edits collapses into a single
 // serialisation 250ms after the last change, keeping it off the interaction path.
 let saveT: number | undefined; // pending debounce timer (save -> flush)
-function persistLS(rootJSON: string): void {
+function persistUI(): void {
   try {
-    const collapsed = JSON.stringify([...S.collapsed]); // keep groups' fold state across reloads
-    localStorage.setItem(
-      LS,
-      `{"uid":${peekUid()},"root":${rootJSON},"collapsed":${collapsed}}`,
-    );
+    localStorage.setItem(LS_UI, JSON.stringify([...S.collapsed]));
   } catch (_) { /* quota / private mode */ }
 }
 export function flush(): void {
   clearTimeout(saveT);
   saveT = undefined;
-  const rootJSON = JSON.stringify(ser(S.root)); // serialise once, share with record()
-  record(rootJSON); // undo snapshot (no-op during restore)
-  persistLS(rootJSON);
+  // The undo stack still holds whole-document JSON snapshots — independent of the
+  // CRDT, and cheap to keep as-is. commitLocal reconciles the same tree into the
+  // Loro document, which persists it and broadcasts the ops to other tabs.
+  record(JSON.stringify(ser(S.root))); // undo snapshot (no-op during restore)
+  commitLocal(S.root);
+  persistUI();
 }
 // Persist a document whose GEOMETRY is unchanged — only the box decomposition
 // differs (the background repack). Folds into the CURRENT top undo snapshot
@@ -93,9 +97,8 @@ export function flush(): void {
 // that flush will serialise (and record) this state along with the edit.
 export function flushAmend(): void {
   if (saveT !== undefined) return;
-  const rootJSON = JSON.stringify(ser(S.root));
-  amend(rootJSON);
-  persistLS(rootJSON);
+  amend(JSON.stringify(ser(S.root)));
+  commitLocal(S.root);
 }
 export function save(): void {
   clearTimeout(saveT);
@@ -111,11 +114,39 @@ export function installScene(
   seedUid(d.uid || 1);
   S.root = de(d.root) as SceneNode;
   S.collapsed = new Set(d.collapsed ?? []); // restore (or reset) the tree fold state
+  installTree(S.root); // this tree becomes the live document, replacing any peer's
   return true;
 }
-export function load(): boolean {
+// Adopt a tree that arrived from another tab. The document is already up to date
+// (the store merged the peer's ops into it), so this only moves the editor's view
+// onto the merged result — deliberately leaving `collapsed` alone, since which
+// groups you have folded is your view of the scene, not part of it.
+export function adoptRemote(root: SceneNode): void {
+  S.root = root;
+}
+const loadUI = (): string[] => {
   try {
-    return installScene(JSON.parse(localStorage.getItem(LS) as string));
+    const v = JSON.parse(localStorage.getItem(LS_UI) as string);
+    return Array.isArray(v) ? v : [];
+  } catch (_) {
+    return [];
+  }
+};
+export function load(): boolean {
+  const root = loadDocument();
+  if (root) {
+    S.root = root;
+    S.collapsed = new Set(loadUI());
+    return true;
+  }
+  return migrateV11();
+}
+// One-way migration of a pre-CRDT save. The v11 blob is left in place on purpose:
+// an older build of the app still finds its own document, and re-migrating on a
+// later run is harmless because the v12 document wins from here on.
+function migrateV11(): boolean {
+  try {
+    return installScene(JSON.parse(localStorage.getItem(LS_V11) as string));
   } catch (_) {
     return false;
   }
