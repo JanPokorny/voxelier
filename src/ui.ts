@@ -24,6 +24,12 @@ import { buildTree } from "./tree.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
 import {
+  leave,
+  setShareListener,
+  shareState,
+  startShare,
+} from "./crdt/share.ts";
+import {
   clearSelection,
   copySelection3d,
   cutSelection3d,
@@ -125,6 +131,78 @@ export function updateChrome(): void {
 // refresh, so the listeners never need re-attaching.
 document.getElementById("btn-save")!.onclick = exportScene;
 document.getElementById("btn-load")!.onclick = importScene;
+
+// ---- live share (peer-to-peer editing over WebRTC) ----
+// The bar below Save/Load reflects the session: idle it is hidden, hosting it
+// shows the link and the peer count, joined it shows who you are connected to.
+const shareBtn = document.getElementById("btn-share") as HTMLButtonElement;
+const shareBar = document.getElementById("sharebar")!;
+
+export function renderShare(): void {
+  const s = shareState();
+  shareBtn.textContent = s.active ? "🔗 Sharing" : "🔗 Share";
+  shareBtn.classList.toggle("on", s.active);
+  shareBar.hidden = !s.active;
+  if (!s.active) return;
+  const who = s.peers === 1 ? "1 peer" : `${s.peers} peers`;
+  shareBar.innerHTML = "";
+  shareBar.append(
+    el("div", {
+      className: "sharewho",
+      textContent: (s.role === "host" ? "Hosting" : "Joined") +
+        (s.peers ? ` · ${who} connected` : " · waiting for a peer…"),
+    }),
+  );
+  if (s.link) {
+    const link = el("input", { className: "sharelink" }) as HTMLInputElement;
+    link.readOnly = true;
+    link.value = s.link;
+    link.onclick = () => link.select();
+    shareBar.append(link);
+    shareBar.append(
+      el("button", {
+        className: "sharebtn",
+        textContent: "Copy link",
+        onclick: async () => {
+          try {
+            await navigator.clipboard.writeText(s.link!);
+          } catch (_) {
+            link.select(); // clipboard blocked (insecure origin) — let them copy it
+          }
+        },
+      }),
+    );
+  }
+  shareBar.append(
+    el("button", {
+      className: "sharebtn",
+      textContent: "Leave",
+      onclick: () => {
+        location.hash = "";
+        leave();
+      },
+    }),
+  );
+}
+
+shareBtn.onclick = async () => {
+  if (shareState().active) return; // already live; use Leave in the bar
+  shareBtn.disabled = true;
+  try {
+    // Guests reach a session through the link, so this button always hosts.
+    // Matchmaking runs over a public relay, so it can fail with no network.
+    const url = await startShare();
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch (_) { /* the bar shows the link to copy by hand */ }
+  } catch (e) {
+    alert("Could not start sharing: " + (e as Error).message);
+  } finally {
+    shareBtn.disabled = false;
+    renderShare();
+  }
+};
+setShareListener(renderShare);
 
 // distinct colours used in the scene, most-used (by cell volume) first. Cached by
 // S.voxVer so it isn't recomputed on every chrome refresh.

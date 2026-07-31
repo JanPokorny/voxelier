@@ -237,6 +237,49 @@ h3 {
   background: #2b3140;
   border-color: #3a4252;
 }
+#iobar button.on {
+  background: #1f3a2c;
+  border-color: #3d6b4f;
+}
+/* live-share panel: only present while a session is running */
+#sharebar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid #3d6b4f;
+  border-radius: 4px;
+}
+#sharebar[hidden] {
+  display: none;
+}
+.sharewho {
+  font-size: 11px;
+  opacity: 0.8;
+}
+/* the link is an input so it can be selected and copied even where the
+   clipboard API is unavailable (a non-secure origin) */
+.sharelink {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: inherit;
+  font-size: 10px;
+  padding: 5px;
+  border-radius: 3px;
+}
+.sharebtn {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 5px;
+  font-size: 11px;
+}
+.sharebtn:hover {
+  background: #2b3140;
+}
 /* fill the rest of the panel so the empty space below the rows is still part of
    the (droppable) tree — a drop there reorders to the end of the list */
 #tree {

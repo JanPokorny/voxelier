@@ -18,8 +18,22 @@ let chan: BroadcastChannel | null = null;
 let applying = false;
 let onRemote: ((root: SceneNode) => void) | null = null;
 let unsubLocal: (() => void) | null = null;
+// Storage key suffix. A live share session persists under its own key so joining
+// someone else's scene never overwrites your solo document (see share.ts).
+let lsKey = LS;
 
 export const theDoc = (): LoroDoc => doc;
+export const currentSnapshot = (): Uint8Array => snapshot(doc);
+
+// Locally produced ops, for transports beyond the cross-tab channel (share.ts
+// pipes these to WebRTC peers). BroadcastChannel stays built in because it needs
+// no setup; anything else registers here.
+type OpsListener = (bytes: Uint8Array) => void;
+const opsListeners = new Set<OpsListener>();
+export function onLocalOps(cb: OpsListener): () => void {
+  opsListeners.add(cb);
+  return () => opsListeners.delete(cb);
+}
 
 // ---- localStorage carries binary, so base64. Chunked to keep the spread off the
 // argument-count limit on a large snapshot. ----
@@ -40,7 +54,7 @@ function fromB64(s: string): Uint8Array {
 
 function persist(): void {
   try {
-    localStorage.setItem(LS, toB64(snapshot(doc)));
+    localStorage.setItem(lsKey, toB64(snapshot(doc)));
   } catch (_) {
     // Quota, or private mode. A Loro snapshot carries the document's history, so
     // a long session can outgrow the ~5MB localStorage budget where the old plain
@@ -48,7 +62,7 @@ function persist(): void {
     // the ability to time-travel past this point does not.
     try {
       localStorage.setItem(
-        LS,
+        lsKey,
         toB64(
           doc.export({
             mode: "shallow-snapshot",
@@ -72,6 +86,7 @@ function subscribeLocal(): void {
   unsubLocal = doc.subscribeLocalUpdates((bytes) => {
     if (applying) return;
     post({ k: "u", b: bytes });
+    for (const cb of opsListeners) cb(bytes);
   });
 }
 function post(m: Msg): void {
@@ -98,26 +113,59 @@ export function attachSync(cb: (root: SceneNode) => void): void {
     if (!m || (m.k !== "u" && m.k !== "r") || !(m.b instanceof Uint8Array)) {
       return;
     }
-    applying = true;
-    try {
-      if (m.k === "r") {
-        const d = newDoc();
-        d.import(m.b);
-        if (!build(d)) return; // unreadable payload — keep what we have
-        setDoc(d);
-      } else {
-        doc.import(m.b);
-      }
-      const root = build(doc);
-      if (root) onRemote?.(root);
-      persist();
-    } catch (_) {
-      // a malformed or version-incompatible update from a peer running older code
-    } finally {
-      applying = false;
-    }
+    if (m.k === "r") adoptSnapshot(m.b);
+    else applyUpdate(m.b);
   };
   subscribeLocal();
+}
+
+// ---- transport entry points, shared by the cross-tab channel and share.ts ----
+
+// Merge a peer's op batch into the document and refresh the editor's view.
+// Returns the rebuilt tree, or null when nothing usable arrived.
+export function applyUpdate(bytes: Uint8Array): SceneNode | null {
+  applying = true;
+  try {
+    doc.import(bytes);
+    const root = build(doc);
+    if (root) {
+      onRemote?.(root);
+      persist();
+    }
+    return root;
+  } catch (_) {
+    return null; // malformed, or from a peer running incompatible code
+  } finally {
+    applying = false;
+  }
+}
+
+// Adopt a document wholesale from a peer's snapshot. Needed when JOINING a live
+// share: the host's document shares no history with ours, so importing it would
+// merge two unrelated trees (and leave the tree with two roots) instead of
+// replacing ours. After this the two share history and ops merge normally.
+export function adoptSnapshot(bytes: Uint8Array): SceneNode | null {
+  applying = true;
+  try {
+    const d = newDoc();
+    d.import(bytes);
+    const root = build(d);
+    if (!root) return null; // unreadable payload — keep what we have
+    setDoc(d);
+    onRemote?.(root);
+    persist();
+    return root;
+  } catch (_) {
+    return null;
+  } finally {
+    applying = false;
+  }
+}
+
+// Point persistence at a session-scoped key, so editing in a live share never
+// overwrites the solo document. Pass null to go back to the solo key.
+export function useSessionStorage(id: string | null): void {
+  lsKey = id ? `${LS}:${id}` : LS;
 }
 
 // Write the editor's tree into the document. Returns true when something actually
