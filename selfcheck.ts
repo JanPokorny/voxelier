@@ -5,15 +5,24 @@
 // imported) to assert rotY is its own inverse under a negated rotation — the
 // property those two functions are built on. If rotY's rotation or the inverse
 // convention breaks, placement silently lands on the wrong cell — this fails loudly.
-import { assert } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import * as THREE from "three";
-import type { Box3, Region, Vec } from "./src/types.ts";
+import type {
+  Box3,
+  Node as NodeT,
+  ObjectNode,
+  Region,
+  SceneNode,
+  Vec,
+} from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
 import { addBox, buildIndex, eraseBox, fillBox } from "./src/boxes.ts";
 import { cutCorner, cutJob } from "./src/cutplane.ts";
 import { rigidRotateWorld } from "./src/shear.ts";
 import { boxFaceGeo } from "./src/mesh.ts";
 import { repackBoxes } from "./src/rebox.ts";
+import * as Y from "yjs";
+import { build, docFromTree, reconcile, snapshot } from "./src/crdt/doc.ts";
 
 const toW = (cell: Vec, off: Vec, rot: number): Vec =>
   addv(rotY(cell, rot), off); // local -> world (locToW)
@@ -659,4 +668,221 @@ Deno.test("cutaway: the sliced aim job matches the one-shot result", () => {
     w2.x === whole.x && w2.y === whole.y && w2.z === whole.z,
     `sliced job diverged: ${JSON.stringify(w2)} != ${JSON.stringify(whole)}`,
   );
+});
+
+// ---- the CRDT document layer (src/crdt/doc.ts) ----
+// The editor keeps a plain in-memory Node tree and reconciles it into Yjs; these
+// cover the properties the sync layer rests on: the round-trip is lossless,
+// reconcile is idempotent (the backstop against a remote update echoing back), and
+// concurrent edits from two peers converge — including a concurrent reparent,
+// which the flat parent-pointer model has to repair by hand — without violating
+// the box disjointness invariant the rest of the engine assumes.
+const cObj = (id: string, name: string, boxes: Box3[] = []): ObjectNode => ({
+  type: "object",
+  id,
+  name,
+  pos: { x: 1, y: 2, z: 3 },
+  rot: 1,
+  vis: "visible",
+  boxes,
+});
+const cScene = (id: string, name: string, children: NodeT[]): SceneNode => ({
+  type: "scene",
+  id,
+  name,
+  pos: { x: 0, y: 0, z: 0 },
+  rot: 0,
+  vis: "visible",
+  children,
+});
+const bx = (
+  x0: number,
+  y0: number,
+  z0: number,
+  x1: number,
+  y1: number,
+  z1: number,
+  c: number,
+): Box3 => ({ x0, y0, z0, x1, y1, z1, c });
+// peer sharing a common base — the two-tab / agent-plus-user situation
+const fork2 = (base: Uint8Array): [Y.Doc, Y.Doc] => {
+  const a = new Y.Doc(), b = new Y.Doc();
+  Y.applyUpdate(a, base);
+  Y.applyUpdate(b, base);
+  return [a, b];
+};
+const syncBoth = (a: Y.Doc, b: Y.Doc): void => {
+  const ua = Y.encodeStateAsUpdate(a), ub = Y.encodeStateAsUpdate(b);
+  Y.applyUpdate(a, ub);
+  Y.applyUpdate(b, ua);
+};
+
+Deno.test("crdt: Node tree round-trips through the document losslessly", () => {
+  const root = cScene("n1", "Project", [
+    cObj("n2", "Floor", [bx(0, 0, 0, 40, 1, 30, 0xcb997e)]),
+    cScene("n3", "Desk group", [
+      cObj("n4", "Desk", [bx(0, 0, 0, 14, 8, 7, 0xd4a373)]),
+    ]),
+  ]);
+  root.children[1].rot = 3;
+  (root.children[0] as ObjectNode).vis = "deemphasized";
+  const back = build(docFromTree(root));
+  assertEquals(JSON.stringify(back), JSON.stringify(root));
+});
+
+Deno.test("crdt: reconcile is idempotent, so remote updates cannot echo", () => {
+  const root = cScene("n1", "P", [cObj("n2", "A", [bx(0, 0, 0, 2, 2, 2, 7)])]);
+  const doc = docFromTree(root);
+  assert(!reconcile(doc, root), "an unchanged tree must emit no ops");
+  // and again after a snapshot round-trip, which is how a second tab boots
+  const loaded = new Y.Doc();
+  Y.applyUpdate(loaded, snapshot(doc));
+  const built = build(loaded)!;
+  assert(
+    !reconcile(loaded, built),
+    "a freshly loaded document must emit no ops",
+  );
+});
+
+Deno.test("crdt: concurrent edits to different objects both survive", () => {
+  const root = cScene("n1", "P", [
+    cObj("n2", "A", [bx(0, 0, 0, 2, 2, 2, 0x111111)]),
+    cObj("n3", "B", [bx(0, 0, 0, 2, 2, 2, 0x222222)]),
+  ]);
+  const [a, b] = fork2(snapshot(docFromTree(root)));
+  const ra = build(a)!;
+  (ra.children[0] as ObjectNode).boxes[0].c = 0xff0000; // peer A recolours A
+  reconcile(a, ra);
+  const rb = build(b)!;
+  rb.children[1].pos.x = 99; // peer B slides B
+  reconcile(b, rb);
+  syncBoth(a, b);
+  const ma = build(a)!, mb = build(b)!;
+  assertEquals(JSON.stringify(ma), JSON.stringify(mb), "peers must converge");
+  assertEquals((ma.children[0] as ObjectNode).boxes[0].c, 0xff0000);
+  assertEquals(ma.children[1].pos.x, 99);
+});
+
+Deno.test("crdt: a reparent merges with a concurrent rename of the target", () => {
+  const root = cScene("n1", "P", [cObj("n2", "A"), cScene("n3", "G", [])]);
+  const [a, b] = fork2(snapshot(docFromTree(root)));
+  const ra = build(a)!; // peer A drags object A into group G
+  const moved = ra.children.shift()!;
+  (ra.children[0] as SceneNode).children.push(moved);
+  reconcile(a, ra);
+  const rb = build(b)!; // peer B renames G at the same time
+  rb.children[1].name = "Renamed";
+  reconcile(b, rb);
+  syncBoth(a, b);
+  const ma = build(a)!, mb = build(b)!;
+  assertEquals(JSON.stringify(ma), JSON.stringify(mb), "peers must converge");
+  assertEquals(ma.children.length, 1, "A moved inside G");
+  assertEquals((ma.children[0] as SceneNode).children[0].id, "n2");
+  assertEquals(ma.children[0].name, "Renamed", "the rename survived the move");
+});
+
+Deno.test("crdt: concurrent geometry edits leave the boxes disjoint", () => {
+  // Geometry is stored as ONE opaque last-writer-wins value per object precisely
+  // so a merge can never interleave two box lists into overlapping boxes — which
+  // would break meshing, picking and every box-algebra assumption. Whichever side
+  // wins, materialize() must still find a disjoint set.
+  const root = cScene("n1", "P", [
+    cObj("n2", "A", [bx(0, 0, 0, 10, 10, 10, 0x111111)]),
+  ]);
+  const [a, b] = fork2(snapshot(docFromTree(root)));
+  const ra = build(a)!;
+  const oa = ra.children[0] as ObjectNode;
+  oa.boxes = addBox(
+    oa.boxes,
+    { x0: 2, y0: 2, z0: 2, x1: 8, y1: 8, z1: 8 },
+    0xaa,
+  );
+  reconcile(a, ra);
+  const rb = build(b)!;
+  const ob = rb.children[0] as ObjectNode;
+  ob.boxes = eraseBox(ob.boxes, { x0: 4, y0: 0, z0: 4, x1: 6, y1: 10, z1: 6 });
+  reconcile(b, rb);
+  syncBoth(a, b);
+  const ma = build(a)!, mb = build(b)!;
+  assertEquals(JSON.stringify(ma), JSON.stringify(mb), "peers must converge");
+  materialize((ma.children[0] as ObjectNode).boxes, "merged object");
+});
+
+Deno.test("crdt: a deleted node stays deleted after a merge", () => {
+  const root = cScene("n1", "P", [
+    cObj("n2", "A"),
+    cObj("n3", "B"),
+    cObj("n4", "C"),
+  ]);
+  const [a, b] = fork2(snapshot(docFromTree(root)));
+  const ra = build(a)!;
+  ra.children = ra.children.filter((c) => c.id !== "n3"); // peer A deletes B
+  reconcile(a, ra);
+  const rb = build(b)!;
+  rb.children[2].name = "C renamed"; // peer B renames C
+  reconcile(b, rb);
+  syncBoth(a, b);
+  const ma = build(a)!, mb = build(b)!;
+  assertEquals(JSON.stringify(ma), JSON.stringify(mb), "peers must converge");
+  assertEquals(ma.children.map((c) => c.id), ["n2", "n4"]);
+  assertEquals(ma.children[1].name, "C renamed");
+});
+
+Deno.test("crdt: a concurrent move cycle is broken, losing no nodes", () => {
+  // The one thing a real movable-tree CRDT would do for us. Nothing stops peer A
+  // putting X under Y while peer B puts Y under X: both parent writes are valid,
+  // and the naive result is a ring unreachable from the root, so BOTH groups would
+  // silently disappear. build() has to cut the ring identically on every peer.
+  const root = cScene("n1", "P", [
+    cScene("nx", "X", [cObj("nx1", "in X")]),
+    cScene("ny", "Y", [cObj("ny1", "in Y")]),
+  ]);
+  const [a, b] = fork2(snapshot(docFromTree(root)));
+  const ra = build(a)!; // peer A drags X into Y
+  const x = ra.children.shift()!;
+  (ra.children[0] as SceneNode).children.push(x);
+  reconcile(a, ra);
+  const rb = build(b)!; // peer B concurrently drags Y into X
+  const y = rb.children.pop()!;
+  (rb.children[0] as SceneNode).children.push(y);
+  reconcile(b, rb);
+  syncBoth(a, b);
+
+  const ma = build(a)!, mb = build(b)!;
+  assertEquals(JSON.stringify(ma), JSON.stringify(mb), "peers must converge");
+  assertEquals(ma.id, "n1", "the document root is still the root");
+  const seen = new Set<string>();
+  const walk = (n: NodeT) => {
+    seen.add(n.id);
+    if (n.type === "scene") n.children.forEach(walk);
+  };
+  walk(ma);
+  for (const id of ["nx", "ny", "nx1", "ny1"]) {
+    assert(seen.has(id), `${id} survived the cycle break`);
+  }
+  // and the repair must be stable: writing the resolved tree back and rebuilding
+  // reproduces it exactly, so the document self-heals instead of oscillating
+  reconcile(a, ma);
+  assertEquals(JSON.stringify(build(a)), JSON.stringify(ma), "repair is stable");
+});
+
+Deno.test("crdt: deleting a group drops its subtree, not just the group", () => {
+  // Orphans (a node whose parent is gone) are unreachable from the root and so
+  // fall out of build(). That is what makes a group delete take its children.
+  const root = cScene("n1", "P", [
+    cScene("ng", "G", [cObj("nc", "child")]),
+    cObj("nk", "keeper"),
+  ]);
+  const [a, b] = fork2(snapshot(docFromTree(root)));
+  const ra = build(a)!;
+  ra.children = ra.children.filter((c) => c.id !== "ng"); // peer A deletes G
+  reconcile(a, ra);
+  const rb = build(b)!;
+  rb.children[1].name = "renamed"; // peer B touches an unrelated node
+  reconcile(b, rb);
+  syncBoth(a, b);
+  const ma = build(a)!, mb = build(b)!;
+  assertEquals(JSON.stringify(ma), JSON.stringify(mb), "peers must converge");
+  assertEquals(ma.children.map((c) => c.id), ["nk"], "G and its child are gone");
+  assertEquals(ma.children[0].name, "renamed");
 });

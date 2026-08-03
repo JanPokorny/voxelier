@@ -3,7 +3,8 @@
 // colours and visibility. Export downloads a .json file; import reads one,
 // replaces the document and resets the editor to the scene root.
 import { S } from "./state.ts";
-import { flush, installScene, ser } from "./persistence.ts";
+import { flush, sceneFromEnvelope, ser } from "./persistence.ts";
+import { createDocument } from "./crdt/docs.ts";
 import { peekUid } from "./math.ts";
 import { rebuild } from "./render.ts";
 import { updateChrome } from "./ui.ts";
@@ -40,11 +41,15 @@ export function importScene(): void {
     const file = inp.files && inp.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
-        if (!installScene(JSON.parse(reader.result as string))) {
-          throw new Error("not a Voxelier scene file");
-        }
+        const tree = sceneFromEnvelope(JSON.parse(reader.result as string));
+        if (!tree) throw new Error("not a Voxelier scene file");
+        // An imported file joins the library as its own document rather than
+        // overwriting the open scene — and other tabs on other documents are
+        // unaffected, because the new document has its own scope.
+        S.root = await createDocument(tree);
+        S.collapsed = new Set();
         S.path = [S.root];
         S.editObject = null;
         S.sel3d = null;
