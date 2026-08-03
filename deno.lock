@@ -6,7 +6,6 @@
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "npm:playwright@1.49.1": "1.49.1",
     "npm:three@0.160.0": "0.160.0",
-    "npm:trystero@0.25.3": "0.25.3",
     "npm:yjs@13.6.20": "13.6.20"
   },
   "jsr": {
@@ -24,19 +23,6 @@
     }
   },
   "npm": {
-    "@noble/secp256k1@3.1.0": {
-      "integrity": "sha512-+F7iS7tUMaNGXcc9X3PjmjvuQnXEuSjCRNzVVA2xAcKXgCaP0dHYz4SFyt4FKNHef7sOP//xihowcySSS7PK9g=="
-    },
-    "@trystero-p2p/core@0.25.3": {
-      "integrity": "sha512-lQKNq/ha+vF6kQZrpaXJGzlzxLF/Fhizoy5dwJUYQlkqRrbPup/Jov2EpPX/CPr2X+f79HxVzonkeni3MxmCuQ=="
-    },
-    "@trystero-p2p/nostr@0.25.3": {
-      "integrity": "sha512-nZV9Fl/GXuhIkJSQ+wIkdMoRLO1oSTUL/+vZorukaojeAdOpT/61e8b9Vzbt8L1ktMTaGPEJHw2BG/B5BCwBuw==",
-      "dependencies": [
-        "@noble/secp256k1",
-        "@trystero-p2p/core"
-      ]
-    },
     "fsevents@2.3.2": {
       "integrity": "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==",
       "os": ["darwin"],
@@ -69,12 +55,6 @@
     "three@0.160.0": {
       "integrity": "sha512-DLU8lc0zNIPkM7rH5/e1Ks1Z8tWCGRq6g8mPowdDJpw1CFBJMU7UoJjC6PefXW7z//SSl0b2+GCw14LB+uDhng=="
     },
-    "trystero@0.25.3": {
-      "integrity": "sha512-mm6Mzmm10OXKfvOA0tUG6XXqlQDIPdHg0//mEqA4ayrtdqiie4ZQpSluEp6074L+dCtotCfCn/B/CWLWavZK6Q==",
-      "dependencies": [
-        "@trystero-p2p/nostr"
-      ]
-    },
     "yjs@13.6.20": {
       "integrity": "sha512-Z2YZI+SYqK7XdWlloI3lhMiKnCdFCVC4PchpdO+mCYwtiTwncjUbnRK9R1JmkNfdmHyDXuWN3ibJAt0wsqTbLQ==",
       "dependencies": [
@@ -86,7 +66,6 @@
     "dependencies": [
       "jsr:@std/assert@1",
       "npm:three@0.160.0",
-      "npm:trystero@0.25.3",
       "npm:yjs@13.6.20"
     ]
   }

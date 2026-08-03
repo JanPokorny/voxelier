@@ -9,10 +9,6 @@
 // 3. Documents are isolated. Two pages on DIFFERENT documents must not see each
 //    other at all; before documents had ids, a single global storage slot and
 //    channel meant they merged and overwrote one another.
-// 4. Hosting a live share produces a link and a session. Pairing two peers needs
-//    a public relay and WebRTC, which an offline or sandboxed run cannot reach, so
-//    that half reports as skipped instead of failing — but the editor must stay
-//    usable and error-free while the relay is unreachable, which IS checked.
 //
 // Usage: deno task build && deno task smoke
 // Set VOXELIER_CHROME to a Chromium binary if Playwright's own download is absent.
@@ -100,21 +96,6 @@ async function addObject(on: Page, peer: Page, peerRows: number) {
   return await waitRows(peer, (n) => n === peerRows + 1);
 }
 
-// generic poll for a derived string value (same rAF caveat as waitRows)
-async function waitFor(
-  p: Page,
-  read: () => Promise<string>,
-  want: (v: string) => boolean,
-  ms = 8000,
-): Promise<string> {
-  const until = Date.now() + ms;
-  for (;;) {
-    const v = await read();
-    if (want(v) || Date.now() > until) return v;
-    await p.waitForTimeout(200);
-  }
-}
-
 async function open(label: string, path = "/") {
   const page = await ctx.newPage();
   page.on("pageerror", (e: Error) => errors.push(`${label}: ${e.message}`));
@@ -130,17 +111,10 @@ async function open(label: string, path = "/") {
   );
   page.on("console", (m: { type: () => string; text: () => string }) => {
     const t = m.text();
-    // A relay that won't accept a WebSocket is an environment fact, not an app
-    // fault — it is exactly what the skipped pairing check reports. Everything
-    // else counts, including anything the share code itself logs.
-    const env = t.includes("favicon") ||
-      /WebSocket connection to 'wss:/.test(t);
-    if (m.type() === "error" && !env) errors.push(`${label} console: ${t}`);
+    if (m.type() === "error" && !t.includes("favicon")) {
+      errors.push(`${label} console: ${t}`);
+    }
   });
-  // "domcontentloaded", not "load": a page opened from a share link immediately
-  // starts relay traffic for peer discovery, and where that hangs (offline, or a
-  // sandbox with no outbound network) the load event can be held off entirely.
-  // The row poll below is the real readiness signal either way.
   await page.goto(`http://localhost:${PORT}${path}`, {
     waitUntil: "domcontentloaded",
   });
@@ -204,69 +178,6 @@ try {
     `tab A unaffected by the other document (${beforeIsolation} -> ${aStill} rows)`,
   );
   await c.close();
-
-  // ---- live share ----
-  // Hosting is local work (mint a secret, hash it, join a room), so the button and
-  // the link must appear regardless of connectivity. Actually pairing two peers
-  // needs a public relay plus WebRTC, which a sandboxed or offline CI cannot
-  // reach — so that half reports as skipped rather than failing the build.
-  await a.bringToFront();
-  await a.click("#btn-share");
-  const link: string = await waitFor(
-    a,
-    () =>
-      a.$eval(".sharelink", (e: HTMLInputElement) => e.value).catch(() => ""),
-    (v: string) => v.includes("#s="),
-  );
-  check(
-    !!link && link.includes("#s="),
-    `Share produced a link (${link || "none"})`,
-  );
-  check(
-    // a parameter within the fragment, not the whole fragment: the host's URL also
-    // still carries its doc= id, while the link handed out carries only the secret
-    await a.evaluate(() => /[#&]s=[0-9a-f]{16,}/.test(location.hash)),
-    "the session secret is in the URL fragment, which is never sent to a server",
-  );
-  check(
-    await a.evaluate(() => /[#&]doc=/.test(location.hash)),
-    "hosting keeps the host's own document id in its URL",
-  );
-  check(
-    !link.includes("doc="),
-    "the shared link carries only the secret, not which document it came from",
-  );
-  check(
-    await a.evaluate(() =>
-      !document.getElementById("sharebar")!.hasAttribute("hidden")
-    ),
-    "the share panel is showing",
-  );
-
-  const g = await open("G", link.replace(/^https?:\/\/[^/]+/, ""));
-  const paired = await waitFor(
-    g,
-    () =>
-      g.$eval(".sharewho", (e: HTMLElement) => e.textContent ?? "").catch(() =>
-        ""
-      ),
-    (t: string) => t.includes("connected"),
-    20000,
-  );
-  if (paired.includes("connected")) {
-    check(true, `guest paired with the host over WebRTC (${paired.trim()})`);
-    const hostRows = await rows(a);
-    const gotDoc = await waitRows(g, (n) => n === hostRows, 15000);
-    check(
-      gotDoc === hostRows,
-      `guest adopted the host's scene (${gotDoc} rows)`,
-    );
-  } else {
-    console.log(
-      "  skip  peer pairing (no relay reachable from here; the link and session " +
-        "are set up correctly, but WebRTC matchmaking needs outbound network)",
-    );
-  }
 
   check(errors.length === 0, `no page errors (${errors.join("; ") || "none"})`);
 } finally {

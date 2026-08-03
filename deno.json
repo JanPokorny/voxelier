@@ -12,7 +12,6 @@
   "imports": {
     "three": "npm:three@0.160.0",
     "yjs": "npm:yjs@13.6.20",
-    "trystero": "npm:trystero@0.25.3",
     "@std/assert": "jsr:@std/assert@^1.0.0"
   },
   "compilerOptions": {

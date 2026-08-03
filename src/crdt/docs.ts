@@ -7,7 +7,7 @@
 // scopes both its storage key and its cross-tab channel to that id. Two tabs on
 // one document sync; two tabs on different documents never see each other.
 import { listMeta } from "./idb.ts";
-import { currentScope, dropScope, installTree, openScope } from "./store.ts";
+import { currentDocId, dropScope, installTree, openScope } from "./store.ts";
 import { seed } from "../seed.ts";
 import type { DocMeta } from "./idb.ts";
 import type { SceneNode } from "../types.ts";
@@ -25,8 +25,8 @@ const newId = (): string => {
 };
 
 // ---- URL fragment ----
-// The fragment is shared with share.ts's `s=<secret>`, so both are read and
-// written as parameters rather than by replacing the whole hash.
+// Read and written as parameters rather than by replacing the whole hash, so an
+// unrelated fragment key stays intact.
 const hashParams = (): URLSearchParams =>
   new URLSearchParams(location.hash.replace(/^#/, ""));
 
@@ -59,14 +59,14 @@ const lastOpened = (): string | null => {
 
 // Open a document by id, or null when nothing is stored under it.
 export async function tryOpenDocument(id: string): Promise<SceneNode | null> {
-  const root = await openScope({ kind: "doc", id });
+  const root = await openScope(id);
   if (!root) return null;
   rememberLast(id);
   setDocInUrl(id);
   return root;
 }
 // Open a document by id, seeding it if it is empty — which is what makes a
-// hand-typed or hand-shared #doc= link land on a usable scene.
+// hand-typed or pasted #doc= link land on a usable scene.
 export async function openDocument(id: string): Promise<SceneNode> {
   const existing = await tryOpenDocument(id);
   if (existing) return existing;
@@ -83,7 +83,7 @@ export async function openDocument(id: string): Promise<SceneNode> {
 // file is a thing you are adding to your library, not an edit to the current scene.
 export async function createDocument(root?: SceneNode): Promise<SceneNode> {
   const id = newId();
-  await openScope({ kind: "doc", id }); // nothing stored yet; this just sets scope
+  await openScope(id); // nothing stored yet; this just points the store at it
   const tree = root ?? seed();
   installTree(tree);
   rememberLast(id);
@@ -100,10 +100,7 @@ export async function deleteDocument(id: string): Promise<void> {
   }
 }
 
-export const openDocumentId = (): string | null => {
-  const s = currentScope();
-  return s && s.kind === "doc" ? s.id : null;
-};
+export const openDocumentId = (): string | null => currentDocId();
 
 // Decide what to show on load, in priority order: an explicit #doc= link, the
 // document you had open last, an existing library entry, a migrated legacy save,

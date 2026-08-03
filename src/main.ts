@@ -14,8 +14,7 @@ import {
   wake,
 } from "./scene-env.ts";
 import { rebuild, updateCutPlanes } from "./render.ts";
-import { renderShare, updateChrome } from "./ui.ts";
-import { resumeFromUrl } from "./crdt/share.ts";
+import { updateChrome } from "./ui.ts";
 import { frameView, updateCamera } from "./camera.ts";
 import { updateMeasureLabels } from "./measure.ts";
 import { adoptRemote, flush, loadUI, readLegacy } from "./persistence.ts";
@@ -139,11 +138,5 @@ async function start(): Promise<void> {
   flush(); // synchronous baseline undo snapshot
   measure(); // seed the viewport cache before the first reconcile/render
   tick(); // start the on-demand render loop
-  // Opened from a share link? Join it. Deliberately last and un-awaited: peer
-  // discovery goes over the network and may never succeed, and the editor has to
-  // be usable meanwhile. The host's scene replaces what's on screen once it lands.
-  resumeFromUrl()?.then(renderShare).catch(() => {
-    /* no network, or no peer answered — stay solo */
-  });
 }
 start();
