@@ -40,9 +40,10 @@ export type ShareState = {
 
 // deno-lint-ignore no-explicit-any
 type Room = any;
+type SendOpts = { target?: string };
 let room: Room | null = null;
-let sendOps: ((b: Uint8Array, opts?: unknown) => void) | null = null;
-let sendSnap: ((b: Uint8Array, opts?: unknown) => void) | null = null;
+let sendOps: ((b: Uint8Array, opts?: SendOpts) => void) | null = null;
+let sendSnap: ((b: Uint8Array, opts?: SendOpts) => void) | null = null;
 let unsubOps: (() => void) | null = null;
 let role: Role | null = null;
 let secret: string | null = null;
@@ -99,45 +100,59 @@ async function connect(sec: string, as: Role): Promise<void> {
   // its own cross-tab channel, and no entry in the library.
   prevDocId ??= openDocumentId();
   await openScope({ kind: "session", id });
-  room = joinRoom({ appId: APP_ID, password: sec }, id);
 
-  // one action per id: makeAction returns [send, onMessage, onProgress]
-  const [opsSend, onOps] = room.makeAction("ops");
-  const [snapSend, onSnap] = room.makeAction("snap");
-  sendOps = opsSend;
-  sendSnap = snapSend;
+  // Anything that throws in here would otherwise leave `room` set and the UI
+  // showing a live session that can never carry a message, so tear down and let
+  // the caller report it.
+  try {
+    room = joinRoom({ appId: APP_ID, password: sec }, id);
 
-  onOps((b: unknown) => {
-    if (b instanceof Uint8Array) applyUpdate(b);
-  });
-  onSnap((b: unknown) => {
-    // Only a guest adopts, and only until it has a document in common with the
-    // host — after that a snapshot would throw away locally merged work.
-    if (!(b instanceof Uint8Array)) return;
-    if (role === "guest" && !adopted) {
-      adopted = true;
-      adoptSnapshot(b);
-    } else {
-      applyUpdate(b); // same history: safe to merge
-    }
-  });
+    // makeAction returns an OBJECT — {send, onMessage, onReceiveProgress} — with
+    // onMessage a property you ASSIGN. Older Trystero handed back a
+    // [send, onMessage] tuple; destructuring this one as an array throws
+    // "object is not iterable" before a session can form.
+    const ops = room.makeAction("ops");
+    const snap = room.makeAction("snap");
+    // send() is async and rejects when a peer vanishes mid-flight. A peer leaving
+    // is not an error worth surfacing, and an unhandled rejection would be noise.
+    sendOps = (b, opts) => void ops.send(b, opts).catch(() => {});
+    sendSnap = (b, opts) => void snap.send(b, opts).catch(() => {});
 
-  room.onPeerJoin = (peerId: string) => {
-    peers.add(peerId);
-    // The host seeds every arrival with the current document. Guests send theirs
-    // too once adopted, which is what lets a second guest catch up from whoever
-    // answers first.
-    if (role === "host" || adopted) {
-      sendSnap?.(currentSnapshot(), { target: peerId });
-    }
-    onChange?.();
-  };
-  room.onPeerLeave = (peerId: string) => {
-    peers.delete(peerId);
-    onChange?.();
-  };
+    ops.onMessage = (b: unknown) => {
+      if (b instanceof Uint8Array) applyUpdate(b);
+    };
+    snap.onMessage = (b: unknown) => {
+      // Only a guest adopts, and only until it has a document in common with the
+      // host — after that a snapshot would throw away locally merged work.
+      if (!(b instanceof Uint8Array)) return;
+      if (role === "guest" && !adopted) {
+        adopted = true;
+        adoptSnapshot(b);
+      } else {
+        applyUpdate(b); // same history: safe to merge
+      }
+    };
 
-  unsubOps = onLocalOps((b) => sendOps?.(b));
+    room.onPeerJoin = (peerId: string) => {
+      peers.add(peerId);
+      // The host seeds every arrival with the current document. Guests send theirs
+      // too once adopted, which is what lets a second guest catch up from whoever
+      // answers first.
+      if (role === "host" || adopted) {
+        sendSnap?.(currentSnapshot(), { target: peerId });
+      }
+      onChange?.();
+    };
+    room.onPeerLeave = (peerId: string) => {
+      peers.delete(peerId);
+      onChange?.();
+    };
+
+    unsubOps = onLocalOps((b) => sendOps?.(b));
+  } catch (e) {
+    await leave();
+    throw e;
+  }
   onChange?.();
 }
 

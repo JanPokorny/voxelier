@@ -118,6 +118,16 @@ async function waitFor(
 async function open(label: string, path = "/") {
   const page = await ctx.newPage();
   page.on("pageerror", (e: Error) => errors.push(`${label}: ${e.message}`));
+  // Playwright auto-dismisses dialogs when nothing is listening, so an alert() is
+  // invisible unless captured — which is exactly how a broken share session once
+  // passed this test: the error was reported to the user and to nobody else.
+  page.on(
+    "dialog",
+    async (d: { message: () => string; dismiss: () => Promise<void> }) => {
+      errors.push(`${label} dialog: ${d.message()}`);
+      await d.dismiss();
+    },
+  );
   page.on("console", (m: { type: () => string; text: () => string }) => {
     const t = m.text();
     // A relay that won't accept a WebSocket is an environment fact, not an app
