@@ -6,7 +6,8 @@ import { S } from "./state.ts";
 import { peekUid, seedUid } from "./math.ts";
 import { amend, record } from "./history.ts";
 import { holdsLock } from "./lock.ts";
-import type { Node, ObjectNode, SceneNode, Vis } from "./types.ts";
+import { NORTHS } from "./types.ts";
+import type { Node, North, ObjectNode, SceneNode, Vis } from "./types.ts";
 
 const LS_DOC = "voxelier-doc:"; // + document id -> { uid, root }
 const LS_V11 = "voxelier-v11"; // pre-document-library save: the whole tree
@@ -25,7 +26,7 @@ type SerBase = {
   vs: Vis;
 };
 type SerObject = SerBase & { t: "o"; b: SerBox[] };
-type SerScene = SerBase & { t: "s"; c: SerNode[] };
+type SerScene = SerBase & { t: "s"; c: SerNode[]; n?: North };
 export type SerNode = SerObject | SerScene;
 
 export function ser(n: Node): SerNode {
@@ -42,7 +43,7 @@ export function ser(n: Node): SerNode {
       ...b,
       b: n.boxes.map((x): SerBox => [x.x0, x.y0, x.z0, x.x1, x.y1, x.z1, x.c]),
     }
-    : { t: "s", ...b, c: n.children.map(ser) };
+    : { t: "s", ...b, ...(n.north ? { n: n.north } : {}), c: n.children.map(ser) };
 }
 // older saves stored the pre-rename visibility names
 const VIS_MIGRATE: Record<string, Vis> = {
@@ -71,7 +72,12 @@ export function de(d: SerNode): Node {
         c: a[6],
       })),
     } as ObjectNode
-    : { type: "scene", ...b, children: d.c.map(de) } as SceneNode;
+    : {
+      type: "scene",
+      ...b,
+      ...(d.n && NORTHS.includes(d.n) ? { north: d.n } : {}),
+      children: d.c.map(de),
+    } as SceneNode;
 }
 
 // ~5 MB per origin is the localStorage ceiling. If that is ever not enough, the

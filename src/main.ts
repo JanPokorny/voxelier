@@ -14,7 +14,7 @@ import {
   wake,
 } from "./scene-env.ts";
 import { rebuild, updateCutPlanes } from "./render.ts";
-import { updateChrome } from "./ui.ts";
+import { updateChrome, updateCompass } from "./ui.ts";
 import { frameView, updateCamera } from "./camera.ts";
 import { clearMeasure, updateMeasureLabels } from "./measure.ts";
 import { flush, hasUnsaved, loadUI, readLegacy } from "./persistence.ts";
@@ -132,6 +132,7 @@ function tick(): void {
   if (frame.tail > 0 || !cameraSettled()) {
     updateCutPlanes(); // half-visible cutaway planes track the camera angle
     renderer.render(scene, camera);
+    updateCompass(); // camera.matrixWorld is current after the render
     updateMeasureLabels();
     if (frame.tail > 0) frame.tail--;
   }

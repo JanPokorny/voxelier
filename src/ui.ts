@@ -2,14 +2,14 @@
 // the sidebar toggle and the global keyboard shortcuts. The scene tree lives in
 // tree.ts. Attaches its window listeners on import.
 import { S } from "./state.ts";
-import { hex } from "./math.ts";
+import { dirName, dirVec, hex } from "./math.ts";
 import { el } from "./dom.ts";
 import { colorCounts } from "./boxes.ts";
-import { hoverVox } from "./scene-env.ts";
+import { camera, hoverVox } from "./scene-env.ts";
 import { clearMeasure } from "./measure.ts";
 import { frameView } from "./camera.ts";
 import { escapeUp } from "./navigation.ts";
-import { DEFAULT_COLORS, nodeBoxes } from "./model.ts";
+import { DEFAULT_COLORS, nodeBoxes, northOf } from "./model.ts";
 import {
   copySelection,
   createObject,
@@ -74,6 +74,32 @@ const toolButton = (
     innerHTML: `<span class="ic">${ic}</span>${label}`,
     onclick,
   });
+
+// Rotate the corner compass so its N points at world north on screen. Also
+// refreshes the aria-label with the document's compass mapping. Called from the
+// render loop after the camera matrix is current.
+const compassEl = document.getElementById("compass");
+const compassRose = compassEl?.querySelector(".crose") as HTMLElement | null;
+const compassText = compassEl?.querySelector(".cn") as HTMLElement | null;
+export function updateCompass(): void {
+  if (!compassEl || !compassRose || !compassText || !S.root) return;
+  const n = northOf(), v = dirVec("n", n)!;
+  const m = camera.matrixWorld.elements;
+  const x = v.x * m[0] + v.y * m[1] + v.z * m[2];
+  const y = v.x * m[4] + v.y * m[5] + v.z * m[6];
+  const out = v.x * m[8] + v.y * m[9] + v.z * m[10] > 0;
+  const parallel = x * x + y * y < 0.0016;
+  compassRose.classList.toggle("parallel", parallel);
+  compassText.textContent = parallel ? `${out ? "⊙" : "⊗"} N` : "N";
+  compassRose.style.transform = parallel
+    ? ""
+    : `rotate(${Math.atan2(x, y) * 180 / Math.PI}deg)`;
+  const label = `Compass: north ${n}, east ${dirName(dirVec("e", n)!)}` +
+    (parallel ? (out ? ", north out of screen" : ", north into screen") : "");
+  if (compassEl.getAttribute("aria-label") !== label) {
+    compassEl.setAttribute("aria-label", label);
+  }
+}
 
 // Switch the active tool. Tools are mutually exclusive, so this drops any voxel
 // marquee, cancels a pending eyedropper return, hides the hover cube and clears

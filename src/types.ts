@@ -11,6 +11,10 @@ export type Xform = { off: Vec; rot: Rot };
 // An axis-aligned bounding box (min inclusive, max exclusive in voxel space).
 export type Box = { min: Vec; max: Vec };
 
+// The four world directions a document may call north.
+export const NORTHS = ["+x", "-x", "+z", "-z"] as const;
+export type North = typeof NORTHS[number];
+
 // ---- the document model ----
 // An object's explicit visibility. "temporarily deemphasized" is NOT one of
 // these — it's a render-only state applied to anything outside the current focus
@@ -38,7 +42,12 @@ type NodeBase = {
   vis: Vis;
 };
 export type ObjectNode = NodeBase & { type: "object"; boxes: Box3[] };
-export type SceneNode = NodeBase & { type: "scene"; children: Node[] };
+// north is only meaningful on the root scene (the document); absent means "-z".
+export type SceneNode = NodeBase & {
+  type: "scene";
+  children: Node[];
+  north?: North;
+};
 export type Node = ObjectNode | SceneNode;
 
 // ---- editor tools ----

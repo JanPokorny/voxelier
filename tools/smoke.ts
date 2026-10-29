@@ -429,6 +429,25 @@ try {
     const v = (globalThis as any).voxelier;
     await v.load(json);
 
+    // north: edit -> export -> storage -> import, and compass direction mapping
+    const outlineDefault = v.outline();
+    const northDoc = new URLSearchParams(location.hash.slice(1)).get("doc")!;
+    v.edit((root: any) => {
+      root.north = "+x";
+    });
+    const northExport = v.exportJSON();
+    const northStored = JSON.parse(
+      localStorage.getItem(`voxelier-doc:${northDoc}`)!,
+    ).root.n;
+    const northClear = JSON.stringify(v.clearance("n107", "n")) ===
+      JSON.stringify(v.clearance("n107", "+x"));
+    await v.load(northExport);
+    const northImported = v.S.root.north;
+    const outlineNorth = v.outline();
+    v.edit((root: any) => {
+      root.north = "-z";
+    });
+
     // read-only views: outline, relations, render
     const outline = v.outline();
     const nestedOutline = v.outline("n28");
@@ -654,6 +673,205 @@ try {
     v.undo(); // drop the clone again
     const cloneGone = v.findById(cloneId) === null;
 
+    // shape helpers: a round pot and a groove carved through it
+    const pot = v.voxelize(
+      (x: number, y: number, z: number) =>
+        (x - 8) ** 2 + (z - 8) ** 2 <= 25 && y < 10 ? 0xcb997e : null,
+      { x0: 0, y0: 0, z0: 0, x1: 17, y1: 10, z1: 17 },
+    );
+    const cells = (bs: any[]) =>
+      bs.reduce((n, b) =>
+        n + (b.x1 - b.x0) * (b.y1 - b.y0) * (b.z1 - b.z0), 0);
+    const potCells = cells(pot);
+    const carved = v.carve(pot, (x: number) => x === 8);
+    let unsafeBounds = "";
+    try {
+      v.voxelize(() => null, {
+        x0: Number.MAX_SAFE_INTEGER,
+        y0: 0,
+        z0: 0,
+        x1: Number.MAX_SAFE_INTEGER + 2,
+        y1: 1,
+        z1: 1,
+      });
+    } catch (e) {
+      unsafeBounds = (e as Error).message;
+    }
+    const shapeOk = pot.length > 0 && potCells > 0 &&
+      pot.length < potCells && cells(carved) < potCells &&
+      /safe integer/.test(unsafeBounds);
+
+    // distances and relation kinds on the office
+    const near = v.distance("n107", "n3.cg40m8");
+    const overlapRels = v.relations(undefined, { only: "overlap" });
+    const gapRels = v.relations(undefined, { only: "gap" });
+    const touchRels = v.relations(undefined, { only: "touch" });
+    const distancesOk = Math.abs(near.distance - Math.hypot(near.x, near.y, near.z)) < 1e-9 &&
+      near.distance > 0;
+    const onlyOk = !/ \| /.test(overlapRels) && !/ ~ /.test(gapRels) &&
+      !/ ~ /.test(touchRels);
+
+    // two probes in a column: the near one hides the far one from an east
+    // elevation until hide/cutaway removes it. Spy on the labels actually drawn.
+    const front = v.newObject();
+    front.name = "FrontProbe";
+    front.pos = { x: 20, y: 1000, z: 0 };
+    front.boxes.push({
+      x0: 0, y0: 0, z0: 0, x1: 20, y1: 20, z1: 20, c: 0x0000ff,
+    });
+    const back = v.newObject();
+    back.name = "BackProbe";
+    back.pos = { x: 0, y: 1000, z: 0 };
+    back.boxes.push({
+      x0: 0, y0: 0, z0: 0, x1: 20, y1: 20, z1: 20, c: 0xff0000,
+    });
+    const below = v.newObject();
+    below.name = "BelowProbe";
+    below.pos = { x: 0, y: 0, z: 10000 };
+    below.boxes.push({
+      x0: 0, y0: 0, z0: 0, x1: 20, y1: 10, z1: 20, c: 0x00ff00,
+    });
+    const above = v.newObject();
+    above.name = "AboveProbe";
+    above.pos = { x: 0, y: 200, z: 10000 };
+    above.boxes.push({
+      x0: 0, y0: 0, z0: 0, x1: 20, y1: 10, z1: 20, c: 0x00ffff,
+    });
+    const repackA = v.newObject();
+    repackA.name = "RepackA";
+    repackA.pos = { x: 0, y: 1000, z: 10000 };
+    repackA.boxes.push({
+      x0: 0, y0: 0, z0: 0, x1: 20, y1: 10, z1: 10, c: 0x123456,
+    });
+    const repackB = v.newObject();
+    repackB.name = "RepackB";
+    repackB.pos = { x: 15, y: 1020, z: 10000 };
+    repackB.boxes.push({
+      x0: 0, y0: 0, z0: 0, x1: 2, y1: 10, z1: 10, c: 0x654321,
+    });
+    const bandA = v.newObject();
+    bandA.name = "BandA";
+    bandA.pos = { x: 0, y: 1000, z: 20000 };
+    bandA.boxes.push(
+      { x0: 0, y0: 0, z0: 0, x1: 10, y1: 10, z1: 10, c: 1 },
+      { x0: 50, y0: 100, z0: 0, x1: 60, y1: 110, z1: 10, c: 1 },
+    );
+    const bandB = v.newObject();
+    bandB.name = "BandB";
+    bandB.pos = { x: 20, y: 1000, z: 20000 };
+    bandB.boxes.push({
+      x0: 0, y0: 0, z0: 0, x1: 10, y1: 120, z1: 10, c: 2,
+    });
+    const stepsA = v.newObject();
+    stepsA.name = "StepsA";
+    stepsA.pos = { x: 0, y: 1000, z: 30000 };
+    stepsA.boxes.push(
+      { x0: 0, y0: 0, z0: 0, x1: 10, y1: 10, z1: 10, c: 3 },
+      { x0: 0, y0: 0, z0: 20, x1: 20, y1: 10, z1: 30, c: 3 },
+    );
+    const stepsB = v.newObject();
+    stepsB.name = "StepsB";
+    stepsB.pos = { x: 15, y: 1000, z: 30000 };
+    stepsB.boxes.push({
+      x0: 0, y0: 0, z0: 0, x1: 3, y1: 10, z1: 30, c: 4,
+    });
+    const floorA = v.newObject();
+    floorA.name = "FloorA";
+    floorA.pos = { x: 0, y: 1010, z: 40000 };
+    floorA.boxes.push({
+      x0: 0, y0: 0, z0: 0, x1: 10, y1: 10, z1: 10, c: 5,
+    });
+    const floorB = v.newObject();
+    floorB.name = "FloorB";
+    floorB.pos = { x: 0, y: 1000, z: 40000 };
+    floorB.boxes.push(
+      { x0: 0, y0: 0, z0: 0, x1: 10, y1: 5, z1: 10, c: 6 },
+      { x0: 10, y0: 0, z0: 0, x1: 20, y1: 5, z1: 10, c: 6 },
+    );
+    v.edit((root: any) => {
+      root.children.push(
+        front, back, below, above, repackA, repackB, bandA, bandB, stepsA,
+        stepsB, floorA, floorB,
+      );
+    });
+    const labelsFor = async (view: string, opts: any) => {
+      const seen: string[] = [];
+      const proto = CanvasRenderingContext2D.prototype;
+      const fillText = proto.fillText;
+      proto.fillText = function (
+        this: CanvasRenderingContext2D,
+        t: string,
+        ...a: [number, number]
+      ) {
+        seen.push(t);
+        return fillText.call(this, t, ...a);
+      } as typeof proto.fillText;
+      try {
+        await v.render(view, { size: 256, grid: false, ...opts });
+      } finally {
+        proto.fillText = fillText;
+      }
+      return seen;
+    };
+    const probe = [front.id, back.id];
+    const occluded = await labelsFor("elevation", {
+      from: "e",
+      focus: probe,
+      isolate: true,
+    });
+    const hiddenProbe = await labelsFor("elevation", {
+      from: "e",
+      focus: probe,
+      isolate: true,
+      hide: [front.id],
+    });
+    const cutProbe = await labelsFor("elevation", {
+      from: "e",
+      focus: probe,
+      isolate: true,
+      cutaway: true,
+    });
+    const cutLabels = await labelsFor("top", {
+      focus: [below.id, above.id],
+      isolate: true,
+    });
+    const abutLabels = await labelsFor("elevation", { from: "s", focus: probe, isolate: true });
+    const northInto = await labelsFor("elevation", { from: "s", labels: false }), northOut = await labelsFor("elevation", { from: "n", labels: false });
+    const clearBefore = v.clearance(repackA.id, "+x");
+    v.edit(() => {
+      const a = v.findById(repackA.id);
+      a.boxes = [
+        { x0: 0, y0: 0, z0: 0, x1: 10, y1: 10, z1: 10, c: 0x123456 },
+        { x0: 10, y0: 0, z0: 0, x1: 20, y1: 10, z1: 10, c: 0x123456 },
+      ];
+    });
+    const clearAfter = v.clearance(repackA.id, "+x");
+    const bandNear = v.distance(bandA.id, bandB.id);
+    const bandHigh = v.distance(bandA.id, bandB.id, { y: [1050, 1120] });
+    const bandOk = bandHigh.distance > bandNear.distance;
+    const steps = v.clearance(stepsA.id, "+x");
+    const stepsOk = steps?.id === stepsB.id && steps.distance === 5;
+    const floorOk = v.clearance(floorA.id, "+x") === null;
+    v.undo(); // drop the split boxes
+    v.undo(); // drop the probes
+    const cutOk = !occluded.includes("BackProbe") &&
+      occluded.includes("FrontProbe") &&
+      hiddenProbe.includes("BackProbe") && !hiddenProbe.includes("FrontProbe") &&
+      cutProbe.includes("BackProbe") && !cutProbe.includes("FrontProbe");
+    const cutLabelsOk = cutLabels.includes("BelowProbe") &&
+      !cutLabels.includes("AboveProbe");
+    const clearStable = clearBefore === null && clearAfter === null;
+    const elev = await stats(
+      await v.render("elevation", {
+        from: "w", hide: ["n2"], size: 256, grid: false, labels: false,
+      }),
+    );
+    const arb = await stats(
+      await v.render("top", {
+        azim: 0.4, elev: 0.5, size: 128, grid: false, labels: false,
+      }),
+    );
+
     return {
       before,
       undone,
@@ -697,6 +915,25 @@ try {
       cloneGone,
       allBlue: all.blue,
       editDiff,
+      outlineDefault,
+      outlineNorth,
+      northStored,
+      northImported,
+      northClear,
+      shapeOk,
+      near,
+      distancesOk,
+      onlyOk,
+      cutOk,
+      cutLabelsOk,
+      abutOk: abutLabels.includes("FrontProbe") && abutLabels.includes("BackProbe"),
+      northOk: northInto.includes("⊗ N") && northOut.includes("⊙ N"),
+      clearStable,
+      bandOk,
+      stepsOk,
+      floorOk,
+      elevColored: elev.colored,
+      arbColored: arb.colored,
     };
   }, office);
   check(agent.grew, "agent API: edit changes world bounds");
@@ -778,6 +1015,32 @@ try {
   check(
     /n28/.test(agent.rotatedDiff) && /→/.test(agent.rotatedDiff),
     "agent views: diff tracks children under a rotated parent",
+  );
+
+  check(
+    /north = -z, east = \+x/.test(agent.outlineDefault) &&
+      /pos z=-1/.test(agent.outlineDefault) &&
+      agent.northStored === "+x" && agent.northImported === "+x" &&
+      /north = \+x, east = \+z/.test(agent.outlineNorth) &&
+      agent.northClear,
+    "agent views: north round-trips and rotates the compass mapping",
+  );
+  check(
+    agent.cutOk && agent.cutLabelsOk && agent.abutOk && agent.northOk &&
+      agent.elevColored > 100 && agent.arbColored > 100,
+    `agent views: elevations, hide/cutaway, labels, abutting objects and north marker (${
+      agent.elevColored}/${agent.arbColored} px)`,
+  );
+  check(
+    agent.shapeOk,
+    "agent views: voxelize merges cells and carve removes them",
+  );
+  check(
+    agent.distancesOk && agent.onlyOk && agent.clearStable && agent.bandOk &&
+      agent.stepsOk && agent.floorOk,
+    `agent views: distance, bands, relation kinds, repack-stable contour clearance (${
+      JSON.stringify(agent.near)
+    })`,
   );
 
   // ---- agent files: downloads instead of base64 in the tool result ----
