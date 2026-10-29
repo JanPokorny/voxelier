@@ -6,6 +6,7 @@ import * as M from "./model.ts";
 import { addv, pathXform, rotY } from "./math.ts";
 import { worldBox } from "./boxes.ts";
 import { eachObject } from "./render.ts";
+import { boxFaceGeo } from "./mesh.ts";
 import { de } from "./persistence.ts";
 import * as E from "./scene-env.ts";
 import type { Box, Box3, Node, Rot, Vec } from "./types.ts";
@@ -39,7 +40,8 @@ const worldBoxes = (n: Node): Box3[] => {
       for (const b of x.boxes) out.push(worldBox(b, r, o));
     } else for (const c of x.children) walk(c, o, r);
   };
-  walk(n, O, 0);
+  const w = pathXform(M.findPath(n, S.root)!.slice(0, -1));
+  walk(n, w.off, w.rot);
   return out;
 };
 
@@ -114,29 +116,27 @@ export function relations(ids?: string | string[], { within = 60 }: { within?: n
 // deno-fmt-ignore
 export function diff(before: string): string {
   const j = JSON.parse(before), prev = de(j.root ?? j) as Node, out: string[] = [];
-  const dims = (b: Box) => [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z];
-  const same = (a: number[], b: number[]) => a.every((v, i) => v === b[i]);
+  const range = (b: Box | null) => b ? fmtBox(b) : "empty";
   const par = (root: Node, n: Node) => { const p = M.findPath(n, root); return p?.[p.length - 2]?.id; };
-  const geom = (bs: Box3[]) => bs.map((b) => [b.x0, b.y0, b.z0, b.x1, b.y1, b.z1].join(",")).sort().join(";");
   const walk = (n: Node): void => {
     const p = M.findById(n.id, prev);
-    if (!p) return void out.push(`+ ${nodeLine(n, boundsIn(S.root, n))}`);
-    const parts: string[] = [], pb = boundsIn(prev, p), cb = boundsIn(S.root, n);
-    const ps = pb && dims(pb), cs = cb && dims(cb);
-    if (par(prev, p) !== par(S.root, n)) parts.push(`reparented ${par(prev, p) ?? "-"}→${par(S.root, n) ?? "-"}`);
-    if (pb && cb) {
-      const d = [cb.min.x - pb.min.x, cb.min.y - pb.min.y, cb.min.z - pb.min.z];
-      if (d.some(Boolean)) parts.push(`moved ${d.map((v, i) => v ? `Δ${AXES[i]}${v > 0 ? "+" : ""}${v}` : "").filter(Boolean).join(" ")}`);
-      if (ps && cs && !same(ps, cs)) parts.push(`resized ${ps.join("x")} → ${cs.join("x")}`);
-    } else if (pb) parts.push("geometry removed"); else if (cb) parts.push("geometry added");
-    if (n.rot !== p.rot) parts.push(`rotated to ${n.rot * 90}°`);
-    if (n.vis !== p.vis) parts.push(`${p.vis}→${n.vis}`);
-    if (n.type === "object" && p.type === "object" && JSON.stringify(n.boxes) !== JSON.stringify(p.boxes) && ps && cs && same(ps, cs)) parts.push(geom(n.boxes) === geom(p.boxes) ? "recolored" : "reshaped");
-    if (parts.length) out.push(`~ ${n.id} "${n.name}" ${parts.join("; ")}`);
+    if (!p) { out.push(`+ ${n.id} "${n.name}": added ${range(boundsIn(S.root, n))}`); return; }
+    const pb = boundsIn(prev, p), cb = boundsIn(S.root, n), pp = par(prev, p), cp = par(S.root, n);
+    const boxes = n.type === "object" && p.type === "object" && JSON.stringify(n.boxes) !== JSON.stringify(p.boxes);
+    if (range(pb) === range(cb) && pp === cp && !boxes && n.vis === p.vis && n.rot === p.rot) {
+      if (n.type === "scene") for (const c of n.children) walk(c);
+      return;
+    }
+    const parts = [`${range(pb)} → ${range(cb)}`];
+    if (pp !== cp) parts.push(`reparented ${pp ?? "-"}→${cp ?? "-"}`);
+    if (boxes && n.type === "object" && p.type === "object") parts.push(`geometry changed (${p.boxes.length}→${n.boxes.length} boxes)`);
+    if (n.vis !== p.vis) parts.push(`vis ${p.vis}→${n.vis}`);
+    if (n.rot !== p.rot) parts.push(`rot ${p.rot * 90}→${n.rot * 90}`);
+    out.push(`~ ${n.id} "${n.name}": ${parts.join("; ")}`);
     if (n.type === "scene") for (const c of n.children) walk(c);
   };
   walk(S.root);
-  const removed = (n: Node): void => { if (!M.findById(n.id, S.root)) { out.push(`- ${nodeLine(n, boundsIn(prev, n))}`); return; } if (n.type === "scene") for (const c of n.children) removed(c); };
+  const removed = (n: Node): void => { if (!M.findById(n.id, S.root)) { out.push(`- ${n.id} "${n.name}": removed ${range(boundsIn(prev, n))}`); return; } if (n.type === "scene") for (const c of n.children) removed(c); };
   removed(prev);
   return out.join("\n");
 }
@@ -207,44 +207,32 @@ export function renderView(view: string, opts: { focus?: string | string[]; isol
       b.max.x = Math.max(b.max.x, w.max.x); b.max.y = Math.max(b.max.y, w.max.y); b.max.z = Math.max(b.max.z, w.max.z);
     }
     if (M.boxEmpty(b)) throw new Error(`focus has no geometry: ${focus}`);
-  } else {
-    Object.assign(b, S.sceneBox && !M.boxEmpty(S.sceneBox) ? S.sceneBox : { min: { x: -20, y: 0, z: -20 }, max: { x: 20, y: 40, z: 20 } });
-  }
+  } else Object.assign(b, S.sceneBox && !M.boxEmpty(S.sceneBox) ? S.sceneBox : { min: { x: -20, y: 0, z: -20 }, max: { x: 20, y: 40, z: 20 } });
   const { camera, half } = makeCamera(view, b);
   const focusIds = new Set<string>();
   const mark = (n: Node): void => { focusIds.add(n.id); if (n.type === "scene") for (const c of n.children) mark(c); };
   for (const id of focus) mark(M.findById(id)!);
-  const anc = opts.isolate && focus.length ? new Set<string>() : null;
-  if (anc) for (const id of focus) for (const n of M.findPath(M.findById(id)!) ?? []) anc.add(n.id);
-  const objects: { id: string; b: Box }[] = [];
+  const isolate = opts.isolate && focus.length > 0;
+  const objects: { id: string; b: Box }[] = [], boxes: Box3[] = [];
+  const take = (n: Node, nb: Box) => { if (!M.boxEmpty(nb)) { objects.push({ id: n.id, b: nb }); boxes.push(...worldBoxes(n)); } };
   eachObject(S.root, O, 0, null, null, (n, off, rot, _owner, dRoot) => {
-    if (dRoot || (anc && !focusIds.has(n.id))) return;
-    const nb = M.nodeBox(n, off, rot, M.emptyBox());
-    if (!M.boxEmpty(nb)) objects.push({ id: n.id, b: nb });
+    if (!dRoot && (!isolate || focusIds.has(n.id))) take(n, M.nodeBox(n, off, rot, M.emptyBox()));
   });
-  if (S.editObject && (!anc || focusIds.has(S.editObject.id))) {
-    const nb = M.nodeBox(S.editObject, S.editXform.off, S.editXform.rot, M.emptyBox());
-    if (!M.boxEmpty(nb)) objects.push({ id: S.editObject.id, b: nb });
-  }
-  const hidden: THREE.Object3D[] = [];
-  const hide = (o: THREE.Object3D): void => { if (o.visible) { o.visible = false; hidden.push(o); } };
-  for (const o of [E.ground, E.overlay, E.hoverVox, E.measLines]) hide(o);
-  E.scene.traverse((o: THREE.Object3D) => {
-    const m = o as THREE.Mesh, mat = m.material as THREE.Material | undefined;
-    if ((m.isMesh && (o.userData.cut || mat?.clippingPlanes?.length)) || (o as THREE.LineSegments).isLineSegments || o.renderOrder < -1e8) hide(o);
-    if (anc && m.isMesh) {
-      const id = o.userData.childId as string | undefined;
-      const keep = id ? focusIds.has(id) || anc.has(id) : o.parent === E.editGroup && S.editObject && focusIds.has(S.editObject.id);
-      if (!keep) hide(o);
-    }
-  });
+  if (S.editObject && S.editObject.vis === "visible" && (!isolate || focusIds.has(S.editObject.id))) take(S.editObject, M.nodeBox(S.editObject, S.editXform.off, S.editXform.rot, M.emptyBox()));
+  const tmp = new THREE.Scene();
+  tmp.background = new THREE.Color(0xffffff);
+  tmp.add(new THREE.AmbientLight(0xffffff, 0.62));
+  const l1 = new THREE.DirectionalLight(0xffffff, 0.78); l1.position.set(40, 150, 30); tmp.add(l1);
+  const l2 = new THREE.DirectionalLight(0xffffff, 0.16); l2.position.set(-6, 5, -7); tmp.add(l2);
+  const geo = boxFaceGeo(boxes, E.col, true);
+  if (geo) tmp.add(new THREE.Mesh(geo, E.matSurf));
   const oldSize = E.renderer.getSize(new THREE.Vector2());
-  const oldClip = E.renderer.clippingPlanes, oldShadow = E.renderer.shadowMap.enabled, oldBg = E.scene.background;
+  const oldClip = E.renderer.clippingPlanes, oldShadow = E.renderer.shadowMap.enabled;
   try {
-    E.scene.background = new THREE.Color(0xffffff); E.renderer.shadowMap.enabled = false;
+    E.renderer.shadowMap.enabled = false;
     const cutY = opts.cutY ?? (view === "top" ? 150 : undefined);
     E.renderer.clippingPlanes = cutY === undefined ? [] : [new THREE.Plane(new THREE.Vector3(0, -1, 0), cutY)];
-    E.renderer.setSize(size, size, false); E.renderer.render(E.scene, camera);
+    E.renderer.setSize(size, size, false); E.renderer.render(tmp, camera);
     const out = document.createElement("canvas"); out.width = out.height = size;
     const ctx = out.getContext("2d")!;
     ctx.drawImage(E.renderer.domElement, 0, 0, size, size);
@@ -252,9 +240,9 @@ export function renderView(view: string, opts: { focus?: string | string[]; isol
     if (opts.labels !== false) drawLabels(ctx, camera, size, objects);
     return Promise.resolve(out.toDataURL("image/png"));
   } finally {
+    geo?.dispose();
     E.renderer.setSize(oldSize.x, oldSize.y, false); E.renderer.clippingPlanes = oldClip;
-    E.renderer.shadowMap.enabled = oldShadow; E.scene.background = oldBg;
-    for (const o of hidden) o.visible = true;
+    E.renderer.shadowMap.enabled = oldShadow;
     E.renderer.render(E.scene, E.camera); E.wake();
   }
 }

@@ -208,11 +208,14 @@ try {
       const x = c.getContext("2d")!;
       x.drawImage(im, 0, 0);
       const d = x.getImageData(0, 0, c.width, c.height).data;
-      let n = 0;
+      let n = 0, other = 0;
       for (let i = 0; i < d.length; i += 4) {
-        if (d[i] < 248 || d[i + 1] < 248 || d[i + 2] < 248) n++;
+        if (d[i] < 248 || d[i + 1] < 248 || d[i + 2] < 248) {
+          n++;
+          if (!(d[i] >= d[i + 1] && d[i + 1] >= d[i + 2])) other++;
+        }
       }
-      return { w: im.width, h: im.height, colored: n };
+      return { w: im.width, h: im.height, colored: n, other };
     };
     const top = await stats(
       await v.render("top", { size: 256, grid: false, labels: false }),
@@ -390,6 +393,7 @@ try {
       pngH: top.h,
       colored: top.colored,
       isolatedColored: isolated.colored,
+      isolatedOther: isolated.other,
       editDiff,
     };
   }, office);
@@ -439,7 +443,7 @@ try {
     "agent views: outline(id) reports world coordinates",
   );
   check(
-    /(?:n79 "Door" \| n76 "Futon"|n76 "Futon" \| n79 "Door"): z gap 3/.test(
+    /(?:n79 "Door" \| n76 "Futon"|n76 "Futon" \| n79 "Door"): z gap 4/.test(
       agent.relations,
     ),
     "agent views: relations reports a known gap",
@@ -457,15 +461,15 @@ try {
     `agent views: render('top') returns a non-blank 256px PNG (${agent.colored} px)`,
   );
   check(
-    agent.isolatedColored > 100,
-    `agent views: isolate renders a nested node (${agent.isolatedColored} px)`,
+    agent.isolatedColored > 100 && agent.isolatedOther === 0,
+    `agent views: isolate renders only the nested node (${agent.isolatedColored} px, ${agent.isolatedOther} leaked)`,
   );
   check(
-    /n56/.test(agent.editDiff) && /moved/.test(agent.editDiff),
-    "agent views: edit returns a diff naming the moved node",
+    /n56/.test(agent.editDiff) && /→/.test(agent.editDiff),
+    "agent views: edit returns a diff naming the changed node",
   );
   check(
-    /n28/.test(agent.rotatedDiff) && /moved/.test(agent.rotatedDiff),
+    /n28/.test(agent.rotatedDiff) && /→/.test(agent.rotatedDiff),
     "agent views: diff tracks children under a rotated parent",
   );
   await d.close();
