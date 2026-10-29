@@ -1,19 +1,20 @@
 // Persistence. ser/de stay the pure (de)serialisers for a node tree — they are the
 // .voxelier.json format (io.ts), the undo snapshot form (history.ts) and the legacy
-// migration path — but the persisted document itself lives in the CRDT store
-// (crdt/store.ts), which scopes it per document and mirrors it to other tabs.
-// Choosing WHICH document to open belongs to crdt/docs.ts; this module only writes
-// whatever is currently open. save is debounced.
+// migration path. Documents themselves are one localStorage key each, so every
+// save and document switch is synchronous (no async handoff window).
 import { S } from "./state.ts";
-import { seedUid } from "./math.ts";
-import { amend, record, reset } from "./history.ts";
-import { commitLocal } from "./crdt/store.ts";
+import { peekUid, seedUid } from "./math.ts";
+import { amend, record } from "./history.ts";
+import { holdsLock } from "./lock.ts";
 import type { Node, ObjectNode, SceneNode, Vis } from "./types.ts";
 
-const LS_V11 = "voxelier-v11"; // pre-CRDT document: the whole tree as one JSON blob
+const LS_DOC = "voxelier-doc:"; // + document id -> { uid, root }
+const LS_V11 = "voxelier-v11"; // pre-document-library save: the whole tree
 const LS_UI = "voxelier-ui-v1"; // tree fold state — per-tab view state, not document
 
-// The on-disk / localStorage shape (compact field names), distinct from `Node`.
+export type DocMeta = { id: string; name: string; updated: number };
+
+// The on-disk / JSON shape (compact field names), distinct from `Node`.
 // A box serialises as the 7-tuple [x0,y0,z0,x1,y1,z1,colour].
 type SerBox = [number, number, number, number, number, number, number];
 type SerBase = {
@@ -72,66 +73,186 @@ export function de(d: SerNode): Node {
     } as ObjectNode
     : { type: "scene", ...b, children: d.c.map(de) } as SceneNode;
 }
+
+// ~5 MB per origin is the localStorage ceiling. If that is ever not enough, the
+// upgrade is IndexedDB, which brings back an async handoff before releasing a lock.
+function writeError(e: unknown): void {
+  console.error("save failed", e);
+  const quota = e instanceof DOMException &&
+    (e.name === "QuotaExceededError" || e.code === 22);
+  alert(
+    quota
+      ? "Could not save: the browser's storage quota is full (~5 MB per origin)."
+      : "Save failed: " + (e as Error).message,
+  );
+}
+
+export type StoredDocument =
+  | { kind: "missing" }
+  | { kind: "unreadable" }
+  | { kind: "ok"; root: SceneNode };
+
+// Distinguishes "no such key" from a present-but-unparseable record, so a bad
+// record is never seeded over.
+export function inspectDocument(id: string): StoredDocument {
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(LS_DOC + id);
+  } catch {
+    return { kind: "missing" };
+  }
+  if (raw === null) return { kind: "missing" };
+  try {
+    const root = sceneFromEnvelope(JSON.parse(raw));
+    return root ? { kind: "ok", root } : { kind: "unreadable" };
+  } catch {
+    return { kind: "unreadable" };
+  }
+}
+
+// O(localStorage keys) scan: a few dozen documents, so no shared index that two
+// tabs could lose entries from. If it ever matters, store metadata separately.
+export const listDocuments = (): DocMeta[] => {
+  const out: DocMeta[] = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith(LS_DOC)) continue;
+      try {
+        const d = JSON.parse(localStorage.getItem(key) || "");
+        if (!d?.root) continue; // unreadable records stay untouched/invisible
+        out.push({
+          id: key.slice(LS_DOC.length),
+          name: typeof d.name === "string" && d.name
+            ? d.name
+            : d.root.nm || "Project",
+          updated: Number(d.updated) || 0,
+        });
+      } catch { /* unreadable */ }
+    }
+  } catch { /* storage unavailable */ }
+  return out.sort((a, b) => b.updated - a.updated);
+};
+
+let saved: string | null = null; // root JSON of the last successful write
+let failed = false; // a write failed and the tree is still unsaved
+
+// Writes are refused unless this tab owns the document lock.
+export function writeDocument(id: string, root: SceneNode): boolean {
+  if (!holdsLock()) {
+    failed = true;
+    return false;
+  }
+  const rootJSON = JSON.stringify(ser(root));
+  const name = JSON.stringify(root.name || "Project");
+  try {
+    localStorage.setItem(
+      LS_DOC + id,
+      `{"uid":${peekUid()},"root":${rootJSON},"name":${name},"updated":${Date.now()}}`,
+    );
+    if (currentDocId() === id) saved = rootJSON;
+    failed = false;
+    return true;
+  } catch (e) {
+    failed = true;
+    writeError(e);
+    return false;
+  }
+}
+
+// Called only under the document's lock (current or withDocumentLock).
+export function deleteDocumentData(id: string): boolean {
+  if (!holdsLock()) {
+    failed = true;
+    return false;
+  }
+  try {
+    localStorage.removeItem(LS_DOC + id);
+    if (currentDocId() === id) saved = null;
+    return true;
+  } catch (e) {
+    failed = true;
+    writeError(e);
+    return false;
+  }
+}
+
+let docId: string | null = null;
+export const currentDocId = (): string | null => docId;
+export const setCurrentDocument = (id: string): void => {
+  docId = id;
+  saved = null; // a new document starts with no successful write yet
+  failed = false;
+};
+
 // Snapshotting (whole-document JSON for undo) and persistence both serialise the
 // model, so they're debounced together: a burst of edits collapses into a single
-// serialisation 250ms after the last change, keeping it off the interaction path.
-let saveT: number | undefined; // pending debounce timer (save -> flush)
+// serialisation 250ms after the last change.
+let saveT: number | undefined; // pending debounce timer
+export function hasUnsaved(): boolean {
+  if (saveT !== undefined || failed) return true;
+  return S.root !== null && saved !== JSON.stringify(ser(S.root));
+}
+
 function persistUI(): void {
   try {
     localStorage.setItem(LS_UI, JSON.stringify([...S.collapsed]));
   } catch (_) { /* quota / private mode */ }
 }
-export function flush(): void {
+
+export function flush(): boolean {
   clearTimeout(saveT);
   saveT = undefined;
-  // The undo stack still holds whole-document JSON snapshots — independent of the
-  // CRDT, and cheap to keep as-is. commitLocal reconciles the same tree into the
-  // Yjs document, which persists it and broadcasts the update to other tabs.
+  const id = currentDocId();
+  if (id === null || !holdsLock()) return false;
   record(JSON.stringify(ser(S.root))); // undo snapshot (no-op during restore)
-  commitLocal(S.root);
   persistUI();
+  return writeDocument(id, S.root);
 }
 // Persist a document whose GEOMETRY is unchanged — only the box decomposition
-// differs (the background repack). Folds into the CURRENT top undo snapshot
-// instead of recording a new step, so undo never needs an extra press to cross
-// an invisible representation change. With a real save pending, do nothing:
-// that flush will serialise (and record) this state along with the edit.
-export function flushAmend(): void {
-  if (saveT !== undefined) return;
+// differs (the background repack). Folds into the CURRENT top undo snapshot.
+export function flushAmend(): boolean {
+  if (saveT !== undefined) return true;
   amend(JSON.stringify(ser(S.root)));
-  commitLocal(S.root);
+  const id = currentDocId();
+  if (id === null || !holdsLock()) return false;
+  return writeDocument(id, S.root);
 }
 export function save(): void {
   clearTimeout(saveT);
   saveT = setTimeout(flush, 250);
 }
-// Deserialise a { uid, root } envelope into a tree: a .voxelier.json file, or a
-// legacy save. Returns null for anything without a root, so callers can branch on
-// a malformed file. This no longer installs anything — under the document library
-// an imported file becomes a NEW document (see crdt/docs.ts), not an overwrite of
-// whatever happens to be open.
+
+// Deserialise a { uid, root } envelope into a tree: a .voxelier.json file, a
+// stored document, or a legacy save. `seed:false` leaves the global uid counter
+// alone (imports seed it only once the new document is adopted).
+// Seed the counter past both the envelope's uid and every numeric id already in
+// the tree: imported files can carry a uid smaller than their own node ids.
+export function seedDocument(root: SceneNode, uid = 1): void {
+  let max = 0;
+  const walk = (n: Node): void => {
+    const m = /^n(\d+)/.exec(n.id);
+    if (m) max = Math.max(max, Number(m[1]));
+    if (n.type === "scene") n.children.forEach(walk);
+  };
+  walk(root);
+  seedUid(Math.max(uid, max + 1));
+}
+
 export function sceneFromEnvelope(
   d: { uid?: number; root?: SerNode; collapsed?: string[] } | null,
+  seed = true,
 ): SceneNode | null {
   if (!d || !d.root) return null;
-  seedUid(d.uid || 1);
-  return de(d.root) as SceneNode;
-}
-// Adopt a tree that arrived from another tab. The document is already up to date
-// (the store merged the peer's ops into it), so this only moves the editor's view
-// onto the merged result — deliberately leaving `collapsed` alone, since which
-// groups you have folded is your view of the scene, not part of it.
-export function adoptRemote(root: SceneNode): void {
-  S.root = root;
-  // A wholesale tree swap (another document, or a peer's edit) can't be replayed
-  // by the local snapshots; the caller flushes a fresh baseline right after.
-  reset();
+  const root = de(d.root) as SceneNode;
+  if (seed) seedDocument(root, d.uid || 1);
+  return root;
 }
 export const loadUI = (): string[] => {
   try {
     const v = JSON.parse(localStorage.getItem(LS_UI) as string);
     return Array.isArray(v) ? v : [];
-  } catch (_) {
+  } catch {
     return [];
   }
 };
@@ -143,7 +264,7 @@ export function readLegacy(): SceneNode | null {
     return sceneFromEnvelope(
       JSON.parse(localStorage.getItem(LS_V11) as string),
     );
-  } catch (_) {
+  } catch {
     return null;
   }
 }

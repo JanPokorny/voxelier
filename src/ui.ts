@@ -23,16 +23,17 @@ import {
 import { buildTree } from "./tree.ts";
 import { redo, undo } from "./history.ts";
 import { exportScene, importScene } from "./io.ts";
-import { rebuild } from "./render.ts";
-import { adoptRemote, flush } from "./persistence.ts";
+import { flush } from "./persistence.ts";
 import {
-  createDocument,
   deleteDocument,
   listDocuments,
+  newDocument,
+  open,
   openDocumentId,
-  tryOpenDocument,
-} from "./crdt/docs.ts";
-import type { DocMeta } from "./crdt/docs.ts";
+} from "./docs.ts";
+import type { DocMeta } from "./docs.ts";
+import { isReady } from "./lock.ts";
+import { settleEditor } from "./interaction.ts";
 import {
   clearSelection,
   copySelection3d,
@@ -41,7 +42,7 @@ import {
   pasteVox,
 } from "./select.ts";
 import { clipKind, getNodeClip, getVoxClip } from "./clipboard.ts";
-import type { Box3, Node, SceneNode, Tool } from "./types.ts";
+import type { Box3, Node, Tool } from "./types.ts";
 
 // glyph per voxel tool (also drives the tool-cursor follower in interaction.ts)
 export const TOOL_ICON: Record<Tool, string> = {
@@ -139,39 +140,19 @@ document.getElementById("btn-load")!.onclick = importScene;
 
 // ---- the document library ----
 // Documents have ids and a tab says which one it is showing in its URL, so this
-// panel is how you get between them. The store scopes storage and its cross-tab
-// channel per document, so two tabs on different documents never interact.
+// panel is how you get between them. Each document has its own storage key and
+// edit lock, so two tabs on different documents never interact.
 const docsBtn = document.getElementById("btn-docs") as HTMLButtonElement;
 const docsList = document.getElementById("docslist")!;
 const docNameEl = document.getElementById("docname")!;
-
-// Point the whole editor at a different scene. Same reset the import path needs,
-// so both go through here rather than drifting apart.
-export function adoptDocument(root: SceneNode): void {
-  adoptRemote(root);
-  S.collapsed = new Set(); // fold state belongs to the document you left
-  S.path = [root];
-  S.editObject = null;
-  S.sel3d = null;
-  S.selection.clear();
-  if (S.tool === "measure") S.tool = "view";
-  clearMeasure();
-  rebuild();
-  updateChrome();
-  frameView();
-  flush(); // baseline undo snapshot for the newly opened document
-}
 
 export function renderDocName(): void {
   docNameEl.textContent = S.root ? (S.root.name || "Project") : "Project";
 }
 
-async function renderDocsList(): Promise<void> {
+function renderDocsList(): void {
   const here = openDocumentId();
-  let metas: DocMeta[] = [];
-  try {
-    metas = await listDocuments();
-  } catch (_) { /* storage unavailable — the New button still works */ }
+  const metas: DocMeta[] = listDocuments();
   docsList.innerHTML = "";
   for (const m of metas) {
     const row = el("div", {
@@ -182,12 +163,12 @@ async function renderDocsList(): Promise<void> {
         className: "docopen",
         textContent: m.name || "Project",
         title: new Date(m.updated).toLocaleString(),
-        onclick: async () => {
+        onclick: () => {
           if (m.id === here) return;
-          const root = await tryOpenDocument(m.id);
-          if (root) adoptDocument(root);
-          await renderDocsList();
-          renderDocName();
+          settleEditor();
+          if (!flush()) return; // keep the departing document if it can't save
+          open(m.id);
+          renderDocsList();
         },
       }),
     );
@@ -202,18 +183,26 @@ async function renderDocsList(): Promise<void> {
           ) {
             return;
           }
-          await deleteDocument(m.id);
-          // Deleting the document you are looking at has to land somewhere, so
-          // fall through to whatever is left, or a fresh scene.
           if (m.id === here) {
-            const [next] = await listDocuments().catch(() => [] as DocMeta[]);
-            const root = next
-              ? await tryOpenDocument(next.id) ?? await createDocument()
-              : await createDocument();
-            adoptDocument(root);
+            settleEditor();
+            if (!flush()) return;
+          }
+          if (!await deleteDocument(m.id)) {
+            alert("Editing in another tab — cannot delete this document");
+            return;
+          }
+          // Deleting the document you are looking at has to land somewhere, so
+          // fall through to the newest one left, or a fresh scene.
+          if (m.id === here) {
+            const [next] = listDocuments();
+            if (next) open(next.id);
+            else {
+              const fresh = newDocument();
+              open(fresh.id, fresh.root);
+            }
             renderDocName();
           }
-          await renderDocsList();
+          renderDocsList();
         },
       }),
     );
@@ -223,21 +212,23 @@ async function renderDocsList(): Promise<void> {
     el("button", {
       className: "docnew",
       textContent: "＋ New document",
-      onclick: async () => {
-        adoptDocument(await createDocument());
+      onclick: () => {
+        settleEditor();
+        if (!flush()) return; // keep the departing document if it can't save
+        const fresh = newDocument();
+        open(fresh.id, fresh.root);
         renderDocName();
-        await renderDocsList();
+        renderDocsList();
       },
     }),
   );
 }
 
-docsBtn.onclick = async () => {
+docsBtn.onclick = () => {
   const show = docsList.hasAttribute("hidden");
   docsList.hidden = !show;
-  if (show) await renderDocsList();
+  if (show) renderDocsList();
 };
-
 
 // distinct colours used in the scene, most-used (by cell volume) first. Cached by
 // S.voxVer so it isn't recomputed on every chrome refresh.
@@ -443,6 +434,7 @@ function colorControl(): HTMLElement {
 }
 
 window.addEventListener("keydown", (e) => {
+  if (!isReady()) return; // another tab is editing, or this document is loading
   if ((e.target as HTMLElement).tagName === "INPUT") return;
   // ignore shortcuts mid-gesture: undo/redo (and delete/clipboard) serialize the
   // live model, which during a lifted-selection drag is in a transient

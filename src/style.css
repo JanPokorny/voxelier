@@ -300,7 +300,8 @@ h3 {
   flex: 1;
   background: var(--panel-2);
   border: 1px solid var(--line);
-  padding: 9px 6px; /* 12px text + 18px padding + 2px border = 32px, the tree rows' height */
+  padding: 9px
+    6px; /* 12px text + 18px padding + 2px border = 32px, the tree rows' height */
   font-size: 12px;
 }
 #iobar button:hover {
@@ -611,4 +612,28 @@ h3 {
   height: 1px;
   background: var(--line);
   margin: 4px 6px;
+}
+
+/* exclusive per-document editor lock: blocks the whole app until this tab owns
+   the document (clicking asks the current holder to hand it over) */
+#locked {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 0;
+  background: rgba(10, 12, 16, 0.84);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+#locked[hidden] {
+  display: none;
+}
+.docopen:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }

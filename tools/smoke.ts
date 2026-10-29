@@ -1,20 +1,20 @@
 // End-to-end smoke test for the built site: boots dist/ in a real browser and
 // checks the things unit tests can't reach.
 //
-// 1. The bundle boots at all. The CRDT layer runs before the first render, so a
-//    packaging fault takes the whole editor down rather than degrading — and only
-//    a real browser exercises the bundled, minified module graph.
-// 2. Cross-tab sync works. Two pages on the SAME document, an edit in one, and the
-//    other's scene tree has to follow — in both directions.
-// 3. Documents are isolated. Two pages on DIFFERENT documents must not see each
-//    other at all; before documents had ids, a single global storage slot and
-//    channel meant they merged and overwrote one another.
+// 1. The bundle boots at all. A packaging fault takes the whole editor down
+//    rather than degrading — only a real browser exercises the bundled graph.
+// 2. One document has one editing tab. A second tab is blocked (inert app), and
+//    clicking its backdrop hands the lock over without losing the first tab's
+//    last (still debounced) edit.
+// 3. Old-format records are left untouched, and unreadable library entries are
+//    disabled instead of being overwritten.
+// 4. Documents are isolated, and a free lock goes to the tab that asks for it.
 //
 // Usage: deno task build && deno task smoke
 // Set VOXELIER_CHROME to a Chromium binary if Playwright's own download is absent.
 import { chromium } from "npm:playwright@1.49.1";
 
-const PORT = 8231;
+const PORT = Number(Deno.env.get("VOXELIER_PORT") ?? 8231);
 const DIST = "dist";
 const TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8",
@@ -49,7 +49,6 @@ const browser = await chromium.launch(
     ? { executablePath: exe, args: ["--no-sandbox"] }
     : { args: ["--no-sandbox"] },
 );
-// one context so both pages share an origin, and therefore a BroadcastChannel
 const ctx = await browser.newContext();
 const errors: string[] = [];
 
@@ -57,121 +56,159 @@ const errors: string[] = [];
 type Page = any;
 const rows = (p: Page): Promise<number> =>
   p.$$eval(".trow", (r: unknown[]) => r.length);
+const locked = (p: Page): Promise<boolean> =>
+  p.evaluate(() => !(document.getElementById("locked") as HTMLElement).hidden);
+const inert = (p: Page): Promise<boolean> =>
+  p.evaluate(() => (document.getElementById("app") as HTMLElement).inert);
+const edit = (p: Page): Promise<void> =>
+  p.evaluate(() =>
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "n", bubbles: true }),
+    )
+  );
 
-// Poll rather than page.waitForSelector: Playwright drives that wait from a
-// requestAnimationFrame loop inside the page, and Chromium throttles rAF to a
-// standstill in a background tab — so it never resolves for the second page even
-// though the DOM is there. Evaluating directly has no such dependency.
-async function waitRows(
+// Poll rather than page.waitForSelector: Playwright drives those waits from a
+// requestAnimationFrame loop, which Chromium throttles in a background tab.
+async function waitFor(
   p: Page,
-  want: (n: number) => boolean,
+  fn: () => Promise<boolean>,
   ms = 8000,
-): Promise<number> {
+): Promise<boolean> {
   const until = Date.now() + ms;
   for (;;) {
-    const n = await rows(p);
-    if (want(n) || Date.now() > until) return n;
+    if (await fn()) return true;
+    if (Date.now() > until) return false;
     await p.waitForTimeout(100);
   }
 }
-
-// Add an object in `on` via the 'n' shortcut and wait for `peer` to catch up.
-// No selection is needed — createObject() targets the current context. The page
-// must be foregrounded for keyboard input to land, and 'n' both enters the new
-// object and opens an inline rename, so both are dismissed to leave the tab in a
-// clean state for the next round.
-async function addObject(on: Page, peer: Page, peerRows: number) {
-  await on.bringToFront();
-  await on.keyboard.press("Escape"); // leave any object editor left open
-  // Clicking a tree row both focuses the page (bringToFront alone does not
-  // reliably hand over keyboard focus, and the keypress is then silently dropped)
-  // and puts the editor in a known context. The inline rename that 'n' opens is
-  // left alone on purpose — dismissing it here made the NEXT tab's keypress flaky.
-  await on.click(".trow:not(.root)");
-  await on.keyboard.press("n");
-  const local = await waitRows(on, (n) => n === peerRows + 1);
-  if (local !== peerRows + 1) {
-    console.log(`  (note: the local edit itself did not land: ${local} rows)`);
-  }
-  return await waitRows(peer, (n) => n === peerRows + 1);
-}
+const waitRows = (p: Page, want: (n: number) => boolean, ms = 8000) =>
+  waitFor(p, async () => want(await rows(p)), ms)
+    .then(async () => await rows(p));
+const waitLocked = (p: Page, want: boolean, ms = 8000) =>
+  waitFor(p, async () => (await locked(p)) === want, ms);
 
 async function open(label: string, path = "/") {
   const page = await ctx.newPage();
   page.on("pageerror", (e: Error) => errors.push(`${label}: ${e.message}`));
   // Playwright auto-dismisses dialogs when nothing is listening, so an alert() is
-  // invisible unless captured — which is exactly how a broken share session once
-  // passed this test: the error was reported to the user and to nobody else.
+  // invisible unless captured — which is exactly how a broken import once passed
+  // this test: the error was reported to the user and to nobody else.
   page.on(
     "dialog",
     async (d: { message: () => string; dismiss: () => Promise<void> }) => {
-      errors.push(`${label} dialog: ${d.message()}`);
-      await d.dismiss();
+      const message = d.message();
+      if (!/quota|cannot delete/i.test(message)) {
+        errors.push(`${label} dialog: ${message}`);
+      }
+      await d.dismiss().catch(() => { /* page already closed */ });
     },
   );
   page.on("console", (m: { type: () => string; text: () => string }) => {
     const t = m.text();
-    if (m.type() === "error" && !t.includes("favicon")) {
+    if (
+      m.type() === "error" && !t.includes("favicon") && !/quota/i.test(t)
+    ) {
       errors.push(`${label} console: ${t}`);
     }
   });
   await page.goto(`http://localhost:${PORT}${path}`, {
     waitUntil: "domcontentloaded",
   });
-  // the tree only renders once the document is loaded or seeded, which is
-  // downstream of the whole CRDT layer — so getting any row at all is the boot
-  // assertion
-  await waitRows(page, (n) => n > 0);
   return page;
 }
+const openEditable = async (label: string, path = "/") => {
+  const page = await open(label, path);
+  await waitRows(page, (n) => n > 0);
+  await waitLocked(page, false);
+  return page;
+};
 
 try {
-  const a = await open("A");
+  const a = await openEditable("A");
   const seeded = await rows(a);
-  check(
-    seeded > 1,
-    `tab A boots and renders the seed scene (${seeded} rows)`,
-  );
+  check(seeded > 1, `tab A boots and renders the seed scene (${seeded} rows)`);
   check(
     await a.evaluate(() => /[#&]doc=[0-9a-z]+/.test(location.hash)),
     "the open document is addressed in the URL fragment",
   );
 
+  // ---- one editor per document ----
   const b = await open("B");
-  const before = await rows(b);
-  check(before === seeded, `tab B loads the same document (${before} rows)`);
-
-  const after = await addObject(a, b, before);
+  await waitLocked(b, true);
+  check(await inert(b), "tab B is locked out behind an inert app");
+  await b.bringToFront();
+  await b.keyboard.press("n"); // real shortcut, blocked by inert + readiness guard
+  await b.waitForTimeout(400);
+  check((await rows(b)) === 0, "the locked-out tab cannot edit");
+  const blocked = await b.evaluate(() => {
+    try {
+      (globalThis as any).voxelier.edit(() => {});
+      return "";
+    } catch (e) {
+      return (e as Error).message;
+    }
+  });
   check(
-    after === before + 1,
-    `tab B saw tab A's new object (${before} -> ${after} rows)`,
+    blocked === "document is open for editing in another tab",
+    "the locked-out agent API refuses mutations",
   );
 
-  // ...and back the other way, to prove the channel isn't one-directional
-  const backA = await addObject(b, a, after);
+  // A's last edit is still inside the 250 ms save debounce when B asks for the
+  // lock; the handoff must flush it before releasing.
+  await edit(a);
+  await b.evaluate(() =>
+    (document.getElementById("locked") as HTMLElement).click()
+  );
+  const firstLocked = await waitLocked(a, true);
+  const secondEditing = await waitLocked(b, false);
+  const handedRows = await waitRows(b, (n) => n === seeded + 1);
   check(
-    backA === after + 1,
-    `tab A saw tab B's new object (${after} -> ${backA} rows)`,
+    firstLocked && secondEditing && handedRows === seeded + 1,
+    `click hands over the lock with the pending edit saved (${
+      seeded
+    } -> ${handedRows})`,
+  );
+
+  // ---- handoff mid-gesture ----
+  // A lifted selection is carved out of the object. The handoff must stamp it
+  // back before flushing, or the geometry is lost.
+  const floorId = await b.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    const o = v.S.root.children.find((c: any) => c.name === "Floor");
+    const bx = o.boxes[0];
+    o.boxes = [];
+    v.S.editObject = o;
+    v.S.path = [v.S.root, o];
+    v.S.sel3d = {
+      region: { x0: bx.x0, y0: bx.y0, z0: bx.z0, x1: bx.x1, y1: bx.y1, z1: bx.z1 },
+      boxes: [bx],
+      lifted: true,
+    };
+    v.S.drag = { mode: "selmove", x: 0, y: 0, sx: 0, sy: 0 };
+    return o.id;
+  });
+  await a.evaluate(() =>
+    (document.getElementById("locked") as HTMLElement).click()
+  );
+  const gestureLocked = await waitLocked(b, true);
+  const gestureEditing = await waitLocked(a, false);
+  await waitRows(a, (n) => n === seeded + 1);
+  const restored = await a.evaluate((id: string) =>
+    (globalThis as any).voxelier.findById(id).boxes.length, floorId);
+  check(
+    gestureLocked && gestureEditing && restored === 1,
+    "handoff mid-drag settles a lifted selection back into the object",
   );
 
   // ---- document isolation ----
-  // A different document in a third tab. It gets its own storage slot and its own
-  // cross-tab channel, so nothing it does may reach A or B.
   const beforeIsolation = await rows(a);
-  const c = await open("C", "/#doc=zzzzzzzzzzzzzzzz");
+  const c = await openEditable("C", "/#doc=zzzzzzzzzzzzzzzz");
   const cSeed = await rows(c);
   check(cSeed > 1, `tab C seeded its own document (${cSeed} rows)`);
-  await c.bringToFront();
-  await c.keyboard.press("Escape");
-  await c.click(".trow:not(.root)");
-  await c.keyboard.press("n");
+  await edit(c);
   const cAfter = await waitRows(c, (n) => n === cSeed + 1);
-  check(
-    cAfter === cSeed + 1,
-    `tab C's own edit landed (${cSeed} -> ${cAfter})`,
-  );
-  // give any cross-talk the same window the sync checks above needed to arrive
-  await a.waitForTimeout(1500);
+  check(cAfter === cSeed + 1, `tab C's own edit landed (${cSeed} -> ${cAfter})`);
+  await a.waitForTimeout(600);
   const aStill = await rows(a);
   check(
     aStill === beforeIsolation,
@@ -179,17 +216,212 @@ try {
   );
   await c.close();
 
+  // ---- stale blocked tabs hold no lock request ----
+  // B and C are both blocked; only C clicks, so C must get the lock, not the
+  // tab that merely opened the document earlier.
+  const tId = "threetabs000000001";
+  const t1 = await openEditable("T1", `/#doc=${tId}`);
+  await t1.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    v.edit((root: any) => {
+      root.name = "ThreeTabs";
+    });
+  });
+  const t2 = await open("T2", `/#doc=${tId}`);
+  const t3 = await open("T3", `/#doc=${tId}`);
+  await waitLocked(t2, true);
+  await waitLocked(t3, true);
+  await t3.evaluate(() =>
+    (document.getElementById("locked") as HTMLElement).click()
+  );
+  const t3Editing = await waitLocked(t3, false);
+  const t1Locked = await waitLocked(t1, true);
+  const t2Locked = await waitLocked(t2, true);
+  check(
+    t3Editing && t1Locked && t2Locked,
+    "three tabs: the clicking tab takes over, not the older blocked tab",
+  );
+
+  // ---- deleting a document held elsewhere is refused ----
+  const dm = await openEditable("DM", "/#doc=manager000000001");
+  await dm.click("#btn-docs");
+  const deleteHeld = await dm.evaluate(async (id: string) => {
+    (window as any).confirm = () => true;
+    const row = [...document.querySelectorAll(".docrow")].find((r) =>
+      r.textContent?.includes("ThreeTabs")
+    );
+    (row?.querySelector(".docdel") as HTMLElement | null)?.click();
+    await new Promise((r) => setTimeout(r, 100));
+    return {
+      found: !!row,
+      exists: localStorage.getItem(`voxelier-doc:${id}`) !== null,
+    };
+  }, tId);
+  check(
+    deleteHeld.found && deleteHeld.exists,
+    "delete of a document held by another tab is refused",
+  );
+  await dm.close();
+
+  // ---- pagehide flushes a debounced edit ----
+  const ph = await openEditable("PH", "/#doc=pagehide00000001");
+  const pagehide = await ph.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    const before = v.S.root.children.length;
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "n", bubbles: true }),
+    );
+    window.dispatchEvent(new PageTransitionEvent("pagehide"));
+    const id = new URLSearchParams(location.hash.slice(1)).get("doc")!;
+    const stored = JSON.parse(localStorage.getItem(`voxelier-doc:${id}`)!);
+    return { before, after: stored.root.c.length };
+  });
+  check(
+    pagehide.after === pagehide.before + 1,
+    `pagehide flushes the pending edit (${
+      pagehide.before
+    } -> ${pagehide.after} children)`,
+  );
+  await ph.close();
+
+  // ---- mid-paint pagehide saves ----
+  const pp = await openEditable("PP", "/#doc=paint00000000001");
+  const painted = await pp.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    v.S.root.name = "Painted";
+    v.S.painting = true; // the model is already mutated, save waits for pointerup
+    window.dispatchEvent(new PageTransitionEvent("pagehide"));
+    const id = new URLSearchParams(location.hash.slice(1)).get("doc")!;
+    return JSON.parse(localStorage.getItem(`voxelier-doc:${id}`)!).root.nm;
+  });
+  check(painted === "Painted", "pagehide saves a mid-paint gesture");
+  await pp.close();
+
+  // ---- direct-API quota failure keeps the document dirty ----
+  const qt = await openEditable("QT", "/#doc=quota00000000001");
+  const quota = await qt.evaluate(() => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (key.startsWith("voxelier-doc:")) {
+        throw new DOMException("full", "QuotaExceededError");
+      }
+      return set.call(this, key, value);
+    };
+    const v = (globalThis as any).voxelier;
+    v.edit((root: any) => {
+      root.name = "quota-edit";
+    }); // its synchronous flush fails
+    const id = new URLSearchParams(location.hash.slice(1)).get("doc")!;
+    const stored = JSON.parse(localStorage.getItem(`voxelier-doc:${id}`)!);
+    const e = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(e);
+    return {
+      prompt: e.defaultPrevented,
+      stored: stored.root.nm,
+      live: v.S.root.name,
+    };
+  });
+  check(
+    quota.prompt && quota.stored !== quota.live,
+    "direct-API quota failure keeps the document dirty and prompts on unload",
+  );
+  await qt.close();
+
+  // ---- focused rename commits before handoff, then stops writing ----
+  const renameId = "renamehand00000001";
+  const rh = await openEditable("RH", `/#doc=${renameId}`);
+  const rx = await open("RX", `/#doc=${renameId}`);
+  await waitLocked(rx, true);
+  await rh.click(".trow.root", { button: "right" });
+  await rh.click(".ctxitem:has-text('Rename')");
+  await rh.fill(".nminput", "RenamedHandoff");
+  await rh.evaluate(() => {
+    const set = Storage.prototype.setItem;
+    (window as any).__docWrites = 0;
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (key.startsWith("voxelier-doc:")) (window as any).__docWrites++;
+      return set.call(this, key, value);
+    };
+  });
+  const renameFocused = await rh.evaluate(() =>
+    document.activeElement?.classList.contains("nminput") === true
+  );
+  await rx.evaluate(() =>
+    (document.getElementById("locked") as HTMLElement).click()
+  );
+  const renameHanded = await waitLocked(rx, false);
+  await rh.waitForTimeout(300);
+  const renameResult = await rh.evaluate(() =>
+    (window as any).__docWrites as number
+  );
+  const renamed = await rx.evaluate(() =>
+    (globalThis as any).voxelier.S.root.name
+  );
+  check(
+    renameFocused && renameHanded && renamed === "RenamedHandoff" &&
+      renameResult === 1,
+    "focused rename commits before handoff and writes no more after release",
+  );
+  await rh.close();
+  await rx.close();
+
+  // ---- two tabs on different documents both reach the library ----
+  const la = await openEditable("LA", "/#doc=liba00000000001");
+  const lb = await openEditable("LB", "/#doc=libb00000000001");
+  await la.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    v.edit((root: any) => {
+      root.name = "LibraryA";
+    });
+  });
+  await lb.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    v.edit((root: any) => {
+      root.name = "LibraryB";
+    });
+  });
+  await Promise.all([
+    la.evaluate(() => {
+      const v = (globalThis as any).voxelier;
+      v.edit((root: any) => {
+        root.name = "LibraryA2";
+      });
+    }),
+    lb.evaluate(() => {
+      const v = (globalThis as any).voxelier;
+      v.edit((root: any) => {
+        root.name = "LibraryB2";
+      });
+    }),
+  ]);
+  const lm = await openEditable("LM", "/#doc=libmgr000000001");
+  await lm.click("#btn-docs");
+  const bothListed = await waitFor(
+    lm,
+    () =>
+      lm.evaluate(() => {
+        const names = [...document.querySelectorAll(".docopen")].map((b) =>
+          b.textContent
+        );
+        return names.includes("LibraryA2") && names.includes("LibraryB2");
+      }),
+  );
+  check(
+    bothListed,
+    "two tabs on different documents both appear in the library",
+  );
+  await la.close();
+  await lb.close();
+  await lm.close();
+
   // ---- agent API ----
   // A browser-driving agent loads a document from a JSON envelope and mutates the
-  // live tree through edit(fn). Each successful edit is one undo step; a rejected
-  // edit restores its baseline without clobbering an uncommitted UI-side change.
-  const d = await open("D", "/#doc=agentapi00000000");
+  // live tree through edit(fn); the tab must own the lock first.
+  const d = await openEditable("D", "/#doc=agentapi00000000");
   const office = await Deno.readTextFile(
     "tools/fixtures/office.voxelier.json",
   );
-  // deno-lint-ignore no-explicit-any
   const agent = await d.evaluate(async (json: string) => {
-    // deno-lint-ignore no-explicit-any
     const v = (globalThis as any).voxelier;
     await v.load(json);
 
@@ -483,6 +715,173 @@ try {
     "agent views: diff tracks children under a rotated parent",
   );
   await d.close();
+
+  // ---- importing a smaller uid does not rewind the old document ----
+  const uidId = "uidold00000000001";
+  const uo = await openEditable("UO", `/#doc=${uidId}`);
+  const oldUid = await uo.evaluate(() =>
+    JSON.parse((globalThis as any).voxelier.exportJSON()).uid
+  );
+  await uo.evaluate(async (json: string) => {
+    await (globalThis as any).voxelier.load(json); // office envelope uid = 1
+  }, office);
+  const savedUid = await uo.evaluate((id: string) =>
+    JSON.parse(localStorage.getItem(`voxelier-doc:${id}`)!).uid, uidId);
+  const uo2 = await openEditable("UO2", `/#doc=${uidId}`);
+  const duplicate = await uo2.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    const seen = new Set<string>();
+    let dup: string | null = null;
+    const walk = (n: any) => {
+      if (seen.has(n.id)) dup = n.id;
+      seen.add(n.id);
+      if (n.type === "scene") n.children.forEach(walk);
+    };
+    walk(v.S.root);
+    const beforeIds = [...seen];
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "n", bubbles: true }),
+    );
+    seen.clear();
+    dup = null;
+    walk(v.S.root);
+    const added = [...seen].filter((id) => !beforeIds.includes(id));
+    return { dup, added };
+  });
+  check(
+    oldUid > 1 && savedUid === oldUid && duplicate.dup === null &&
+      duplicate.added.length === 1,
+    "a smaller import uid leaves the old document's counter and ids intact",
+  );
+  await uo.close();
+  await uo2.close();
+
+  // ---- load() mid-lift keeps the carved-out voxels ----
+  const liftId = "liftload000000001";
+  const ml = await openEditable("ML", `/#doc=${liftId}`);
+  const liftFloorId = await ml.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    const o = v.S.root.children.find((c: any) => c.name === "Floor");
+    const bx = o.boxes[0];
+    o.boxes = [];
+    v.S.editObject = o;
+    v.S.path = [v.S.root, o];
+    v.S.sel3d = {
+      region: { x0: bx.x0, y0: bx.y0, z0: bx.z0, x1: bx.x1, y1: bx.y1, z1: bx.z1 },
+      boxes: [bx],
+      lifted: true,
+    };
+    v.S.drag = { mode: "selmove", x: 0, y: 0, sx: 0, sy: 0 };
+    return o.id;
+  });
+  await ml.evaluate(async (json: string) => {
+    await (globalThis as any).voxelier.load(json); // settles the lift first
+  }, office);
+  const ml2 = await openEditable("ML2", `/#doc=${liftId}`);
+  const liftVoxels = await ml2.evaluate((id: string) =>
+    (globalThis as any).voxelier.findById(id).boxes.length, liftFloorId);
+  check(
+    liftVoxels === 1,
+    "load() during a lifted selection keeps the carved-out voxels",
+  );
+  await ml.close();
+  await ml2.close();
+
+  // ---- fast document switch ----
+  // Switching must flush the departing document before the new lock loads.
+  const targetId = "switchto000000001";
+  const target = await openEditable("TG", `/#doc=${targetId}`);
+  await target.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    v.edit((root: any) => {
+      root.name = "SwitchTarget";
+    });
+  });
+  await target.waitForTimeout(1200); // let the save and library metadata land
+  await target.close(); // release its lock before another tab opens it
+  await new Promise((r) => setTimeout(r, 200));
+
+  const fromId = "switchfrom000001";
+  const sw = await openEditable("SW", `/#doc=${fromId}`);
+  const swBase = await rows(sw);
+  await sw.click("#btn-docs");
+  const listed = await waitFor(
+    sw,
+    () =>
+      sw.evaluate(() =>
+        [...document.querySelectorAll(".docopen")].some((b) =>
+          b.textContent === "SwitchTarget"
+        )
+      ),
+  );
+  const editLanded = await sw.evaluate(() => {
+    const before = document.querySelectorAll(".trow").length;
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "n", bubbles: true }),
+    );
+    const after = document.querySelectorAll(".trow").length;
+    const row = [...document.querySelectorAll(".docopen")].find((b) =>
+      b.textContent === "SwitchTarget"
+    ) as HTMLButtonElement | undefined;
+    row?.click();
+    return !!row && after > before;
+  });
+  const switched = await waitFor(
+    sw,
+    () =>
+      sw.evaluate(
+        (id: string) => new RegExp(`[#&]doc=${id}`).test(location.hash),
+        targetId,
+      ),
+  );
+  const switchedEditing = await waitLocked(sw, false);
+  await sw.waitForTimeout(400);
+  const beforeUndo = await sw.evaluate(() =>
+    (globalThis as any).voxelier.exportJSON()
+  );
+  const afterUndo = await sw.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    v.undo();
+    return v.exportJSON();
+  });
+  const fromAgain = await openEditable("SW2", `/#doc=${fromId}`);
+  const fromRows = await rows(fromAgain);
+  check(
+    listed && editLanded,
+    "switch test setup: the departing edit and library row are live",
+  );
+  check(
+    fromRows === swBase + 1,
+    `fast document switch flushes the departing edit (${
+      swBase
+    } -> ${fromRows})`,
+  );
+  check(
+    switched && switchedEditing && beforeUndo === afterUndo,
+    "library open: undo stays in the newly opened document",
+  );
+
+  // ---- import/load baseline ----
+  const imp = await openEditable("IMP", "/#doc=importundo00001");
+  await imp.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    v.edit((root: any) => {
+      root.name = "before-load";
+    });
+  });
+  const loaded = await imp.evaluate(async (json: string) => {
+    const v = (globalThis as any).voxelier;
+    await v.load(json); // resolves only once the new document is owned
+    return v.exportJSON();
+  }, office);
+  const undone = await imp.evaluate(() => {
+    const v = (globalThis as any).voxelier;
+    v.undo();
+    return v.exportJSON();
+  });
+  check(undone === loaded, "load/import baseline survives undo");
+
+  for (const p of [a, b, t1, t2, t3, sw, fromAgain, imp]) await p.close();
 
   check(errors.length === 0, `no page errors (${errors.join("; ") || "none"})`);
 } finally {
