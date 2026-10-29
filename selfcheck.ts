@@ -14,7 +14,7 @@ import { addBox, buildIndex, eraseBox, fillBox } from "./src/boxes.ts";
 import { cutCorner, cutJob } from "./src/cutplane.ts";
 import { rigidRotateWorld } from "./src/shear.ts";
 import { boxFaceGeo } from "./src/mesh.ts";
-import { repackBoxes } from "./src/rebox.ts";
+import { carve, repackBoxes, voxelize } from "./src/rebox.ts";
 
 const toW = (cell: Vec, off: Vec, rot: number): Vec =>
   addv(rotY(cell, rot), off); // local -> world (locToW)
@@ -149,6 +149,39 @@ test("box algebra matches a voxel reference", () => {
       }
     }
   }
+});
+
+
+// The agent shape helpers: voxelize must equal a cell-by-cell reference map and
+// merge it into fewer boxes, and carve must remove exactly the cells its
+// predicate names (colour preserved).
+test("voxelize and carve match a voxel reference", () => {
+  const fn = (x: number, y: number, z: number): number | null =>
+    (x - 5) ** 2 + (z - 5) ** 2 <= 12 && y < 6
+      ? 0xabc
+      : x === -1 && z === 0 && y < 2
+      ? 0x123
+      : null;
+  const bounds = { x0: -2, y0: 0, z0: -2, x1: 12, y1: 8, z1: 12 };
+  const ref = new Map<number, number>();
+  eachCell(bounds, (x, y, z) => {
+    const c = fn(x, y, z);
+    if (c != null) ref.set(key(x, y, z), c);
+  });
+  const boxes = voxelize(fn, bounds);
+  const got = materialize(boxes, "voxelize");
+  assert(got.size === ref.size, `voxelize cell count ${got.size} != ${ref.size}`);
+  for (const [k, v] of ref) assert(got.get(k) === v, "voxelize colour mismatch");
+  assert(boxes.length < ref.size / 2, `voxelize did not merge (${boxes.length} boxes)`);
+  const cut = carve(boxes, (x, y, z) => (x + z) % 3 === 0);
+  const want = new Map<number, number>();
+  eachCell(bounds, (x, y, z) => {
+    const c = fn(x, y, z);
+    if (c != null && (x + z) % 3 !== 0) want.set(key(x, y, z), c);
+  });
+  const carved = materialize(cut, "carve");
+  assert(carved.size === want.size, `carve cell count ${carved.size} != ${want.size}`);
+  for (const [k, v] of want) assert(carved.get(k) === v, "carve colour mismatch");
 });
 
 // fillBox (the paint-bucket tool) must recolour exactly the face-connected

@@ -17,7 +17,79 @@
 //
 // This module is pure (no DOM / editor state), so selfcheck can exercise
 // repackBoxes headless; the caller persists an applied result (see navigation).
-import type { Box3, ObjectNode } from "./types.ts";
+import type { Box3, ObjectNode, Region } from "./types.ts";
+
+// Greedy voxel -> box mesher. fn returns a colour for an occupied integer cell
+// and null/undefined for an empty one. Runs along x, merges those runs along z,
+// then those slabs along y, so a solid volume becomes a handful of boxes rather
+// than one per cell.
+export function voxelize(
+  fn: (x: number, y: number, z: number) => number | null | undefined,
+  b: Region,
+): Box3[] {
+  if (![b.x0, b.y0, b.z0, b.x1, b.y1, b.z1].every(Number.isSafeInteger)) {
+    throw new Error("voxelize bounds must be safe integer cells");
+  }
+  type Run = { x0: number; x1: number; z0: number; z1: number; c: number };
+  const out: Box3[] = [];
+  let openY = new Map<string, Box3>(); // slabs still growing along y
+  for (let y = b.y0; y < b.y1; y++) {
+    const layer: Run[] = [];
+    let openZ = new Map<string, Run>(); // runs still growing along z
+    for (let z = b.z0; z < b.z1; z++) {
+      const runs: Run[] = [];
+      let cur: Run | null = null;
+      for (let x = b.x0; x < b.x1; x++) {
+        const c = fn(x, y, z);
+        if (cur && cur.c === c) cur.x1 = x + 1;
+        else {
+          if (cur && cur.c != null) runs.push(cur);
+          cur = c == null ? null : { x0: x, x1: x + 1, z0: z, z1: z + 1, c };
+        }
+      }
+      if (cur && cur.c != null) runs.push(cur);
+      const next = new Map<string, Run>();
+      for (const r of runs) {
+        const k = `${r.x0},${r.x1},${r.c}`;
+        const o = openZ.get(k);
+        if (o) {
+          o.z1 = z + 1;
+          openZ.delete(k);
+          next.set(k, o);
+        } else next.set(k, r);
+      }
+      layer.push(...openZ.values()); // these runs ended at the previous z
+      openZ = next;
+    }
+    layer.push(...openZ.values());
+    const nextY = new Map<string, Box3>();
+    for (const r of layer) {
+      const k = [r.x0, r.x1, r.z0, r.z1, r.c].join(",");
+      const o = openY.get(k);
+      if (o) {
+        o.y1 = y + 1;
+        openY.delete(k);
+        nextY.set(k, o);
+      } else nextY.set(k, { ...r, y0: y, y1: y + 1 });
+    }
+    out.push(...openY.values()); // these slabs ended at the previous y
+    openY = nextY;
+  }
+  out.push(...openY.values());
+  return out;
+}
+
+// Remove the cells where fn is true from a disjoint box list, then repack the
+// fragments. Voxelizes each input box separately (so a large world-space solid
+// is only sampled where it exists) and lets repackBoxes heal the seams.
+export function carve(
+  boxes: Box3[],
+  fn: (x: number, y: number, z: number) => boolean,
+): Box3[] {
+  const out: Box3[] = [];
+  for (const b of boxes) out.push(...voxelize((x, y, z) => fn(x, y, z) ? null : b.c, b));
+  return repackBoxes(out);
+}
 
 export function repackBoxes(boxes: Box3[]): Box3[] {
   if (!boxes.length) return [];

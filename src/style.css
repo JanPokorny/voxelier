@@ -148,6 +148,58 @@ button.active {
   overflow: hidden;
   pointer-events: none;
 }
+/* corner compass: the rose's north needle follows the camera's screen space;
+   pointer-events: none so orbiting over it still reaches the canvas */
+#compass {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: 62px;
+  height: 62px;
+  z-index: 5;
+  pointer-events: none;
+}
+.crose {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  will-change: transform;
+}
+.cn {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.crose.parallel .cn {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  transform: translateY(-50%);
+  text-align: center;
+  white-space: nowrap;
+}
+.crose.parallel .cneedle {
+  display: none;
+}
+.cneedle {
+  position: absolute;
+  left: 50%;
+  top: 13px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 12px solid #e08a8a;
+  transform: translateX(-50%);
+}
 /* glyph trailing the pointer to show the active voxel tool (edit mode) */
 #toolcursor {
   position: fixed;

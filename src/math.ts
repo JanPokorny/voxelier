@@ -3,7 +3,7 @@
 // Voxel cells pack into one integer key instead of a "x,y,z" string: 17 bits per
 // axis (signed, biased by 2^16) keeps |coord| < 65536 and the packed value below
 // 2^51, so a Map<int,int> stays exact and avoids per-cell string alloc/parsing.
-import type { Node, Rot, Vec, Xform } from "./types.ts";
+import type { Node, North, Rot, Vec, Xform } from "./types.ts";
 
 const VBIAS = 1 << 16, VSTRIDE = 1 << 17;
 export const key = (x: number, y: number, z: number): number =>
@@ -41,6 +41,36 @@ export const pathXform = (p: Node[]): Xform =>
   });
 export const hex = (v: number): string =>
   "#" + (v & 0xffffff).toString(16).padStart(6, "0");
+
+// Compass directions rotate with the document's north. The base mapping is
+// north = -z, east = +x; rotating that by the turn that carries -z to `north`
+// gives the other three. up/down are world ±y and unaffected by north.
+const BASE_DIR: Record<string, Vec> = {
+  n: { x: 0, y: 0, z: -1 },
+  e: { x: 1, y: 0, z: 0 },
+  s: { x: 0, y: 0, z: 1 },
+  w: { x: -1, y: 0, z: 0 },
+  up: { x: 0, y: 1, z: 0 },
+  down: { x: 0, y: -1, z: 0 },
+};
+const NORTH_TURN: Record<North, Rot> = { "-z": 0, "+x": 1, "+z": 2, "-x": 3 };
+// One unit direction from a compass name, an axis ("+x".."-z"), or up/down;
+// null when the string is neither.
+export function dirVec(d: string, north: North = "-z"): Vec | null {
+  const k = d.toLowerCase();
+  const base = Object.hasOwn(BASE_DIR, k) ? BASE_DIR[k] : null;
+  if (base) return rotY(base, NORTH_TURN[north]);
+  const sign = k[0] === "+" ? 1 : k[0] === "-" ? -1 : 0;
+  const axis: Record<string, Vec> = {
+    x: { x: sign, y: 0, z: 0 },
+    y: { x: 0, y: sign, z: 0 },
+    z: { x: 0, y: 0, z: sign },
+  };
+  return sign && Object.hasOwn(axis, k.slice(1)) ? axis[k.slice(1)] : null;
+}
+// The "+x".."-z" label of a unit axis vector.
+export const dirName = (v: Vec): string =>
+  v.x ? (v.x > 0 ? "+x" : "-x") : v.y ? (v.y > 0 ? "+y" : "-y") : (v.z > 0 ? "+z" : "-z");
 
 // round half away from zero (symmetric). Math.round rounds half toward +∞, so
 // rotation re-centring of an even×odd footprint (half-integer centre delta)

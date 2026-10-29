@@ -8,6 +8,7 @@ import type {
   Box,
   Box3,
   Node,
+  North,
   ObjectNode,
   Rot,
   SceneNode,
@@ -75,6 +76,9 @@ export function clone(n: Node): Node {
     ? { type: "object", ...base, boxes: n.boxes.map((b) => ({ ...b })) }
     : { type: "scene", ...base, children: n.children.map(clone) };
 }
+
+// The document's north (root scene only); "-z" when a file predates the field.
+export const northOf = (root: SceneNode = S.root): North => root.north ?? "-z";
 
 export const childById = (id: string): Node | undefined =>
   S.context.children.find((c) => c.id === id);
