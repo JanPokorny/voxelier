@@ -208,28 +208,18 @@ try {
       const x = c.getContext("2d")!;
       x.drawImage(im, 0, 0);
       const d = x.getImageData(0, 0, c.width, c.height).data;
-      let n = 0, other = 0;
+      let n = 0, blue = 0;
       for (let i = 0; i < d.length; i += 4) {
         if (d[i] < 248 || d[i + 1] < 248 || d[i + 2] < 248) {
           n++;
-          if (!(d[i] >= d[i + 1] && d[i + 1] >= d[i + 2])) other++;
+          if (d[i + 2] > d[i] && d[i + 2] > d[i + 1]) blue++;
         }
       }
-      return { w: im.width, h: im.height, colored: n, other };
+      return { w: im.width, h: im.height, colored: n, blue };
     };
     const top = await stats(
       await v.render("top", { size: 256, grid: false, labels: false }),
     );
-    const isolated = await stats(
-      await v.render("top", {
-        focus: ["n28"],
-        isolate: true,
-        size: 128,
-        grid: false,
-        labels: false,
-      }),
-    );
-
     const before = v.exportJSON();
     const start = v.worldBounds("n56");
     const node = v.findById("n56");
@@ -367,6 +357,24 @@ try {
     });
     v.undo();
 
+    // recolour a sibling blue: an isolate render must not leak it
+    v.edit(() => {
+      for (const b of v.findById("n69").boxes) b.c = 0x0000ff;
+    });
+    const isolated = await stats(
+      await v.render("top", {
+        focus: ["n28"],
+        isolate: true,
+        size: 256,
+        grid: false,
+        labels: false,
+      }),
+    );
+    const all = await stats(
+      await v.render("top", { size: 256, grid: false, labels: false }),
+    );
+    v.undo();
+
     return {
       before,
       undone,
@@ -393,7 +401,8 @@ try {
       pngH: top.h,
       colored: top.colored,
       isolatedColored: isolated.colored,
-      isolatedOther: isolated.other,
+      isolatedBlue: isolated.blue,
+      allBlue: all.blue,
       editDiff,
     };
   }, office);
@@ -461,8 +470,9 @@ try {
     `agent views: render('top') returns a non-blank 256px PNG (${agent.colored} px)`,
   );
   check(
-    agent.isolatedColored > 100 && agent.isolatedOther === 0,
-    `agent views: isolate renders only the nested node (${agent.isolatedColored} px, ${agent.isolatedOther} leaked)`,
+    agent.isolatedColored > 100 && agent.isolatedBlue < 10 &&
+      agent.allBlue > 100,
+    `agent views: isolate omits a blue sibling (${agent.isolatedBlue} isolated, ${agent.allBlue} all)`,
   );
   check(
     /n56/.test(agent.editDiff) && /→/.test(agent.editDiff),
