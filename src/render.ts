@@ -221,6 +221,7 @@ function meshCutGroup(boxes: Box3[]): void {
     clippingPlanes: planes,
   });
   const im = new THREE.Mesh(g, inside);
+  m.userData.cut = im.userData.cut = true; // shot cameras hide the cutaway shells
   scene.add(im);
   meshes.push(im);
   cutMats.push(surf, inside);

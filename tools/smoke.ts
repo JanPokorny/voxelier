@@ -192,6 +192,26 @@ try {
     // deno-lint-ignore no-explicit-any
     const v = (globalThis as any).voxelier;
     await v.load(json);
+
+    // read-only views: outline, relations, render
+    const outline = v.outline();
+    const relations = v.relations();
+    const tucked = v.relations(["n85", "n107"]);
+    const png = await v.render("top", { size: 256 });
+    const img = new Image();
+    img.src = png;
+    await img.decode();
+    const shot = document.createElement("canvas");
+    shot.width = img.width;
+    shot.height = img.height;
+    const g = shot.getContext("2d")!;
+    g.drawImage(img, 0, 0);
+    const px = g.getImageData(0, 0, img.width, img.height).data;
+    let colored = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i] < 248 || px[i + 1] < 248 || px[i + 2] < 248) colored++;
+    }
+
     const before = v.exportJSON();
     const start = v.worldBounds("n56");
     const node = v.findById("n56");
@@ -300,6 +320,11 @@ try {
       badView = (e as Error).message;
     }
 
+    const editDiff = v.edit(() => {
+      v.findById("n56").pos.x += 1;
+    });
+    v.undo();
+
     return {
       before,
       undone,
@@ -316,6 +341,13 @@ try {
       touching,
       hasTouching: v.findById(obj.id) !== null,
       badView,
+      outline,
+      relations,
+      tucked,
+      pngW: img.width,
+      pngH: img.height,
+      colored,
+      editDiff,
     };
   }, office);
   check(agent.grew, "agent API: edit changes world bounds");
@@ -353,6 +385,29 @@ try {
   check(
     /unknown view/.test(agent.badView),
     "agent API: view rejects inherited property names",
+  );
+  check(
+    agent.outline.includes('n9 S "Office"') &&
+      agent.outline.includes('n107 O "Chair"'),
+    "agent views: outline lists known ids",
+  );
+  check(
+    /(?:n79 "Door" \| n76 "Futon"|n76 "Futon" \| n79 "Door"): z gap 4/.test(
+      agent.relations,
+    ),
+    "agent views: relations reports a known gap",
+  );
+  check(
+    !/overlap/.test(agent.tucked),
+    "agent views: relations ignores a chair tucked under a table",
+  );
+  check(
+    agent.pngW === 256 && agent.pngH === 256 && agent.colored > 1000,
+    `agent views: render('top') returns a non-blank 256px PNG (${agent.colored} px)`,
+  );
+  check(
+    /n56/.test(agent.editDiff) && /moved/.test(agent.editDiff),
+    "agent views: edit returns a diff naming the moved node",
   );
   await d.close();
 

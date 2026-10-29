@@ -3,15 +3,7 @@
 // editor command uses, so each call is one undo step and persists.
 import { S } from "./state.ts";
 import { de, flush, ser } from "./persistence.ts";
-import {
-  boxEmpty,
-  emptyBox,
-  findById,
-  newObject,
-  newScene,
-  nodeBox,
-  worldXform,
-} from "./model.ts";
+import { findById, newObject, newScene } from "./model.ts";
 import { uid } from "./math.ts";
 import { boxesOverlap, clipBoxes } from "./boxes.ts";
 import { rebuild } from "./render.ts";
@@ -20,16 +12,15 @@ import { redo, undo } from "./history.ts";
 import { fitNode, frameBox, frameView } from "./camera.ts";
 import { cam, goal, wake } from "./scene-env.ts";
 import { openScene, sceneEnvelope } from "./io.ts";
+import {
+  diff,
+  outline,
+  relations,
+  renderView,
+  worldBounds,
+} from "./agent-views.ts";
 import { clearMeasure } from "./measure.ts";
 import type { Node, SceneNode } from "./types.ts";
-
-function worldBounds(id?: string) {
-  const node = id ? findById(id) : S.root;
-  if (!node) throw new Error(`unknown node id: ${id}`);
-  const w = worldXform(node);
-  const b = nodeBox(node, w.off, w.rot, emptyBox());
-  return boxEmpty(b) ? null : b;
-}
 
 // One walk: node identity and transform, box validity, and the per-object
 // disjointness check. The overlap scan is O(n²) per object — fine for
@@ -115,7 +106,7 @@ function resync(): void {
 }
 
 let editing = false;
-function edit(fn: (root: SceneNode) => void): void {
+function edit(fn: (root: SceneNode) => void): string {
   // a gesture owns transient state (a lifted selection is carved out of the
   // object) that must not be snapshotted; a nested edit would too
   if (editing || S.drag || S.painting) {
@@ -138,6 +129,7 @@ function edit(fn: (root: SceneNode) => void): void {
   } finally {
     editing = false;
   }
+  return diff(base);
 }
 
 const VIEWS: Record<string, [number, number]> = {
@@ -162,9 +154,9 @@ const help = {
   nodes:
     "S.root is a scene: {type:'scene', id, name, pos, rot, vis, children}. Objects add boxes: Box3[] = {x0,y0,z0,x1,y1,z1,c}, c is 0xRRGGBB. pos is an integer cell offset in the parent frame; rot is 90-degree Y turns 0..3; vis is 'visible'|'deemphasized'|'hidden'. Boxes need no ids; nodes do, and ids must be unique — mint them with uid(), or create nodes with newObject()/newScene(name). Boxes inside one object must be disjoint.",
   api:
-    "S, ser(node), de(serNode), findById(id), worldBounds(id?) -> Box|null in world cells (id omitted = root), load(json) -> Promise, exportJSON(), edit(fn), undo(), redo(), frameView(), fitNode(node), frameBox(box), view('iso'|'top'|'front'|'side'), uid(), newObject(), newScene(name?), help.",
+    "S, ser(node), de(serNode), findById(id), worldBounds(id?) -> Box|null in world cells (id omitted = root), load(json) -> Promise, exportJSON(), edit(fn) -> compact diff, undo(), redo(), frameView(), fitNode(node), frameBox(box), view('iso'|'top'|'front'|'side'), outline(id?, {depth=2, hidden=false}), relations(ids?, {within=60}), render('top'|'front'|'side'|'iso', {focus, isolate, labels, grid, size=900, cutY}) -> Promise<PNG dataURL>, diff(before), uid(), newObject(), newScene(name?), help.",
   edit:
-    "edit(root => { ... }) mutates the live tree. It flushes any pending UI save, snapshots the document, runs fn with S.root, then validates. On success it rebuilds, records one undo step and persists; on an invalid result (missing or duplicate node ids, non-integer positions, empty/inverted or non-integer or overlapping boxes) or a thrown error it restores the snapshot and rethrows. Node references go stale after undo, load or a rejected edit — look them up again inside fn.",
+    "edit(root => { ... }) mutates the live tree. It flushes any pending UI save, snapshots the document, runs fn with S.root, then validates. On success it rebuilds, records one undo step, persists, and returns a compact diff of added/removed/moved/resized/rotated/visibility changes; on an invalid result (missing or duplicate node ids, non-integer positions, empty/inverted or non-integer or overlapping boxes) or a thrown error it restores the snapshot and rethrows. Node references go stale after undo, load or a rejected edit — look them up again inside fn.",
   example:
     "await voxelier.load(json); voxelier.edit(() => { const o = voxelier.findById('n56'); o.boxes.push({x0:0,y0:0,z0:0,x1:2,y1:2,z1:2,c:0xff0000}); }); voxelier.worldBounds('n56');",
 };
@@ -181,6 +173,10 @@ const api = {
   load: openScene,
   exportJSON: sceneEnvelope,
   edit,
+  diff,
+  outline,
+  relations,
+  render: renderView,
   undo,
   redo,
   frameView,
