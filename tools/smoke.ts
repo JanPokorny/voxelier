@@ -226,6 +226,25 @@ try {
     }
     const afterReject = v.exportJSON();
 
+    let threw = "";
+    try {
+      v.edit(() => {
+        throw new Error("boom");
+      });
+    } catch (e) {
+      threw = (e as Error).message;
+    }
+
+    let badPos = "";
+    try {
+      v.edit(() => {
+        v.S.root.children[0].pos = null;
+      });
+    } catch (e) {
+      badPos = (e as Error).message;
+    }
+    const afterErrors = v.exportJSON();
+
     let duplicate = "";
     try {
       v.edit(() => {
@@ -286,6 +305,9 @@ try {
       undone,
       uiBefore,
       afterReject,
+      afterErrors,
+      threw,
+      badPos,
       grew: grown.max.x > start.max.x,
       overlap,
       duplicate,
@@ -305,6 +327,15 @@ try {
   check(
     agent.afterReject === agent.uiBefore,
     "agent API: rejected edit preserves an uncommitted UI-side change",
+  );
+  check(
+    agent.afterErrors === agent.uiBefore,
+    "agent API: failed edits leave the document untouched",
+  );
+  check(/boom/.test(agent.threw), "agent API: edit rethrows an error from fn");
+  check(
+    /position/.test(agent.badPos),
+    "agent API: edit rejects invalid node positions",
   );
   check(
     /duplicate/.test(agent.duplicate),
