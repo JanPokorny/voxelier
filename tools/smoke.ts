@@ -179,6 +179,64 @@ try {
   );
   await c.close();
 
+  // ---- agent API ----
+  // A browser-driving agent loads a document from a JSON envelope, mutates the
+  // live tree, and commits. The commit is one undo step and rejects the
+  // disjoint-boxes invariant, restoring the last committed state.
+  const d = await open("D", "/#doc=agentapi00000000");
+  const office = await Deno.readTextFile(
+    "tools/fixtures/office.voxelier.json",
+  );
+  // deno-lint-ignore no-explicit-any
+  const agent = await d.evaluate(async (json: string) => {
+    // deno-lint-ignore no-explicit-any
+    const v = (globalThis as any).voxelier;
+    await v.load(json);
+    const before = v.exportJSON();
+    const start = v.worldBounds("n56");
+    const node = v.findById("n56");
+    const x = node.boxes[0].x1 + 5;
+    node.boxes.push({
+      x0: x,
+      y0: 0,
+      z0: 0,
+      x1: x + 2,
+      y1: 2,
+      z1: 2,
+      c: 0xff0000,
+    });
+    v.commit();
+    const grown = v.worldBounds("n56");
+    v.undo();
+    const undone = v.exportJSON();
+    const overlapNode = v.findById("n56");
+    overlapNode.boxes.push({ ...overlapNode.boxes[0] });
+    let rejected = "";
+    try {
+      v.commit();
+    } catch (e) {
+      rejected = (e as Error).message;
+    }
+    return {
+      before,
+      undone,
+      restored: v.exportJSON(),
+      grew: grown.max.x > start.max.x,
+      rejected,
+    };
+  }, office);
+  check(agent.grew, "agent API: commit changes world bounds");
+  check(agent.before === agent.undone, "agent API: undo restores the document");
+  check(
+    /overlap/.test(agent.rejected),
+    "agent API: commit rejects overlapping boxes",
+  );
+  check(
+    agent.restored === agent.before,
+    "agent API: rejected commit restores the last committed state",
+  );
+  await d.close();
+
   check(errors.length === 0, `no page errors (${errors.join("; ") || "none"})`);
 } finally {
   await browser.close();

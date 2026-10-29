@@ -11,12 +11,16 @@ import { updateChrome } from "./ui.ts";
 import { frameView } from "./camera.ts";
 import { clearMeasure } from "./measure.ts";
 
-export function exportScene(): void {
-  const data = JSON.stringify({
+export function sceneEnvelope(): string {
+  return JSON.stringify({
     uid: peekUid(),
     root: ser(S.root),
     collapsed: [...S.collapsed],
   });
+}
+
+export function exportScene(): void {
+  const data = sceneEnvelope();
   const url = URL.createObjectURL(
     new Blob([data], { type: "application/json" }),
   );
@@ -33,6 +37,26 @@ export function exportScene(): void {
   URL.revokeObjectURL(url);
 }
 
+export async function openScene(json: string): Promise<void> {
+  const tree = sceneFromEnvelope(JSON.parse(json));
+  if (!tree) throw new Error("not a Voxelier scene file");
+  // An imported file joins the library as its own document rather than
+  // overwriting the open scene — and other tabs on other documents are
+  // unaffected, because the new document has its own scope.
+  S.root = await createDocument(tree);
+  S.collapsed = new Set();
+  S.path = [S.root];
+  S.editObject = null;
+  S.sel3d = null;
+  S.selection.clear();
+  if (S.tool === "measure") S.tool = "view"; // leave the measure tool for the new scene
+  clearMeasure(); // discard the live reading from the old one
+  rebuild();
+  updateChrome();
+  frameView();
+  flush(); // synchronous baseline undo snapshot for the imported scene
+}
+
 export function importScene(): void {
   const inp = document.createElement("input");
   inp.type = "file";
@@ -43,23 +67,7 @@ export function importScene(): void {
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        const tree = sceneFromEnvelope(JSON.parse(reader.result as string));
-        if (!tree) throw new Error("not a Voxelier scene file");
-        // An imported file joins the library as its own document rather than
-        // overwriting the open scene — and other tabs on other documents are
-        // unaffected, because the new document has its own scope.
-        S.root = await createDocument(tree);
-        S.collapsed = new Set();
-        S.path = [S.root];
-        S.editObject = null;
-        S.sel3d = null;
-        S.selection.clear();
-        if (S.tool === "measure") S.tool = "view"; // leave the measure tool for the new scene
-        clearMeasure(); // discard the live reading from the old one
-        rebuild();
-        updateChrome();
-        frameView();
-        flush(); // synchronous baseline undo snapshot for the imported scene
+        await openScene(reader.result as string);
       } catch (e) {
         alert("Import failed: " + (e as Error).message);
       }

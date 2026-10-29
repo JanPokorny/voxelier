@@ -21,6 +21,7 @@ import { adoptRemote, flush, loadUI, readLegacy } from "./persistence.ts";
 import { setRemoteHandler, theDoc } from "./crdt/store.ts";
 import { bootDocument } from "./crdt/docs.ts";
 import { build } from "./crdt/doc.ts";
+import { installAgentApi } from "./agent-api.ts";
 import "./interaction.ts"; // attaches canvas pointer/wheel/dblclick listeners
 
 // On-demand rendering: draw only while the camera is still easing toward its
@@ -136,6 +137,7 @@ async function start(): Promise<void> {
   updateChrome();
   frameView();
   flush(); // synchronous baseline undo snapshot
+  installAgentApi();
   measure(); // seed the viewport cache before the first reconcile/render
   tick(); // start the on-demand render loop
 }
