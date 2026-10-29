@@ -23,25 +23,28 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Skip building on a PR close event — we only need the cleanup step below.
-      - uses: denoland/setup-deno@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: github.event.action != 'closed'
         with:
-          deno-version: v2.x
+          bun-version: 1.4.4
 
-      # `deno bundle` (esbuild under the hood) bundles src/ + three from the
-      # src/index.html entrypoint into a self-contained dist/ (HTML + hashed
-      # JS/CSS, no runtime/CDN dependency)
+      - name: Install dependencies
+        if: github.event.action != 'closed'
+        run: bun install --frozen-lockfile
+
+      # `bun build` bundles src/ + three from the src/index.html entrypoint into
+      # a self-contained dist/ (HTML + hashed JS/CSS, no runtime/CDN dependency)
       - name: Build site
         if: github.event.action != 'closed'
-        run: deno task build
+        run: bun run build
 
       # main -> gh-pages root (keep any existing PR previews intact)
       - name: Deploy production
         if: github.event_name == 'push'
-        uses: JamesIves/github-pages-deploy-action@v4
+        uses: JamesIves/github-pages-deploy-action@fa24774553152dd7873cd16ebd8d959b010c5445 # v4.9.0
         with:
           branch: gh-pages
           folder: dist
@@ -51,7 +54,7 @@ jobs:
       # pull_request -> gh-pages/pr-preview/pr-<N>/ ; auto-removed when PR closes
       - name: Deploy PR preview
         if: github.event_name == 'pull_request'
-        uses: rossjrw/pr-preview-action@v1
+        uses: rossjrw/pr-preview-action@873417d2df72380da1f3978378fb58560bcde976 # v1.8.2
         with:
           source-dir: dist
           preview-branch: gh-pages

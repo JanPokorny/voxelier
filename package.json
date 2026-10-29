@@ -1,0 +1,21 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "bun build ./src/index.html --minify --outdir dist",
+    "build": "bun run bundle && bun tools/postbuild.ts",
+    "dev": "bun tools/postbuild.ts && bun run bundle --watch",
+    "smoke": "bun tools/smoke.ts",
+    "check": "tsc --noEmit",
+    "test": "bun test ./selfcheck.ts"
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.0",
+    "@types/three": "0.160.0",
+    "playwright": "1.49.1",
+    "typescript": "5.9.3"
+  }
+}

@@ -10,11 +10,13 @@
 //    disabled instead of being overwritten.
 // 4. Documents are isolated, and a free lock goes to the tab that asks for it.
 //
-// Usage: deno task build && deno task smoke
+// Usage: bun run build && bun run smoke
 // Set VOXELIER_CHROME to a Chromium binary if Playwright's own download is absent.
-import { chromium } from "npm:playwright@1.49.1";
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { chromium } from "playwright";
 
-const PORT = Number(Deno.env.get("VOXELIER_PORT") ?? 8231);
+const PORT = Number(process.env.VOXELIER_PORT ?? 8231);
 const DIST = "dist";
 const TYPES: Record<string, string> = {
   html: "text/html; charset=utf-8",
@@ -22,20 +24,25 @@ const TYPES: Record<string, string> = {
   css: "text/css; charset=utf-8",
 };
 
-const server = Deno.serve({ port: PORT, onListen: () => {} }, async (req) => {
-  const p = new URL(req.url).pathname;
-  if (p === "/favicon.ico") return new Response(null, { status: 204 });
+const server = createServer(async (req, res) => {
+  const p = new URL(req.url ?? "/", "http://localhost").pathname;
+  if (p === "/favicon.ico") {
+    res.writeHead(204).end();
+    return;
+  }
   const file = p === "/" ? "/index.html" : p;
+  const ext = file.split(".").pop() ?? "";
   try {
-    const body = await Deno.readFile(`${DIST}${file}`);
-    const ext = file.split(".").pop() ?? "";
-    return new Response(body, {
-      headers: { "content-type": TYPES[ext] ?? "application/octet-stream" },
+    const body = await readFile(`${DIST}${file}`);
+    res.writeHead(200, {
+      "content-type": TYPES[ext] ?? "application/octet-stream",
     });
+    res.end(body);
   } catch {
-    return new Response("not found", { status: 404 });
+    res.writeHead(404).end("not found");
   }
 });
+await new Promise<void>((resolve) => server.listen(PORT, resolve));
 
 const fail: string[] = [];
 const check = (ok: boolean, what: string) => {
@@ -43,7 +50,7 @@ const check = (ok: boolean, what: string) => {
   if (!ok) fail.push(what);
 };
 
-const exe = Deno.env.get("VOXELIER_CHROME");
+const exe = process.env.VOXELIER_CHROME;
 const browser = await chromium.launch(
   exe
     ? { executablePath: exe, args: ["--no-sandbox"] }
@@ -52,7 +59,6 @@ const browser = await chromium.launch(
 const ctx = await browser.newContext();
 const errors: string[] = [];
 
-// deno-lint-ignore no-explicit-any
 type Page = any;
 const rows = (p: Page): Promise<number> =>
   p.$$eval(".trow", (r: unknown[]) => r.length);
@@ -418,9 +424,7 @@ try {
   // A browser-driving agent loads a document from a JSON envelope and mutates the
   // live tree through edit(fn); the tab must own the lock first.
   const d = await openEditable("D", "/#doc=agentapi00000000");
-  const office = await Deno.readTextFile(
-    "tools/fixtures/office.voxelier.json",
-  );
+  const office = await readFile("tools/fixtures/office.voxelier.json", "utf8");
   const agent = await d.evaluate(async (json: string) => {
     const v = (globalThis as any).voxelier;
     await v.load(json);
@@ -886,11 +890,11 @@ try {
   check(errors.length === 0, `no page errors (${errors.join("; ") || "none"})`);
 } finally {
   await browser.close();
-  await server.shutdown();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
 if (fail.length) {
   console.error(`\nsmoke: ${fail.length} check(s) failed`);
-  Deno.exit(1);
+  process.exit(1);
 }
 console.log("\nsmoke: all checks passed");

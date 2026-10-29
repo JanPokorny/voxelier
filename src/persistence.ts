@@ -188,7 +188,7 @@ export const setCurrentDocument = (id: string): void => {
 // Snapshotting (whole-document JSON for undo) and persistence both serialise the
 // model, so they're debounced together: a burst of edits collapses into a single
 // serialisation 250ms after the last change.
-let saveT: number | undefined; // pending debounce timer
+let saveT: ReturnType<typeof setTimeout> | undefined; // pending debounce timer
 export function hasUnsaved(): boolean {
   if (saveT !== undefined || failed) return true;
   return S.root !== null && saved !== JSON.stringify(ser(S.root));

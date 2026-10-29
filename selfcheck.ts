@@ -1,11 +1,12 @@
-// Self-check (`deno test`) for the coordinate math the editor's voxel placement
+// Self-check (`bun run test`) for the coordinate math the editor's voxel placement
 // relies on. It imports the real rotY/addv from src/math.ts (both pure, no
 // three.js) and re-derives the world<->object-local transform here (the real
 // locToW/localGroundCell pull in three.js + global state, so they can't be
 // imported) to assert rotY is its own inverse under a negated rotation — the
 // property those two functions are built on. If rotY's rotation or the inverse
 // convention breaks, placement silently lands on the wrong cell — this fails loudly.
-import { assert } from "@std/assert";
+import assert from "node:assert/strict";
+import { test } from "node:test";
 import * as THREE from "three";
 import type { Box3, Region, Vec } from "./src/types.ts";
 import { addv, key, rotY } from "./src/math.ts";
@@ -55,7 +56,7 @@ const materialize = (boxes: Box3[], what: string): Map<number, number> => {
   return m;
 };
 
-Deno.test("voxel placement round-trip", () => {
+test("voxel placement round-trip", () => {
   // independent oracle: rotY must produce these exact 90°-step rotations. The
   // round-trip below only proves rotY(·,-r) inverts rotY(·,r), which a wrong but
   // self-inverse rotation (e.g. a chirality flip) would also satisfy — so pin the
@@ -102,7 +103,7 @@ Deno.test("voxel placement round-trip", () => {
 // disjoint and exactly equal (occupancy + colour) to the cells they'd touch, and
 // the grid index must agree with the reference voxel map. Brute-forced against a
 // reference voxel map over a stream of random ops.
-Deno.test("box algebra matches a voxel reference", () => {
+test("box algebra matches a voxel reference", () => {
   const N = 12;
   const ri = mkRnd(12345);
   const randRegion = (): Region => {
@@ -153,7 +154,7 @@ Deno.test("box algebra matches a voxel reference", () => {
 // fillBox (the paint-bucket tool) must recolour exactly the face-connected
 // same-colour region of the seed cell and nothing else. Brute-forced against a
 // cell-level flood-fill reference over random multi-colour box stacks.
-Deno.test("fillBox matches a cell-level flood fill", () => {
+test("fillBox matches a cell-level flood fill", () => {
   const N = 10;
   const ri = mkRnd(999);
   const NB = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [
@@ -229,7 +230,7 @@ Deno.test("fillBox matches a cell-level flood fill", () => {
 // a bijection of the cell grid: it must keep the box set disjoint and preserve
 // the exact voxel count at every 15° step, with no holes or doubled cells.
 // Quarter-turns (90/180/270) must additionally reproduce the exact rotY pose.
-Deno.test("shear rotation is a hole-free, count-preserving bijection", () => {
+test("shear rotation is a hole-free, count-preserving bijection", () => {
   const count = (bs: Box3[]) =>
     bs.reduce(
       (n, b) => n + (b.x1 - b.x0) * (b.y1 - b.y0) * (b.z1 - b.z0),
@@ -321,7 +322,7 @@ Deno.test("shear rotation is a hole-free, count-preserving bijection", () => {
 // faces — no more (doubled/overlapping quads) and no less (holes). Checked
 // against a brute-force cell-occupancy reference over random add/erase streams,
 // with AO both on (rim-banded quads) and off (one quad per exposed rectangle).
-Deno.test("mesher area matches exposed cell faces", () => {
+test("mesher area matches exposed cell faces", () => {
   const ri = mkRnd(777);
   const cols = new Map<number, THREE.Color>();
   const colorOf = (v: number): THREE.Color => {
@@ -403,7 +404,7 @@ Deno.test("mesher area matches exposed cell faces", () => {
 // addBox's face-merge (absorb): re-adding the erased cell of a large box must
 // heal it back into exactly one box, not leave the six carve fragments — and
 // stacking exactly-abutting same-colour rows must coalesce instead of piling up.
-Deno.test("addBox merges exactly-abutting same-colour boxes", () => {
+test("addBox merges exactly-abutting same-colour boxes", () => {
   const big: Box3 = { x0: 0, y0: 0, z0: 0, x1: 10, y1: 8, z1: 6, c: 1 };
   const cell: Region = { x0: 4, y0: 3, z0: 2, x1: 5, y1: 4, z1: 3 };
   const carved = eraseBox([big], cell);
@@ -437,7 +438,7 @@ Deno.test("addBox merges exactly-abutting same-colour boxes", () => {
 // The background repacker must preserve occupancy + colour exactly and never
 // return more boxes than the greedy baseline gives it room for. Fuzzed against
 // random erase-fragmented stacks, plus a known heavy-fragmentation case.
-Deno.test("repackBoxes preserves cells and reduces fragmentation", () => {
+test("repackBoxes preserves cells and reduces fragmentation", () => {
   const ri = mkRnd(31337);
   const N = 12;
   for (let trial = 0; trial < 6; trial++) {
@@ -521,7 +522,7 @@ Deno.test("repackBoxes preserves cells and reduces fragmentation", () => {
 // A hollow 20x20 room of 2-thick walls (y 0..10) with a block inside, viewed
 // down the +x+y+z diagonal. The volume-optimal cuts must clear the block from
 // every kept wall point while keeping the far shell.
-Deno.test("cutaway clears interior content, keeps the far shell", () => {
+test("cutaway clears interior content, keeps the far shell", () => {
   const s3 = 1 / Math.sqrt(3);
   const k = { x: s3, y: s3, z: s3 }; // unit view axis, pointing at the camera
   const wall = (x0: number, z0: number, x1: number, z1: number): Box3 => ({
@@ -566,7 +567,7 @@ Deno.test("cutaway clears interior content, keeps the far shell", () => {
     }
   }
 });
-Deno.test("cutaway: no cut when the group fronts nothing", () => {
+test("cutaway: no cut when the group fronts nothing", () => {
   const s3 = 1 / Math.sqrt(3);
   const k = { x: s3, y: s3, z: s3 };
   const walls: Box3[] = [
@@ -598,7 +599,7 @@ Deno.test("cutaway: no cut when the group fronts nothing", () => {
 // the walls must not erase them, but the near walls do front the interior
 // floor surface - so they drop whole while the far shell survives, and
 // straight top-down (where the walls front no floor at all) nothing is cut.
-Deno.test("cutaway: a visible floor opens the room, contact keeps it", () => {
+test("cutaway: a visible floor opens the room, contact keeps it", () => {
   const s3 = 1 / Math.sqrt(3);
   const k = { x: s3, y: s3, z: s3 };
   const walls: Box3[] = [
@@ -619,7 +620,7 @@ Deno.test("cutaway: a visible floor opens the room, contact keeps it", () => {
 // would erase it outright, so the volume-optimal choice is a "walls-down"
 // y-cut leaving a near-ground stump (whose height tracks the sample-lattice
 // pitch). Top-down it fronts only its own contact patch, so it stays whole.
-Deno.test("cutaway: a grounded solid keeps a walls-down stump", () => {
+test("cutaway: a grounded solid keeps a walls-down stump", () => {
   const s3 = 1 / Math.sqrt(3);
   const k = { x: s3, y: s3, z: s3 };
   const block: Box3[] = [
@@ -634,7 +635,7 @@ Deno.test("cutaway: a grounded solid keeps a walls-down stump", () => {
 });
 // The budgeted job must produce exactly the same cuts as the one-shot path no
 // matter where it is interrupted — render steps it a few units per frame.
-Deno.test("cutaway: the sliced aim job matches the one-shot result", () => {
+test("cutaway: the sliced aim job matches the one-shot result", () => {
   const s3 = 1 / Math.sqrt(3);
   const k = { x: s3, y: s3, z: s3 };
   const dirs = [k, { x: 0.6, y: 0.53, z: 0.6 }, { x: 0, y: 1, z: 0 }];

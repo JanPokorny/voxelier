@@ -1,6 +1,6 @@
 // Entry point: wire the canvas size, the render loop, and boot (load or seed,
 // then render). Importing interaction/ui for their listener side effects.
-import "./style.css"; // bundled + injected into the HTML by `deno bundle`
+import "./style.css"; // bundled + injected into the HTML by `bun build`
 import { S } from "./state.ts";
 import {
   cam,

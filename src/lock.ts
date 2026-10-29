@@ -17,7 +17,7 @@ let ready = false; // lock held AND the document loaded + undo baseline recorded
 let attempt = 0; // the only async step: a newer acquisition supersedes an older one
 let releaseCb: (() => void) | null = null;
 let chan: BroadcastChannel | null = null;
-let timer: number | undefined;
+let timer: ReturnType<typeof setTimeout> | undefined;
 let openDone: ((ok: boolean) => void) | null = null; // open()'s readiness promise
 let load: (id: string) => boolean = () => false;
 let save: () => boolean = () => false;

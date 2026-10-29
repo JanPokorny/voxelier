@@ -130,4 +130,4 @@ export type DropInfo = {
 };
 
 // A scheduled tree-row click (distinguishes single enter vs. double-click fit).
-export type Pending = { node: Node; timer: number };
+export type Pending = { node: Node; timer: ReturnType<typeof setTimeout> };
