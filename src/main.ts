@@ -16,13 +16,13 @@ import {
 import { rebuild, updateCutPlanes } from "./render.ts";
 import { updateChrome } from "./ui.ts";
 import { frameView, updateCamera } from "./camera.ts";
-import { updateMeasureLabels } from "./measure.ts";
-import { adoptRemote, flush, loadUI, readLegacy } from "./persistence.ts";
-import { setRemoteHandler, theDoc } from "./crdt/store.ts";
-import { bootDocument } from "./crdt/docs.ts";
-import { build } from "./crdt/doc.ts";
+import { clearMeasure, updateMeasureLabels } from "./measure.ts";
+import { flush, hasUnsaved, loadUI, readLegacy } from "./persistence.ts";
+import { bootDocument, loadCurrent, open } from "./docs.ts";
+import { reset } from "./history.ts";
+import { setLockHandlers } from "./lock.ts";
 import { installAgentApi } from "./agent-api.ts";
-import "./interaction.ts"; // attaches canvas pointer/wheel/dblclick listeners
+import { settleEditor } from "./interaction.ts"; // also attaches pointer listeners
 
 // On-demand rendering: draw only while the camera is still easing toward its
 // goal, or for a short tail after any input. Every scene mutation here is
@@ -85,33 +85,48 @@ window.addEventListener("resize", () => {
   reconcile();
 });
 
-// Another tab's edit has merged into the document and the editor's view of it is
-// behind. The store has already applied the ops, so nothing is at risk of being
-// lost — this only controls WHEN we re-read and re-render.
-let remoteDirty = false;
-function noteRemote(): void {
-  remoteDirty = true;
-  // Mid-drag, swapping the tree out from under the pointer handlers would strand
-  // the gesture, so hold off until it ends; tick() picks it up on the next frame.
-  if (!S.drag) applyRemote();
-  else wake();
-}
-function applyRemote(): void {
-  remoteDirty = false;
-  // Read the document rather than the tree captured at receive time: further ops
-  // may have merged in since, and this is the freshest merged state.
-  const root = build(theDoc());
-  if (!root) return;
-  adoptRemote(root); // resets undo: no local snapshot contains the remote edit
+let shownId: string | null = null;
+// The lock is ours: load the document synchronously (the previous holder has
+// already saved), start at the root, and give undo a fresh baseline.
+function gainLock(id: string): boolean {
+  let root;
+  try {
+    root = loadCurrent(id);
+  } catch (e) {
+    alert("Open failed: " + (e as Error).message);
+    return false;
+  }
+  const changed = id !== shownId;
+  S.root = root;
+  S.path = [root];
+  S.editObject = null;
+  S.sel3d = null;
+  S.drag = null;
+  S.painting = false;
+  S.lastVox = null;
+  S.selection.clear();
+  if (changed) {
+    S.collapsed = shownId === null ? new Set(loadUI()) : new Set();
+    if (S.tool === "measure") S.tool = "view";
+    clearMeasure();
+  }
+  shownId = id;
+  reset();
   rebuild();
   updateChrome();
-  flush(); // the merged state becomes the new undo baseline
+  if (changed) frameView();
+  if (!flush()) return false;
   wake();
+  return true;
+}
+// Hand the document over only after its gesture is settled and the save committed.
+function loseLock(): boolean {
+  settleEditor();
+  return flush();
 }
 
 function tick(): void {
   requestAnimationFrame(tick);
-  if (remoteDirty && !S.drag) applyRemote();
   reconcile();
   updateCamera();
   if (frame.tail > 0 || !cameraSettled()) {
@@ -122,24 +137,30 @@ function tick(): void {
   }
 }
 
-async function start(): Promise<void> {
-  // Register before opening a document: openScope wires the cross-tab channel, and
-  // a peer's update can arrive the moment it does.
-  setRemoteHandler(noteRemote);
-  // Which document to open is crdt/docs.ts's decision (#doc= link, last opened,
-  // newest in the library, a migrated pre-library save, or a fresh seed).
-  S.root = await bootDocument(readLegacy);
-  S.collapsed = new Set(loadUI());
-  S.path = [S.root];
-  S.editObject = null;
-  S.sel3d = null;
-  S.selection.clear();
+// A pagehide/visibility flush is synchronous now, so it is safe to settle a
+// gesture and save right before the page goes away.
+const saveOnLeave = (): void => {
+  settleEditor(); // painting only saves on pointerup, so settle before checking
+  if (!hasUnsaved()) return;
+  flush();
+};
+window.addEventListener("pagehide", saveOnLeave);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") saveOnLeave();
+});
+window.addEventListener("beforeunload", (e) => {
+  if (!hasUnsaved()) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
+
+function start(): void {
+  setLockHandlers(gainLock, loseLock);
+  installAgentApi(); // exists while blocked too; its mutators check isReady()
+  // Pick the document first (read-only), then acquire its lock before loading.
+  const boot = bootDocument(readLegacy);
   measure(); // seed the viewport cache before the first framing/reconcile/render
-  rebuild();
-  updateChrome();
-  frameView();
-  flush(); // synchronous baseline undo snapshot
-  installAgentApi();
   tick(); // start the on-demand render loop
+  void open(boot.id, boot.root);
 }
 start();

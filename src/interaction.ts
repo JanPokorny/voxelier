@@ -549,12 +549,14 @@ function commitMarquee(didMove: boolean): void {
   updateChrome();
 }
 
+let activePointer: number | null = null;
 canvas.addEventListener("pointerdown", (e) => {
   // a gesture is single-button: ignore extra buttons pressed while one is held
   // (mouse buttons share a pointerId). Replacing S.drag/ignoring S.painting here
   // would orphan an in-progress move/box/paint that only its pointerup finalises.
   if (S.drag || S.painting) return;
   canvas.setPointerCapture(e.pointerId);
+  activePointer = e.pointerId;
   setNdc(e.clientX, e.clientY);
   const base = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY };
 
@@ -640,6 +642,7 @@ canvas.addEventListener("pointermove", (e) => {
 });
 
 canvas.addEventListener("pointerup", (e) => {
+  activePointer = null;
   try {
     canvas.releasePointerCapture(e.pointerId);
   } catch (_) { /* not captured */ }
@@ -705,16 +708,20 @@ canvas.addEventListener("pointerup", (e) => {
   }
   S.drag = null;
 });
-// the browser can cancel a captured pointer (OS gesture, lost capture) without
-// a pointerup. Tear down so the gesture state can't wedge (which the mid-gesture
-// guard in pointerdown would otherwise make unrecoverable) and resync visuals.
-canvas.addEventListener("pointercancel", () => {
+// The browser can cancel a captured pointer without a pointerup. Tear the
+// gesture down so its state can't wedge, settling a lifted selection back into
+// the object. Also used before a lock handoff flushes the document.
+export function cancelGesture(): void {
+  if (activePointer !== null) {
+    try {
+      canvas.releasePointerCapture(activePointer);
+    } catch (_) { /* not captured */ }
+    activePointer = null;
+  }
   if (!S.drag && !S.painting) return;
   const painted = S.painting;
-  // a cancelled selection move/rotate has already carved its content out of the
-  // object (liftSelection); stamp it back so the model can't desync from the view
   if (S.drag && (S.drag.mode === "selmove" || S.drag.mode === "selrot")) {
-    dropSelection();
+    dropSelection(); // stamp the carved-out content back
   }
   S.drag = null;
   S.painting = false;
@@ -725,7 +732,16 @@ canvas.addEventListener("pointercancel", () => {
     updateChrome();
     save();
   }
-});
+}
+canvas.addEventListener("pointercancel", cancelGesture);
+
+// Shared pre-switch/pre-flush path: commit a focused rename via blur, then put
+// any lifted/painted gesture back into the model.
+export function settleEditor(): void {
+  (document.activeElement as HTMLElement | null)?.blur();
+  cancelGesture();
+}
+
 canvas.addEventListener("pointerleave", () => {
   hoverVox.visible = false;
   toolCursor.style.display = "none"; // the trailing tool glyph belongs over the canvas

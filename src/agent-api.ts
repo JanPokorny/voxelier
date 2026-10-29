@@ -12,6 +12,7 @@ import { redo, undo } from "./history.ts";
 import { fitNode, frameBox, frameView } from "./camera.ts";
 import { cam, goal, wake } from "./scene-env.ts";
 import { openScene, sceneEnvelope } from "./io.ts";
+import { isReady } from "./lock.ts";
 import {
   diff,
   outline,
@@ -21,6 +22,14 @@ import {
 } from "./agent-views.ts";
 import { clearMeasure } from "./measure.ts";
 import type { Node, SceneNode } from "./types.ts";
+
+// Mutations are refused while another tab owns the document (or this tab is
+// still loading it). Read-only helpers (outline, relations, render) stay usable.
+const editable = (): void => {
+  if (!isReady()) {
+    throw new Error("document is open for editing in another tab");
+  }
+};
 
 // One walk: node identity and transform, box validity, and the per-object
 // disjointness check. The overlap scan is O(n²) per object — fine for
@@ -107,6 +116,7 @@ function resync(): void {
 
 let editing = false;
 function edit(fn: (root: SceneNode) => void): string {
+  editable();
   // a gesture owns transient state (a lifted selection is carved out of the
   // object) that must not be snapshotted; a nested edit would too
   if (editing || S.drag || S.painting) {
@@ -170,15 +180,24 @@ const api = {
   newScene,
   findById,
   worldBounds,
-  load: openScene,
+  load: async (json: string): Promise<void> => {
+    editable();
+    await openScene(json);
+  },
   exportJSON: sceneEnvelope,
   edit,
   diff,
   outline,
   relations,
   render: renderView,
-  undo,
-  redo,
+  undo: (): void => {
+    editable();
+    undo();
+  },
+  redo: (): void => {
+    editable();
+    redo();
+  },
   frameView,
   fitNode,
   frameBox,

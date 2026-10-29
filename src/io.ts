@@ -4,13 +4,9 @@
 // replaces the document and resets the editor to the scene root.
 import { S } from "./state.ts";
 import { flush, sceneFromEnvelope, ser } from "./persistence.ts";
-import { reset } from "./history.ts";
-import { createDocument } from "./crdt/docs.ts";
+import { newDocument, open } from "./docs.ts";
+import { settleEditor } from "./interaction.ts";
 import { peekUid } from "./math.ts";
-import { rebuild } from "./render.ts";
-import { updateChrome } from "./ui.ts";
-import { frameView } from "./camera.ts";
-import { clearMeasure } from "./measure.ts";
 
 export function sceneEnvelope(): string {
   return JSON.stringify({
@@ -39,24 +35,17 @@ export function exportScene(): void {
 }
 
 export async function openScene(json: string): Promise<void> {
-  const tree = sceneFromEnvelope(JSON.parse(json));
+  const d = JSON.parse(json) as { uid?: number };
+  const tree = sceneFromEnvelope(d, false); // do not seed uid before old doc saves
   if (!tree) throw new Error("not a Voxelier scene file");
+  settleEditor(); // commit a rename / stamp a lifted selection before the switch
+  if (!flush()) throw new Error("could not save the current document");
   // An imported file joins the library as its own document rather than
-  // overwriting the open scene — and other tabs on other documents are
-  // unaffected, because the new document has its own scope.
-  S.root = await createDocument(tree);
-  S.collapsed = new Set();
-  S.path = [S.root];
-  S.editObject = null;
-  S.sel3d = null;
-  S.selection.clear();
-  if (S.tool === "measure") S.tool = "view"; // leave the measure tool for the new scene
-  clearMeasure(); // discard the live reading from the old one
-  rebuild();
-  updateChrome();
-  frameView();
-  reset(); // the old document's snapshots don't apply here
-  flush(); // synchronous baseline undo snapshot for the imported scene
+  // overwriting the open scene; open() resolves once the new lock owns it.
+  const fresh = newDocument(tree, d.uid);
+  if (!await open(fresh.id, fresh.root, fresh.uid)) {
+    throw new Error("could not take the edit lock for the imported document");
+  }
 }
 
 export function importScene(): void {
