@@ -1275,6 +1275,34 @@ try {
   });
   check(undone === loaded, "load/import baseline survives undo");
 
+  // ---- wheel zoom scales with the delta, not per event ----
+  // A trackpad or smooth-scrolling wheel fires many small events per notch, so
+  // the zoom step must compose: 10 events of 10 px land where 1 event of 100 px
+  // does, ~11%, instead of compounding a fixed factor per event.
+  const wheelZoom = (deltaY: number, times = 1) =>
+    imp.evaluate(([dy, n]: number[]) => {
+      const v = (globalThis as any).voxelier;
+      v.goal.zoom = 80;
+      for (let i = 0; i < n; i++) {
+        document.getElementById("c")!.dispatchEvent(
+          new WheelEvent("wheel", {
+            deltaY: dy,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+      return v.goal.zoom / 80; // zoom out: a bigger view height is the notch
+    }, [deltaY, times]);
+  const notch = await wheelZoom(100);
+  const dribble = await wheelZoom(10, 10);
+  check(
+    Math.abs(notch - dribble) < 1e-6 && notch > 1.08 && notch < 1.13,
+    `wheel zoom is delta-scaled and ~11% per 100 px notch (1x100: ${
+      notch.toFixed(4)
+    }, 10x10: ${dribble.toFixed(4)})`,
+  );
+
   for (const p of [a, b, t1, t2, t3, sw, fromAgain, imp]) await p.close();
 
   check(errors.length === 0, `no page errors (${errors.join("; ") || "none"})`);
