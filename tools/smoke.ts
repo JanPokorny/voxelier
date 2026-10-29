@@ -180,9 +180,9 @@ try {
   await c.close();
 
   // ---- agent API ----
-  // A browser-driving agent loads a document from a JSON envelope, mutates the
-  // live tree, and commits. The commit is one undo step and rejects the
-  // disjoint-boxes invariant, restoring the last committed state.
+  // A browser-driving agent loads a document from a JSON envelope and mutates the
+  // live tree through edit(fn). Each successful edit is one undo step; a rejected
+  // edit restores its baseline without clobbering an uncommitted UI-side change.
   const d = await open("D", "/#doc=agentapi00000000");
   const office = await Deno.readTextFile(
     "tools/fixtures/office.voxelier.json",
@@ -196,44 +196,132 @@ try {
     const start = v.worldBounds("n56");
     const node = v.findById("n56");
     const x = node.boxes[0].x1 + 5;
-    node.boxes.push({
-      x0: x,
-      y0: 0,
-      z0: 0,
-      x1: x + 2,
-      y1: 2,
-      z1: 2,
-      c: 0xff0000,
+    v.edit(() => {
+      node.boxes.push({
+        x0: x,
+        y0: 0,
+        z0: 0,
+        x1: x + 2,
+        y1: 2,
+        z1: 2,
+        c: 0xff0000,
+      });
     });
-    v.commit();
     const grown = v.worldBounds("n56");
     v.undo();
     const undone = v.exportJSON();
-    const overlapNode = v.findById("n56");
-    overlapNode.boxes.push({ ...overlapNode.boxes[0] });
-    let rejected = "";
+
+    // an in-place change the way the UI makes it — no API call, no flush
+    v.S.root.name = "UI edit";
+    const uiBefore = v.exportJSON();
+
+    let overlap = "";
     try {
-      v.commit();
+      v.edit(() => {
+        const n = v.findById("n56");
+        n.boxes.push({ ...n.boxes[0] });
+      });
     } catch (e) {
-      rejected = (e as Error).message;
+      overlap = (e as Error).message;
     }
+    const afterReject = v.exportJSON();
+
+    let duplicate = "";
+    try {
+      v.edit(() => {
+        v.S.root.children[0].id = v.S.root.id;
+      });
+    } catch (e) {
+      duplicate = (e as Error).message;
+    }
+
+    let missing = "";
+    try {
+      v.edit(() => {
+        v.S.root.children[0].id = "";
+      });
+    } catch (e) {
+      missing = (e as Error).message;
+    }
+
+    let badBox = "";
+    try {
+      v.edit(() => {
+        v.findById("n56").boxes.push({
+          x0: 0,
+          y0: 0,
+          z0: 0,
+          x1: 0,
+          y1: 1,
+          z1: 1,
+          c: 0,
+        });
+      });
+    } catch (e) {
+      badBox = (e as Error).message;
+    }
+
+    // face-adjacent boxes share a face without sharing a cell: legal
+    const obj = v.newObject();
+    obj.boxes.push({ x0: 0, y0: 0, z0: 0, x1: 2, y1: 2, z1: 2, c: 0xff0000 });
+    obj.boxes.push({ x0: 2, y0: 0, z0: 0, x1: 4, y1: 2, z1: 2, c: 0x00ff00 });
+    let touching = "";
+    try {
+      v.edit((root: { children: unknown[] }) => {
+        root.children.push(obj);
+      });
+    } catch (e) {
+      touching = (e as Error).message;
+    }
+
+    let badView = "";
+    try {
+      v.view("toString");
+    } catch (e) {
+      badView = (e as Error).message;
+    }
+
     return {
       before,
       undone,
-      restored: v.exportJSON(),
+      uiBefore,
+      afterReject,
       grew: grown.max.x > start.max.x,
-      rejected,
+      overlap,
+      duplicate,
+      missing,
+      badBox,
+      touching,
+      hasTouching: v.findById(obj.id) !== null,
+      badView,
     };
   }, office);
-  check(agent.grew, "agent API: commit changes world bounds");
+  check(agent.grew, "agent API: edit changes world bounds");
   check(agent.before === agent.undone, "agent API: undo restores the document");
   check(
-    /overlap/.test(agent.rejected),
-    "agent API: commit rejects overlapping boxes",
+    /overlap/.test(agent.overlap),
+    "agent API: edit rejects overlapping boxes",
   );
   check(
-    agent.restored === agent.before,
-    "agent API: rejected commit restores the last committed state",
+    agent.afterReject === agent.uiBefore,
+    "agent API: rejected edit preserves an uncommitted UI-side change",
+  );
+  check(
+    /duplicate/.test(agent.duplicate),
+    "agent API: edit rejects duplicate node ids",
+  );
+  check(
+    /without an id/.test(agent.missing),
+    "agent API: edit rejects missing node ids",
+  );
+  check(/inverted/.test(agent.badBox), "agent API: edit rejects empty boxes");
+  check(
+    agent.touching === "" && agent.hasTouching,
+    "agent API: edit accepts face-adjacent boxes",
+  );
+  check(
+    /unknown view/.test(agent.badView),
+    "agent API: view rejects inherited property names",
   );
   await d.close();
 
