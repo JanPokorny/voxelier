@@ -224,7 +224,7 @@ const help = {
   outline:
     "outline(id?, {depth=2, hidden=false}) -> indented node lines with world bounds and size. The first line is the compass mapping ('north = -z, east = +x'); expanded lines append non-zero pos and rot, e.g. 'pos z=-1 rot90'. Collapsed hidden groups show their offsets and child count.",
   api:
-    "S, ser(node), de(serNode), findById(id), worldBounds(id?) -> Box|null in world cells (id omitted = root), load(json) -> Promise, exportJSON({save}) -> envelope JSON string, edit(fn) -> compact diff, undo(), redo() -> compact diff (may be empty), frameView(), fitNode(node), frameBox(box), view('iso'|'top'|'front'|'side'), outline(id?, {depth=2, hidden=false}) (own entry), render(view, opts) (own entry), relations(ids?, {within=60, only}) (own entry), clearance(id, dir) (own entry), distance(a, b, {y}) (own entry), voxelize(fn, bounds) and carve(boxes, fn) (own entry), clone(id) -> new id, show(id) -> diff, diff(before), uid(), newObject(), newScene(name?), help.",
+    "S, goal (camera azim/elev/zoom/target), ser(node), de(serNode), findById(id), worldBounds(id?) -> Box|null in world cells (id omitted = root), load(json) -> Promise, exportJSON({save}) -> envelope JSON string, edit(fn) -> compact diff, undo(), redo() -> compact diff (may be empty), frameView(), fitNode(node), frameBox(box), view('iso'|'top'|'front'|'side'), outline(id?, {depth=2, hidden=false}) (own entry), render(view, opts) (own entry), relations(ids?, {within=60, only}) (own entry), clearance(id, dir) (own entry), distance(a, b, {y}) (own entry), voxelize(fn, bounds) and carve(boxes, fn) (own entry), clone(id) -> new id, show(id) -> diff, diff(before), uid(), newObject(), newScene(name?), help.",
   variants:
     "There is no variant node type: a variant is one sibling subtree per alternative (a scene, or a plain object). Put them under one parent scene whose children are exactly the alternatives, keep one visible and the rest hidden, and switch with show(id) — that node visible, its siblings hidden (an 'Immutable' group stays), one undo step. clone(id) deep-copies a subtree (fresh ids, same pos) as the next sibling, so a new alternative is clone + move + tweak. Both run their own edit step: call them outside edit(fn). relations()/clearance()/renders ignore hidden alternatives, so they follow whichever is shown.",
   files:
@@ -241,6 +241,7 @@ const help = {
 
 const api = {
   S,
+  goal,
   ser,
   de,
   uid,

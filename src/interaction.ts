@@ -12,6 +12,7 @@ import {
   goal,
   hoverVox,
   overlay,
+  viewport,
   ZOOM_MAX,
 } from "./scene-env.ts";
 import {
@@ -751,10 +752,17 @@ canvas.addEventListener("pointerleave", () => {
   }
 });
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+// Exponential so a gesture composes: trackpads and smooth-scrolling wheels fire
+// many small events per notch, so the step must scale with the delta (a classic
+// 100 px notch is ~11%) instead of compounding a fixed factor per event.
+const WHEEL_ZOOM_K = 0.00105;
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
-  goal.zoom *= e.deltaY > 0 ? 1 / 0.95 : 0.95;
-  goal.zoom = Math.max(6, Math.min(ZOOM_MAX, goal.zoom));
+  const px = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? viewport.h : 1; // lines, pages
+  goal.zoom = Math.max(
+    6,
+    Math.min(ZOOM_MAX, goal.zoom * Math.exp(e.deltaY * px * WHEEL_ZOOM_K)),
+  );
 }, { passive: false });
 
 canvas.addEventListener("dblclick", (e) => {
