@@ -585,7 +585,8 @@ export function rebuild(): void {
     });
     meshSurface(outTemp, col, { tier: "temp" }); // outside the group: more opaque
     for (const [id, boxes] of gFocus) {
-      meshSurface(boxes, col, { childId: id }); // in focus: opaque + pickable
+      const m = meshSurface(boxes, col, { childId: id }); // in focus: opaque + pickable
+      if (m && deemphOwners.has(id)) m.userData.cut = true; // a selected half-visible group
     }
     for (const boxes of cut.values()) meshCutGroup(boxes); // half-visible: plane-cut
     cutOccluders = occ;

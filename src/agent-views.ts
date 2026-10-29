@@ -3,11 +3,12 @@
 import * as THREE from "three";
 import { S } from "./state.ts";
 import * as M from "./model.ts";
-import { pathXform } from "./math.ts";
+import { addv, pathXform, rotY } from "./math.ts";
+import { worldBox } from "./boxes.ts";
 import { eachObject } from "./render.ts";
 import { de } from "./persistence.ts";
 import * as E from "./scene-env.ts";
-import type { Box, Box3, Node, Vec } from "./types.ts";
+import type { Box, Box3, Node, Rot, Vec } from "./types.ts";
 
 const AXES = ["x", "y", "z"], O: Vec = { x: 0, y: 0, z: 0 };
 const fmtBox = (b: Box): string =>
@@ -30,8 +31,16 @@ export const worldBounds = (id?: string): Box | null => {
   return boundsIn(S.root, n);
 };
 const worldBoxes = (n: Node): Box3[] => {
-  const w = pathXform(M.findPath(n)!);
-  return M.nodeBoxes(n, w.off, w.rot, []);
+  const out: Box3[] = [];
+  const walk = (x: Node, off: Vec, rot: Rot): void => {
+    if (x.vis === "hidden") return;
+    const o = addv(off, rotY(x.pos, rot)), r = (rot + x.rot) & 3;
+    if (x.type === "object") {
+      for (const b of x.boxes) out.push(worldBox(b, r, o));
+    } else for (const c of x.children) walk(c, o, r);
+  };
+  walk(n, O, 0);
+  return out;
 };
 
 const nodeLine = (n: Node, b: Box | null): string =>
@@ -55,7 +64,7 @@ export function outline(
       : "";
     lines.push(
       "  ".repeat(d) +
-        (collapsed ? head(n) + suffix : nodeLine(n, boundsIn(root, n))),
+        (collapsed ? head(n) + suffix : nodeLine(n, boundsIn(S.root, n))),
     );
     if (collapsed || n.type === "object" || d >= depth) return;
     for (const c of n.children) walk(c, d + 1);
@@ -64,112 +73,70 @@ export function outline(
   return lines.join("\n");
 }
 
-type Sep = { kind: "overlap" | "touch" | "gap"; axis: number; gap: number };
-// The one real-box separation test: per-axis gaps, their max decides the
-// relation, and a max of 0 is a touch (or a full overlap).
-function separation(a: Box3[], b: Box3[]): Sep | null {
-  let best: Sep | null = null;
-  for (const p of a) {
-    for (const q of b) {
-      const o = [
-        p.x0 < q.x1 && q.x0 < p.x1,
-        p.y0 < q.y1 && q.y0 < p.y1,
-        p.z0 < q.z1 && q.z0 < p.z1,
-      ];
-      if (o[0] && o[1] && o[2]) return { kind: "overlap", axis: -1, gap: 0 };
-      const g = [
-        Math.max(p.x0 - q.x1, q.x0 - p.x1, 0),
-        Math.max(p.y0 - q.y1, q.y0 - p.y1, 0),
-        Math.max(p.z0 - q.z1, q.z0 - p.z1, 0),
-      ];
+// deno-fmt-ignore
+type Rel = { kind: "overlap" | "gap"; max: number; text: string };
+// One real-box test: overlap reports its extent, gaps report every separated axis.
+// deno-fmt-ignore
+function separation(a: Box3[], b: Box3[]): Rel | null {
+  let ov: { v: number; d: number[] } | null = null, near: { m: number; g: number[] } | null = null;
+  for (const p of a) for (const q of b) {
+    const o = [p.x0 < q.x1 && q.x0 < p.x1, p.y0 < q.y1 && q.y0 < p.y1, p.z0 < q.z1 && q.z0 < p.z1];
+    const g = [Math.max(p.x0 - q.x1, q.x0 - p.x1, 0), Math.max(p.y0 - q.y1, q.y0 - p.y1, 0), Math.max(p.z0 - q.z1, q.z0 - p.z1, 0)];
+    if (o[0] && o[1] && o[2]) {
+      const d = [Math.min(p.x1, q.x1) - Math.max(p.x0, q.x0), Math.min(p.y1, q.y1) - Math.max(p.y0, q.y0), Math.min(p.z1, q.z1) - Math.max(p.z0, q.z0)];
+      const v = d[0] * d[1] * d[2];
+      if (!ov || v > ov.v) ov = { v, d };
+    } else {
       const m = Math.max(...g);
-      if (!best || m < best.gap) {
-        best = m === 0
-          ? { kind: "touch", axis: o.indexOf(false), gap: 0 }
-          : { kind: "gap", axis: g.indexOf(m), gap: m };
-      }
+      if (!near || m < near.m) near = { m, g };
     }
   }
-  return best;
+  if (ov) return { kind: "overlap", max: 0, text: `overlap ${ov.d.join("x")}` };
+  if (!near) return null;
+  const parts = near.g.map((v, i) => v ? `${AXES[i]} gap ${v}` : "").filter(Boolean);
+  return { kind: "gap", max: near.m, text: parts.length ? parts.join(" ") : "touch" };
 }
-export function relations(
-  ids?: string | string[],
-  { within = 60 }: { within?: number } = {},
-): string {
+// deno-fmt-ignore
+export function relations(ids?: string | string[], { within = 60 }: { within?: number } = {}): string {
   let list: Node[];
-  if (ids !== undefined) {
-    list = (typeof ids === "string" ? [ids] : ids).map((id) => {
-      const n = M.findById(id);
-      if (!n) throw new Error(`unknown node id: ${id}`);
-      return n;
-    });
-  } else {
-    list = S.root.children.flatMap((c) =>
-      c.vis === "hidden"
-        ? []
-        : c.type === "scene" && c.name === "Immutable"
-        ? c.children.filter((g) => g.vis !== "hidden")
-        : [c]
-    );
-  }
-  const items = list
-    .filter((n) => (M.findPath(n) ?? []).every((p) => p.vis !== "hidden"))
-    .map((n) => ({ n, boxes: worldBoxes(n) }))
-    .filter((it) => it.boxes.length);
+  if (ids !== undefined) list = (typeof ids === "string" ? [ids] : ids).map((id) => { const n = M.findById(id); if (!n) throw new Error(`unknown node id: ${id}`); return n; });
+  else list = S.root.children.flatMap((c) => c.vis === "hidden" ? [] : c.type === "scene" && c.name === "Immutable" ? c.children.filter((g) => g.vis !== "hidden") : [c]);
+  const items = list.filter((n) => (M.findPath(n) ?? []).every((p) => p.vis !== "hidden")).map((n) => ({ n, boxes: worldBoxes(n) })).filter((it) => it.boxes.length);
   const out: string[] = [];
-  for (const [i, a] of items.entries()) {
-    for (const b of items.slice(i + 1)) {
-      const s = separation(a.boxes, b.boxes);
-      if (!s || (s.kind === "gap" && s.gap > within)) continue;
-      const rel = s.kind === "overlap"
-        ? "overlap"
-        : `${AXES[s.axis]} ${s.kind}${s.gap ? ` ${s.gap}` : ""}`;
-      out.push(
-        `${a.n.id} "${a.n.name}" ${
-          s.kind === "overlap" ? "~" : "|"
-        } ${b.n.id} "${b.n.name}": ${rel}`,
-      );
-    }
+  for (const [i, a] of items.entries()) for (const b of items.slice(i + 1)) {
+    const s = separation(a.boxes, b.boxes);
+    if (!s || (s.kind === "gap" && s.max > within)) continue;
+    out.push(`${a.n.id} "${a.n.name}" ${s.kind === "overlap" ? "~" : "|"} ${b.n.id} "${b.n.name}": ${s.text}`);
   }
   return out.join("\n");
 }
 
+// deno-fmt-ignore
 export function diff(before: string): string {
-  const j = JSON.parse(before),
-    prev = de(j.root ?? j) as Node,
-    out: string[] = [];
+  const j = JSON.parse(before), prev = de(j.root ?? j) as Node, out: string[] = [];
+  const dims = (b: Box) => [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z];
+  const same = (a: number[], b: number[]) => a.every((v, i) => v === b[i]);
+  const par = (root: Node, n: Node) => { const p = M.findPath(n, root); return p?.[p.length - 2]?.id; };
+  const geom = (bs: Box3[]) => bs.map((b) => [b.x0, b.y0, b.z0, b.x1, b.y1, b.z1].join(",")).sort().join(";");
   const walk = (n: Node): void => {
     const p = M.findById(n.id, prev);
     if (!p) return void out.push(`+ ${nodeLine(n, boundsIn(S.root, n))}`);
-    const parts: string[] = [];
-    const dx = n.pos.x - p.pos.x,
-      dy = n.pos.y - p.pos.y,
-      dz = n.pos.z - p.pos.z;
-    if (dx || dy || dz) {
-      const cb = boundsIn(S.root, n);
-      const d = [dx, dy, dz].map((v, i) =>
-        v ? `Δ${AXES[i]}${v > 0 ? "+" : ""}${v}` : ""
-      ).filter(Boolean).join(" ");
-      parts.push(`moved ${d} (now ${cb ? fmtBox(cb) : "[empty]"})`);
-    }
+    const parts: string[] = [], pb = boundsIn(prev, p), cb = boundsIn(S.root, n);
+    const ps = pb && dims(pb), cs = cb && dims(cb);
+    if (par(prev, p) !== par(S.root, n)) parts.push(`reparented ${par(prev, p) ?? "-"}→${par(S.root, n) ?? "-"}`);
+    if (pb && cb) {
+      const d = [cb.min.x - pb.min.x, cb.min.y - pb.min.y, cb.min.z - pb.min.z];
+      if (d.some(Boolean)) parts.push(`moved ${d.map((v, i) => v ? `Δ${AXES[i]}${v > 0 ? "+" : ""}${v}` : "").filter(Boolean).join(" ")}`);
+      if (ps && cs && !same(ps, cs)) parts.push(`resized ${ps.join("x")} → ${cs.join("x")}`);
+    } else if (pb) parts.push("geometry removed"); else if (cb) parts.push("geometry added");
     if (n.rot !== p.rot) parts.push(`rotated to ${n.rot * 90}°`);
     if (n.vis !== p.vis) parts.push(`${p.vis}→${n.vis}`);
-    if (n.type === "object" && p.type === "object") {
-      const cb = boundsIn(S.root, n);
-      if (JSON.stringify(n.boxes) !== JSON.stringify(p.boxes) && cb) {
-        parts.push(`resized ${fmtSize(cb)}`);
-      }
-    }
+    if (n.type === "object" && p.type === "object" && JSON.stringify(n.boxes) !== JSON.stringify(p.boxes) && ps && cs && same(ps, cs)) parts.push(geom(n.boxes) === geom(p.boxes) ? "recolored" : "reshaped");
     if (parts.length) out.push(`~ ${n.id} "${n.name}" ${parts.join("; ")}`);
-    if (n.type === "scene") { for (const c of n.children) walk(c); }
+    if (n.type === "scene") for (const c of n.children) walk(c);
   };
   walk(S.root);
-  const removed = (n: Node): void => {
-    if (!M.findById(n.id, S.root)) {
-      return void out.push(`- ${nodeLine(n, boundsIn(prev, n))}`);
-    }
-    if (n.type === "scene") { for (const c of n.children) removed(c); }
-  };
+  const removed = (n: Node): void => { if (!M.findById(n.id, S.root)) { out.push(`- ${nodeLine(n, boundsIn(prev, n))}`); return; } if (n.type === "scene") for (const c of n.children) removed(c); };
   removed(prev);
   return out.join("\n");
 }
@@ -202,16 +169,16 @@ function makeCamera(view: string, b: Box): { camera: THREE.Camera; half: number 
 function drawGrid(ctx: CanvasRenderingContext2D, size: number, b: Box, half: number): void {
   const s = size / (2 * half), mid = size / 2, cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
   ctx.strokeStyle = "rgba(0,0,0,0.14)"; ctx.lineWidth = 1;
-  for (let x = Math.ceil((cx - half) / 5) * 5; x <= cx + half; x += 5) {
+  for (let x = Math.ceil((cx - half) / 50) * 50; x <= cx + half; x += 50) {
     const px = mid + (x - cx) * s;
     ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, size); ctx.stroke();
   }
-  for (let z = Math.ceil((cz - half) / 5) * 5; z <= cz + half; z += 5) {
+  for (let z = Math.ceil((cz - half) / 50) * 50; z <= cz + half; z += 50) {
     const py = mid + (z - cz) * s;
     ctx.beginPath(); ctx.moveTo(0, py); ctx.lineTo(size, py); ctx.stroke();
   }
   ctx.strokeStyle = "#111"; ctx.lineWidth = 2; ctx.beginPath();
-  ctx.moveTo(18, size - 20); ctx.lineTo(18 + 10 * s, size - 20); ctx.stroke();
+  ctx.moveTo(18, size - 20); ctx.lineTo(18 + 100 * s, size - 20); ctx.stroke();
   ctx.font = "12px ui-monospace, monospace"; ctx.fillStyle = "#111"; ctx.fillText("1 m", 18, size - 26);
 }
 // deno-fmt-ignore
@@ -227,7 +194,10 @@ function drawLabels(ctx: CanvasRenderingContext2D, camera: THREE.Camera, size: n
 // deno-fmt-ignore
 export function renderView(view: string, opts: { focus?: string | string[]; isolate?: boolean; labels?: boolean; grid?: boolean; size?: number; cutY?: number } = {}): Promise<string> {
   if (!VIEWS.has(view)) throw new Error(`unknown view "${view}": use top, front, side or iso`);
-  const size = Math.max(64, Math.min(2048, Math.round(opts.size ?? 900)));
+  const raw = opts.size ?? 900;
+  if (!Number.isFinite(raw) || raw <= 0) throw new Error("size must be a positive finite number");
+  if (opts.cutY !== undefined && !Number.isFinite(opts.cutY)) throw new Error("cutY must be finite");
+  const size = Math.max(64, Math.min(2048, Math.round(raw)));
   const focus = opts.focus === undefined ? [] : typeof opts.focus === "string" ? [opts.focus] : opts.focus;
   const b = M.emptyBox();
   if (focus.length) {
@@ -241,24 +211,32 @@ export function renderView(view: string, opts: { focus?: string | string[]; isol
     Object.assign(b, S.sceneBox && !M.boxEmpty(S.sceneBox) ? S.sceneBox : { min: { x: -20, y: 0, z: -20 }, max: { x: 20, y: 40, z: 20 } });
   }
   const { camera, half } = makeCamera(view, b);
-  const owners = opts.isolate && focus.length ? new Set<string>() : null;
-  if (owners) for (const id of focus) {
-    const path = M.findPath(M.findById(id)!), child = path?.[path.indexOf(S.context) + 1];
-    if (child) owners.add(child.id);
-  }
+  const focusIds = new Set<string>();
+  const mark = (n: Node): void => { focusIds.add(n.id); if (n.type === "scene") for (const c of n.children) mark(c); };
+  for (const id of focus) mark(M.findById(id)!);
+  const anc = opts.isolate && focus.length ? new Set<string>() : null;
+  if (anc) for (const id of focus) for (const n of M.findPath(M.findById(id)!) ?? []) anc.add(n.id);
   const objects: { id: string; b: Box }[] = [];
-  eachObject(S.root, O, 0, null, null, (n, off, rot, owner, dRoot) => {
-    if (dRoot || (owners && (!owner || !owners.has(owner)))) return;
+  eachObject(S.root, O, 0, null, null, (n, off, rot, _owner, dRoot) => {
+    if (dRoot || (anc && !focusIds.has(n.id))) return;
     const nb = M.nodeBox(n, off, rot, M.emptyBox());
     if (!M.boxEmpty(nb)) objects.push({ id: n.id, b: nb });
   });
+  if (S.editObject && (!anc || focusIds.has(S.editObject.id))) {
+    const nb = M.nodeBox(S.editObject, S.editXform.off, S.editXform.rot, M.emptyBox());
+    if (!M.boxEmpty(nb)) objects.push({ id: S.editObject.id, b: nb });
+  }
   const hidden: THREE.Object3D[] = [];
   const hide = (o: THREE.Object3D): void => { if (o.visible) { o.visible = false; hidden.push(o); } };
   for (const o of [E.ground, E.overlay, E.hoverVox, E.measLines]) hide(o);
   E.scene.traverse((o: THREE.Object3D) => {
     const m = o as THREE.Mesh, mat = m.material as THREE.Material | undefined;
-    if ((m.isMesh && mat?.clippingPlanes?.length) || (o as THREE.LineSegments).isLineSegments || o.renderOrder < -1e8) hide(o);
-    if (owners && m.isMesh && o.parent !== E.editGroup && (!o.userData.childId || !owners.has(o.userData.childId))) hide(o);
+    if ((m.isMesh && (o.userData.cut || mat?.clippingPlanes?.length)) || (o as THREE.LineSegments).isLineSegments || o.renderOrder < -1e8) hide(o);
+    if (anc && m.isMesh) {
+      const id = o.userData.childId as string | undefined;
+      const keep = id ? focusIds.has(id) || anc.has(id) : o.parent === E.editGroup && S.editObject && focusIds.has(S.editObject.id);
+      if (!keep) hide(o);
+    }
   });
   const oldSize = E.renderer.getSize(new THREE.Vector2());
   const oldClip = E.renderer.clippingPlanes, oldShadow = E.renderer.shadowMap.enabled, oldBg = E.scene.background;
@@ -276,6 +254,7 @@ export function renderView(view: string, opts: { focus?: string | string[]; isol
   } finally {
     E.renderer.setSize(oldSize.x, oldSize.y, false); E.renderer.clippingPlanes = oldClip;
     E.renderer.shadowMap.enabled = oldShadow; E.scene.background = oldBg;
-    for (const o of hidden) o.visible = true; E.wake();
+    for (const o of hidden) o.visible = true;
+    E.renderer.render(E.scene, E.camera); E.wake();
   }
 }

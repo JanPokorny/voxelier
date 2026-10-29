@@ -195,22 +195,37 @@ try {
 
     // read-only views: outline, relations, render
     const outline = v.outline();
+    const nestedOutline = v.outline("n28");
     const relations = v.relations();
     const tucked = v.relations(["n85", "n107"]);
-    const png = await v.render("top", { size: 256 });
-    const img = new Image();
-    img.src = png;
-    await img.decode();
-    const shot = document.createElement("canvas");
-    shot.width = img.width;
-    shot.height = img.height;
-    const g = shot.getContext("2d")!;
-    g.drawImage(img, 0, 0);
-    const px = g.getImageData(0, 0, img.width, img.height).data;
-    let colored = 0;
-    for (let i = 0; i < px.length; i += 4) {
-      if (px[i] < 248 || px[i + 1] < 248 || px[i + 2] < 248) colored++;
-    }
+    const stats = async (url: string) => {
+      const im = new Image();
+      im.src = url;
+      await im.decode();
+      const c = document.createElement("canvas");
+      c.width = im.width;
+      c.height = im.height;
+      const x = c.getContext("2d")!;
+      x.drawImage(im, 0, 0);
+      const d = x.getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] < 248 || d[i + 1] < 248 || d[i + 2] < 248) n++;
+      }
+      return { w: im.width, h: im.height, colored: n };
+    };
+    const top = await stats(
+      await v.render("top", { size: 256, grid: false, labels: false }),
+    );
+    const isolated = await stats(
+      await v.render("top", {
+        focus: ["n28"],
+        isolate: true,
+        size: 128,
+        grid: false,
+        labels: false,
+      }),
+    );
 
     const before = v.exportJSON();
     const start = v.worldBounds("n56");
@@ -325,6 +340,30 @@ try {
     });
     v.undo();
 
+    // a hidden descendant must not contribute geometry to its visible parent
+    v.edit(() => {
+      const o = v.newObject();
+      o.vis = "hidden";
+      o.boxes.push({
+        x0: -1000,
+        y0: -1000,
+        z0: -1000,
+        x1: 1000,
+        y1: 1000,
+        z1: 1000,
+        c: 0xff0000,
+      });
+      v.findById("n44").children.push(o);
+    });
+    const hiddenRel = v.relations(["n44", "n110"]);
+    v.undo();
+
+    // rotating a parent moves its children's world bounds
+    const rotatedDiff = v.edit(() => {
+      v.findById("n44").rot = 1;
+    });
+    v.undo();
+
     return {
       before,
       undone,
@@ -342,11 +381,15 @@ try {
       hasTouching: v.findById(obj.id) !== null,
       badView,
       outline,
+      nestedOutline,
       relations,
       tucked,
-      pngW: img.width,
-      pngH: img.height,
-      colored,
+      hiddenRel,
+      rotatedDiff,
+      pngW: top.w,
+      pngH: top.h,
+      colored: top.colored,
+      isolatedColored: isolated.colored,
       editDiff,
     };
   }, office);
@@ -392,7 +435,11 @@ try {
     "agent views: outline lists known ids",
   );
   check(
-    /(?:n79 "Door" \| n76 "Futon"|n76 "Futon" \| n79 "Door"): z gap 4/.test(
+    agent.nestedOutline.includes('n28 O "Cutout table" x-134..-3'),
+    "agent views: outline(id) reports world coordinates",
+  );
+  check(
+    /(?:n79 "Door" \| n76 "Futon"|n76 "Futon" \| n79 "Door"): z gap 3/.test(
       agent.relations,
     ),
     "agent views: relations reports a known gap",
@@ -402,12 +449,24 @@ try {
     "agent views: relations ignores a chair tucked under a table",
   );
   check(
+    !/overlap/.test(agent.hiddenRel),
+    "agent views: relations prunes hidden descendants",
+  );
+  check(
     agent.pngW === 256 && agent.pngH === 256 && agent.colored > 1000,
     `agent views: render('top') returns a non-blank 256px PNG (${agent.colored} px)`,
   );
   check(
+    agent.isolatedColored > 100,
+    `agent views: isolate renders a nested node (${agent.isolatedColored} px)`,
+  );
+  check(
     /n56/.test(agent.editDiff) && /moved/.test(agent.editDiff),
     "agent views: edit returns a diff naming the moved node",
+  );
+  check(
+    /n28/.test(agent.rotatedDiff) && /moved/.test(agent.rotatedDiff),
+    "agent views: diff tracks children under a rotated parent",
   );
   await d.close();
 
