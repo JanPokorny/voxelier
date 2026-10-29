@@ -9,7 +9,7 @@ import {
   setCurrentDocument,
   writeDocument,
 } from "./persistence.ts";
-import { seedUid } from "./math.ts";
+import { seedDocument } from "./persistence.ts";
 import { lockDocument, withDocumentLock } from "./lock.ts";
 import { seed } from "./seed.ts";
 import type { DocMeta } from "./persistence.ts";
@@ -64,7 +64,11 @@ let pending: { root: SceneNode; uid?: number } | null = null;
 // Switch this tab to a document. The synchronous load happens after the lock is
 // granted; `root` is only for a brand-new/imported tree not stored yet. An
 // imported uid is seeded only when that tree is adopted under the new lock.
-export function open(id: string, root?: SceneNode, uid?: number): Promise<boolean> {
+export function open(
+  id: string,
+  root?: SceneNode,
+  uid?: number,
+): Promise<boolean> {
   pending = root ? { root, uid } : null;
   rememberLast(id);
   setDocInUrl(id);
@@ -85,7 +89,7 @@ export function loadCurrent(id: string): SceneNode {
   pending = null;
   setCurrentDocument(id);
   if (initial) {
-    if (initial.uid !== undefined) seedUid(initial.uid);
+    seedDocument(initial.root, initial.uid ?? 1);
     if (!writeDocument(id, initial.root)) {
       throw new Error("could not save the new document");
     }

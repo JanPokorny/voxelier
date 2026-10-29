@@ -226,13 +226,26 @@ export function save(): void {
 // Deserialise a { uid, root } envelope into a tree: a .voxelier.json file, a
 // stored document, or a legacy save. `seed:false` leaves the global uid counter
 // alone (imports seed it only once the new document is adopted).
+// Seed the counter past both the envelope's uid and every numeric id already in
+// the tree: imported files can carry a uid smaller than their own node ids.
+export function seedDocument(root: SceneNode, uid = 1): void {
+  let max = 0;
+  const walk = (n: Node): void => {
+    const m = /^n(\d+)/.exec(n.id);
+    if (m) max = Math.max(max, Number(m[1]));
+    if (n.type === "scene") n.children.forEach(walk);
+  };
+  walk(root);
+  seedUid(Math.max(uid, max + 1));
+}
+
 export function sceneFromEnvelope(
   d: { uid?: number; root?: SerNode; collapsed?: string[] } | null,
   seed = true,
 ): SceneNode | null {
   if (!d || !d.root) return null;
   const root = de(d.root) as SceneNode;
-  if (seed) seedUid(d.uid || 1);
+  if (seed) seedDocument(root, d.uid || 1);
   return root;
 }
 export const loadUI = (): string[] => {

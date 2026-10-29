@@ -738,14 +738,19 @@ try {
       if (n.type === "scene") n.children.forEach(walk);
     };
     walk(v.S.root);
+    const beforeIds = [...seen];
     document.body.dispatchEvent(
       new KeyboardEvent("keydown", { key: "n", bubbles: true }),
     );
+    seen.clear();
+    dup = null;
     walk(v.S.root);
-    return dup;
+    const added = [...seen].filter((id) => !beforeIds.includes(id));
+    return { dup, added };
   });
   check(
-    oldUid > 1 && savedUid === oldUid && duplicate === null,
+    oldUid > 1 && savedUid === oldUid && duplicate.dup === null &&
+      duplicate.added.length === 1,
     "a smaller import uid leaves the old document's counter and ids intact",
   );
   await uo.close();
