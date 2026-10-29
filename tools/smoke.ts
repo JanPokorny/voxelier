@@ -192,6 +192,34 @@ try {
     // deno-lint-ignore no-explicit-any
     const v = (globalThis as any).voxelier;
     await v.load(json);
+
+    // read-only views: outline, relations, render
+    const outline = v.outline();
+    const nestedOutline = v.outline("n28");
+    const relations = v.relations();
+    const tucked = v.relations(["n85", "n107"]);
+    const stats = async (url: string) => {
+      const im = new Image();
+      im.src = url;
+      await im.decode();
+      const c = document.createElement("canvas");
+      c.width = im.width;
+      c.height = im.height;
+      const x = c.getContext("2d")!;
+      x.drawImage(im, 0, 0);
+      const d = x.getImageData(0, 0, c.width, c.height).data;
+      let n = 0, blue = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] < 248 || d[i + 1] < 248 || d[i + 2] < 248) {
+          n++;
+          if (d[i + 2] > d[i] && d[i + 2] > d[i + 1]) blue++;
+        }
+      }
+      return { w: im.width, h: im.height, colored: n, blue };
+    };
+    const top = await stats(
+      await v.render("top", { size: 256, grid: false, labels: false }),
+    );
     const before = v.exportJSON();
     const start = v.worldBounds("n56");
     const node = v.findById("n56");
@@ -300,6 +328,53 @@ try {
       badView = (e as Error).message;
     }
 
+    const editDiff = v.edit(() => {
+      v.findById("n56").pos.x += 1;
+    });
+    v.undo();
+
+    // a hidden descendant must not contribute geometry to its visible parent
+    v.edit(() => {
+      const o = v.newObject();
+      o.vis = "hidden";
+      o.boxes.push({
+        x0: -1000,
+        y0: -1000,
+        z0: -1000,
+        x1: 1000,
+        y1: 1000,
+        z1: 1000,
+        c: 0xff0000,
+      });
+      v.findById("n44").children.push(o);
+    });
+    const hiddenRel = v.relations(["n44", "n110"]);
+    v.undo();
+
+    // rotating a parent moves its children's world bounds
+    const rotatedDiff = v.edit(() => {
+      v.findById("n44").rot = 1;
+    });
+    v.undo();
+
+    // recolour a sibling blue: an isolate render must not leak it
+    v.edit(() => {
+      for (const b of v.findById("n69").boxes) b.c = 0x0000ff;
+    });
+    const isolated = await stats(
+      await v.render("top", {
+        focus: ["n28"],
+        isolate: true,
+        size: 256,
+        grid: false,
+        labels: false,
+      }),
+    );
+    const all = await stats(
+      await v.render("top", { size: 256, grid: false, labels: false }),
+    );
+    v.undo();
+
     return {
       before,
       undone,
@@ -316,6 +391,19 @@ try {
       touching,
       hasTouching: v.findById(obj.id) !== null,
       badView,
+      outline,
+      nestedOutline,
+      relations,
+      tucked,
+      hiddenRel,
+      rotatedDiff,
+      pngW: top.w,
+      pngH: top.h,
+      colored: top.colored,
+      isolatedColored: isolated.colored,
+      isolatedBlue: isolated.blue,
+      allBlue: all.blue,
+      editDiff,
     };
   }, office);
   check(agent.grew, "agent API: edit changes world bounds");
@@ -353,6 +441,46 @@ try {
   check(
     /unknown view/.test(agent.badView),
     "agent API: view rejects inherited property names",
+  );
+  check(
+    agent.outline.includes('n9 S "Office"') &&
+      agent.outline.includes('n107 O "Chair"'),
+    "agent views: outline lists known ids",
+  );
+  check(
+    agent.nestedOutline.includes('n28 O "Cutout table" x-134..-3'),
+    "agent views: outline(id) reports world coordinates",
+  );
+  check(
+    /(?:n79 "Door" \| n76 "Futon"|n76 "Futon" \| n79 "Door"): z gap 4/.test(
+      agent.relations,
+    ),
+    "agent views: relations reports a known gap",
+  );
+  check(
+    !/overlap/.test(agent.tucked),
+    "agent views: relations ignores a chair tucked under a table",
+  );
+  check(
+    !/overlap/.test(agent.hiddenRel),
+    "agent views: relations prunes hidden descendants",
+  );
+  check(
+    agent.pngW === 256 && agent.pngH === 256 && agent.colored > 1000,
+    `agent views: render('top') returns a non-blank 256px PNG (${agent.colored} px)`,
+  );
+  check(
+    agent.isolatedColored > 100 && agent.isolatedBlue < 10 &&
+      agent.allBlue > 100,
+    `agent views: isolate omits a blue sibling (${agent.isolatedBlue} isolated, ${agent.allBlue} all)`,
+  );
+  check(
+    /n56/.test(agent.editDiff) && /→/.test(agent.editDiff),
+    "agent views: edit returns a diff naming the changed node",
+  );
+  check(
+    /n28/.test(agent.rotatedDiff) && /→/.test(agent.rotatedDiff),
+    "agent views: diff tracks children under a rotated parent",
   );
   await d.close();
 
