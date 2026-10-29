@@ -12,7 +12,6 @@ import {
   goal,
   hoverVox,
   overlay,
-  viewport,
   ZOOM_MAX,
 } from "./scene-env.ts";
 import {
@@ -37,7 +36,7 @@ import {
 } from "./render.ts";
 import { boxesOverlap, worldBox } from "./boxes.ts";
 import { childById, clone, contextXform } from "./model.ts";
-import { orbitView, panCamera } from "./camera.ts";
+import { orbitView, panCamera, perPxAt } from "./camera.ts";
 import {
   boxSegments,
   clearMeasureAnchor,
@@ -96,14 +95,14 @@ function updateMeas(): void {
 }
 
 // World-Y units per pixel of vertical pointer travel, for Shift height edits.
-// One screen pixel is `perPx` world units along the screen's vertical axis; world
-// +Y projects onto that axis by the camera up-vector's world-y (= cos elevation),
+// One screen pixel is `perPx` world units along the screen's vertical axis at
+// the dragged point's depth (perspective foreshortens with distance); world +Y
+// projects onto that axis by the camera up-vector's world-y (= cos elevation),
 // so dividing by it makes the dragged height track the pointer exactly instead of
-// lagging it in the foreshortened isometric view.
-function worldYPerPixel(): number {
-  const perPx = (camera.top - camera.bottom) / viewport.h;
+// lagging it in the foreshortened view.
+function worldYPerPixel(p: Vec): number {
   const upY = Math.abs(camera.matrixWorldInverse.elements[5]);
-  return perPx / Math.max(upY, 0.15); // clamp: near top-down, Y barely projects
+  return perPxAt(p) / Math.max(upY, 0.15); // clamp: near top-down, Y barely projects
 }
 
 // Pan/orbit the camera for a drag delta; returns true if it handled the mode.
@@ -170,16 +169,20 @@ function moveDragTo(e: PointerEvent): void {
       d.shiftAnchorY = e.clientY;
       d.dyBase = d.dyUser ?? 0;
     }
+    // scale at the selection's base under the cursor, not at the ground below it
+    const base = d.start && { x: d.start.x, y: d.minY ?? 0, z: d.start.z };
     const dy = d.dyBase! +
-      Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
+      Math.round(
+        (d.shiftAnchorY - e.clientY) * worldYPerPixel(base ?? goal.target),
+      );
     if (free(d.dx!, dy, d.dz!)) {
       d.dyUser = dy;
       d.dy = dy;
     }
-  } else { // horizontal: move on the floor plane, hopping over small obstacles
+  } else { // horizontal: move on its floor plane, hopping over small obstacles
     d.shiftAnchorY = null;
     let dx = d.dx!, dz = d.dz!;
-    const g = groundCell(0);
+    const g = groundCell(d.minY ?? 0);
     if (g && d.start) {
       dx = g.x - d.start.x;
       dz = g.z - d.start.z;
@@ -394,9 +397,10 @@ function boxDragTo(e: PointerEvent): void {
     // Map pointer travel onto the extrude axis as it appears ON SCREEN, so the
     // box grows in the direction you drag (not always "up"). Take the world
     // direction of a one-cell +na step, resolve it against the camera's right/up
-    // axes to get its on-screen direction, then scale by the ortho pixels-per-
-    // world-unit so one screen-cell of pointer travel == one cell of depth (the
-    // extruded face tracks the cursor).
+    // axes to get its on-screen direction, then scale by the pixels-per-world-
+    // unit at the box's depth so one screen-cell of pointer travel == one cell of
+    // depth (the extruded face tracks the cursor). Linearised: exact for an axis
+    // lying in the image plane, close for the rest.
     const w0 = locToW(b.s[0], b.s[1], b.s[2]);
     const sN = b.s.slice() as [number, number, number];
     sN[b.na] += 1;
@@ -411,7 +415,7 @@ function boxDragTo(e: PointerEvent): void {
     // — NOT merely when the model is small on screen, which a pixel threshold
     // would wrongly trip, dropping side faces back to the vertical mapping.
     const sin2 = aR * aR + aU * aU;
-    const px = viewport.h / (camera.top - camera.bottom); // pixels per world unit
+    const px = 1 / perPxAt(w0); // pixels per world unit, at the box's depth
     const stepX = aR * px, stepY = -aU * px; // px per +1 cell (y down +)
     const dxp = e.clientX - d.shiftAnchorX!, dyp = e.clientY - d.shiftAnchorY!;
     const hy = d.hyBase! + (sin2 > 0.02 // axis usably on screen -> project onto it
@@ -419,7 +423,7 @@ function boxDragTo(e: PointerEvent): void {
         (dxp * stepX + dyp * stepY) / (stepX * stepX + stepY * stepY),
       )
       // axis ~along the view: no on-screen direction, fall back to vertical travel
-      : Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel()));
+      : Math.round((d.shiftAnchorY! - e.clientY) * worldYPerPixel(w0)));
     if (clear(b.c[ua], b.c[va], hy)) b.hy = hy; // else stop at the last clear depth
   } else { // drag the footprint in the face's plane
     d.shiftAnchorY = null;
@@ -482,7 +486,10 @@ function selMoveTo(e: PointerEvent): void {
       d.dyBase = ty;
     }
     ty = d.dyBase! +
-      Math.round((d.shiftAnchorY - e.clientY) * worldYPerPixel());
+      Math.round(
+        (d.shiftAnchorY - e.clientY) *
+          worldYPerPixel(locToW(d.start!.x, d.start!.y, d.start!.z)),
+      );
   } else { // slide on the start floor plane
     d.shiftAnchorY = null;
     const g = localGroundCell(d.start!.y);
@@ -589,15 +596,16 @@ canvas.addEventListener("pointerdown", (e) => {
     if (S.tool === "measure") {
       S.drag = { ...base, mode: "pan" }; // measure: click marks a point, drag pans
     } else if (onSel) {
+      const mc = moveCollision();
       S.drag = {
         ...base,
         mode: "move",
-        start: groundCell(0),
+        start: groundCell(mc.minY), // the plane the selection stands on
         dx: 0,
         dy: 0,
         dz: 0,
         shiftAnchorY: null,
-        ...moveCollision(),
+        ...mc,
       };
     } else S.drag = { ...base, mode: "pan", clickId: hitId };
   } else if (e.button === 2) {

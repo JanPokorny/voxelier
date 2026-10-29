@@ -7,29 +7,37 @@ import {
   _up,
   _upN,
   cam,
-  CAM_DIST,
   camera,
   goal,
   ground,
+  TAN_HALF_FOV,
   updateSky,
   viewport,
   ZOOM_MAX,
 } from "./scene-env.ts";
 import { boxEmpty, emptyBox, nodeBox, worldXform } from "./model.ts";
-import type { Box, Node } from "./types.ts";
+import { growBounds, worldBox } from "./boxes.ts";
+import type { Box, Node, Vec } from "./types.ts";
 
 // reused scratch so pan/orbit frames allocate no Vector3s
 const _dv = new THREE.Vector3(),
-  _fwd = new THREE.Vector3(),
   _right = new THREE.Vector3(),
   _camUp = new THREE.Vector3(),
-  _yUp = new THREE.Vector3(0, 1, 0);
+  _pw = new THREE.Vector3();
+
+// World units per screen pixel at a world point's depth. Perspective scale is
+// depth-dependent, so every pixel<->world conversion asks for its own point.
+export function perPxAt(p: Vec): number {
+  _pw.set(p.x, p.y, p.z).applyMatrix4(camera.matrixWorldInverse);
+  return (2 * Math.max(1e-3, -_pw.z) * TAN_HALF_FOV) / viewport.h;
+}
 
 export function panCamera(dx: number, dy: number): void {
-  const perPx = (camera.top - camera.bottom) / viewport.h;
-  camera.getWorldDirection(_fwd);
-  _right.crossVectors(_fwd, _yUp).normalize();
-  _camUp.crossVectors(_right, _fwd).normalize();
+  const perPx = cam.zoom / viewport.h; // view height at the target, the pan pivot
+  // the camera's own basis, not forward x world-up: the latter is degenerate
+  // looking straight down/up, where the swung up-vector is the only usable one
+  _right.setFromMatrixColumn(camera.matrixWorld, 0);
+  _camUp.setFromMatrixColumn(camera.matrixWorld, 1);
   goal.target.addScaledVector(_right, -dx * perPx);
   goal.target.addScaledVector(_camUp, dy * perPx);
 }
@@ -47,12 +55,21 @@ export function frameBox(b: Box): void {
     (b.min.y + b.max.y) / 2,
     (b.min.z + b.max.z) / 2,
   );
+  // Fit the bounding sphere: sin(half-angle) = R / distance, and zoom is the
+  // view height at that distance (distance = zoom / 2·TAN_HALF_FOV). Cover the
+  // horizontal half-angle too, for a viewport narrower than it is tall.
+  const R = 0.5 *
+    Math.hypot(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z);
+  const fit = (t: number) =>
+    (2.3 * R * TAN_HALF_FOV * Math.sqrt(1 + t * t)) / t;
   goal.zoom = Math.max(
     8,
     Math.min(
       ZOOM_MAX,
-      Math.max(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z) * 1.5 +
-        8,
+      Math.max(
+        fit(TAN_HALF_FOV),
+        fit(TAN_HALF_FOV * (viewport.w / viewport.h)),
+      ),
     ),
   );
 }
@@ -99,7 +116,10 @@ export function updateCamera(): void {
   cam.target.lerp(goal.target, 0.25);
   const ce = Math.cos(cam.elev), se = Math.sin(cam.elev);
   _dv.set(ce * Math.sin(cam.azim), se, ce * Math.cos(cam.azim));
-  camera.position.copy(cam.target).addScaledVector(_dv, CAM_DIST);
+  // Zoom is the view height at the orbit target: dolly by moving the camera in
+  // and out along the view ray, keeping the target (and so the pivot) fixed.
+  const dist = cam.zoom / (2 * TAN_HALF_FOV);
+  camera.position.copy(cam.target).addScaledVector(_dv, dist);
   const t = THREE.MathUtils.clamp(
     (Math.abs(cam.elev) - 1.45) / (Math.PI / 2 - 1.45),
     0,
@@ -115,41 +135,71 @@ export function updateCamera(): void {
   _up.set(0, 1, 0).lerp(_upN, t);
   camera.up.copy(_up.normalize());
   camera.lookAt(cam.target);
-  const a = viewport.w / viewport.h,
-    h = cam.zoom,
-    w = h * a;
-  camera.left = -w / 2;
-  camera.right = w / 2;
-  camera.top = h / 2;
-  camera.bottom = -h / 2;
-  // Depth range = the scene's (and ground's) extent along the view axis, so an
-  // arbitrarily large model never clips against a fixed far plane. Orthographic
-  // tolerates a negative near, so the camera may even sit inside the model.
-  const p = camera.position; // _dv points target->camera, so (p-pt)·_dv is depth in front
+  camera.aspect = viewport.w / viewport.h;
+  // Depth range = the scene's (and the patch of ground its shadows land on)
+  // extent along the view axis, so an arbitrarily large model never clips
+  // against a fixed far plane. _dv points target->camera, so (p-pt)·_dv is the
+  // depth in front of the camera.
+  const p = camera.position;
   let near = Infinity, far = -Infinity;
   const consider = (x: number, y: number, z: number) => {
     const d = (p.x - x) * _dv.x + (p.y - y) * _dv.y + (p.z - z) * _dv.z;
     if (d < near) near = d;
     if (d > far) far = d;
   };
-  const b = S.sceneBox;
-  if (b && !boxEmpty(b)) {
-    for (const cx of [b.min.x, b.max.x]) {
-      for (const cy of [b.min.y, b.max.y]) {
-        for (const cz of [b.min.z, b.max.z]) consider(cx, cy, cz);
+  const considerBox = (bx: Box, ox = 0, oy = 0, oz = 0) => {
+    for (const cx of [bx.min.x, bx.max.x]) {
+      for (const cy of [bx.min.y, bx.max.y]) {
+        for (const cz of [bx.min.z, bx.max.z]) {
+          consider(cx + ox, cy + oy, cz + oz);
+        }
       }
     }
-  }
-  const gx = cam.target.x, gz = cam.target.z, gr = 4000; // ground plane (at y=0)
-  for (const sx of [-gr, gr]) {
-    for (const sz of [-gr, gr]) consider(gx + sx, 0, gz + sz);
+  };
+  const b = S.sceneBox;
+  if (b && !boxEmpty(b)) {
+    considerBox(b);
+    // Geometry that has moved since the last rebuild — the edited object's live
+    // boxes, a lifted selection, a dragged scene selection — is not in sceneBox
+    // yet, and a fixed ortho range used to absorb that. A perspective one cannot.
+    if (S.editObject) {
+      const live = nodeBox(
+        S.editObject,
+        S.editXform.off,
+        S.editXform.rot,
+        emptyBox(),
+      );
+      if (S.sel3d) { // a lifted selection rides outside the object's own boxes
+        const r = S.sel3d.region;
+        const w = worldBox({ ...r, c: 0 }, S.editXform.rot, S.editXform.off);
+        growBounds([w], live);
+      }
+      considerBox(live);
+    }
+    const d = S.drag;
+    if (d && d.dx != null) considerBox(b, d.dx, d.dy ?? 0, d.dz ?? 0);
+    // The ground its shadows land on: the shadow catcher quad is unbounded, but
+    // nothing outside this patch can be shadowed by the scene. Use the full
+    // diagonal — a tall model throws its shadow sideways (the light is off-axis).
+    const gp = Math.max(
+      10,
+      0.5 *
+        Math.hypot(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z),
+    );
+    for (const gx of [b.min.x - gp, b.max.x + gp]) {
+      for (const gz of [b.min.z - gp, b.max.z + gp]) consider(gx, 0, gz);
+    }
   }
   if (near > far) { // empty scene
     near = 0.1;
     far = 4000;
   }
-  camera.near = near - 10;
-  camera.far = far + 10;
+  // near must stay positive (a perspective camera cannot sit inside the model the
+  // way an orthographic one could) and it scales with the view: pinned to a fixed
+  // floor it would starve the depth buffer on large scenes, where the depth range
+  // is thousands of cells wide.
+  camera.near = Math.max(cam.zoom * 0.02, near - 5);
+  camera.far = Math.max(camera.near + 1, far + 5);
   camera.updateProjectionMatrix();
   // invisible shadow catcher tracks the view. Sits a hair below y=0 (not exactly
   // on it) so a voxel face flush with the ground isn't coplanar with the catcher:
