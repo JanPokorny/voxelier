@@ -35,17 +35,16 @@ export const goal = {
   zoom: cam.zoom,
   target: cam.target.clone(),
 };
-export const CAM_DIST = 900;
-export const ZOOM_MAX = 2000; // max orthographic view height (zoom-out limit)
-// frustum and near/far here are placeholders — updateCamera() recomputes all of
-// them from the viewport and scene depth every frame, before the first render.
-export const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
+const FOV = 45; // vertical field of view
+export const TAN_HALF_FOV = Math.tan((FOV * Math.PI) / 360);
+export const ZOOM_MAX = 2000; // max view height at the target (zoom-out limit)
+// aspect and near/far here are placeholders — updateCamera() recomputes them
+// from the viewport and scene depth every frame, before the first render.
+export const camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 4000);
 
-// Sky: a full-screen vertical gradient. Looking down from above the ground we
-// see the world, so the backdrop is green; looking up from below it's blue. A
-// short blend across the side-on angle avoids a hard pop. (No true horizon —
-// that doesn't survive an orthographic projection.)
-const skyU = { uGround: { value: 1 } }; // 1 = green (above), 0 = blue (below)
+// Sky: a full-screen vertical gradient. Below the horizon (where world
+// horizontal crosses the view) is the ground, so green; above it is sky, blue.
+const skyU = { uHorizon: { value: 1 } }; // horizon line, in NDC y
 const sky = new THREE.Mesh(
   new THREE.PlaneGeometry(2, 2),
   new THREE.ShaderMaterial({
@@ -55,7 +54,7 @@ const sky = new THREE.Mesh(
     vertexShader:
       `varying vec2 vN; void main(){ vN = position.xy; gl_Position = vec4(position.xy, 1.0, 1.0); }`,
     fragmentShader: `precision highp float;
-      varying vec2 vN; uniform float uGround;
+      varying vec2 vN; uniform float uHorizon;
       // Drawn straight to the canvas (no post-process OutputPass) and a raw
       // ShaderMaterial gets no colour-space conversion from the renderer, so the
       // colours below are authored directly in display (sRGB) space.
@@ -63,7 +62,9 @@ const sky = new THREE.Mesh(
         float t = (vN.y + 1.0) * 0.5; // 0 bottom .. 1 top
         vec3 grn = mix(vec3(0.24, 0.33, 0.19), vec3(0.42, 0.55, 0.34), t);
         vec3 blu = mix(vec3(0.62, 0.74, 0.86), vec3(0.20, 0.40, 0.62), t);
-        gl_FragColor = vec4(mix(blu, grn, uGround), 1.0);
+        gl_FragColor = vec4(
+          mix(grn, blu, smoothstep(uHorizon - 0.03, uHorizon + 0.03, vN.y)),
+          1.0);
       }`,
   }),
 );
@@ -71,8 +72,12 @@ sky.frustumCulled = false;
 sky.renderOrder = -1e9; // draw before everything
 scene.add(sky);
 export function updateSky(): void {
-  // ramp green<->blue across a few degrees either side of side-on (elev 0)
-  skyU.uGround.value = Math.max(0, Math.min(1, (cam.elev + 0.05) / 0.1));
+  // Where world horizontal crosses the view, as the NDC y of a horizontal view
+  // ray: tan(elevation) / tan(half the vertical FOV). Past ±1 (whole view above
+  // or below it) the smoothstep saturates, so clamp it to stay finite at the
+  // poles (where the camera is looking straight up/down).
+  const h = Math.tan(cam.elev) / TAN_HALF_FOV;
+  skyU.uHorizon.value = Math.max(-2, Math.min(2, h));
 }
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.62));

@@ -241,7 +241,7 @@ export function updateMeasureLabels(): void {
   if (!measLabels.length) return;
   for (const L of measLabels) {
     _mv.copy(L.w).project(camera);
-    if (_mv.z > 1) {
+    if (Math.abs(_mv.z) > 1) { // beyond the far plane, or in front of the near one
       L.el.style.display = "none";
       continue;
     }

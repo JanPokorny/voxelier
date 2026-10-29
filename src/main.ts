@@ -134,12 +134,12 @@ async function start(): Promise<void> {
   S.editObject = null;
   S.sel3d = null;
   S.selection.clear();
+  measure(); // seed the viewport cache before the first framing/reconcile/render
   rebuild();
   updateChrome();
   frameView();
   flush(); // synchronous baseline undo snapshot
   installAgentApi();
-  measure(); // seed the viewport cache before the first reconcile/render
   tick(); // start the on-demand render loop
 }
 start();
