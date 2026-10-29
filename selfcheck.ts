@@ -21,6 +21,7 @@ import { cutCorner, cutJob } from "./src/cutplane.ts";
 import { rigidRotateWorld } from "./src/shear.ts";
 import { boxFaceGeo } from "./src/mesh.ts";
 import { repackBoxes } from "./src/rebox.ts";
+import { back, push, reset } from "./src/undo.ts";
 import * as Y from "yjs";
 import { build, docFromTree, reconcile, snapshot } from "./src/crdt/doc.ts";
 
@@ -885,4 +886,46 @@ Deno.test("crdt: deleting a group drops its subtree, not just the group", () => 
   assertEquals(JSON.stringify(ma), JSON.stringify(mb), "peers must converge");
   assertEquals(ma.children.map((c) => c.id), ["nk"], "G and its child are gone");
   assertEquals(ma.children[0].name, "renamed");
+});
+
+// history.ts itself pulls in the DOM (ui/render), so these exercise the pure
+// snapshot stack it is built on. The document-switch sites (io/ui/store) call
+// reset() before flushing a baseline; that wiring only runs in the browser.
+const undoSnap = (rootJSON: string) => ({
+  rootJSON,
+  uid: 1,
+  pathIds: [],
+  selection: [],
+  editId: null,
+  collapsed: [],
+});
+
+Deno.test("undo: opening another document drops the previous history", () => {
+  reset();
+  push(undoSnap("doc-a"));
+  push(undoSnap("doc-a edited"));
+  reset(); // document switch, before the baseline flush
+  push(undoSnap("doc-b"));
+  assertEquals(back(), null, "Ctrl-Z must not cross into the old document");
+  push(undoSnap("doc-b edited"));
+  assertEquals(back()?.rootJSON, "doc-b", "undo stays within the new document");
+  assertEquals(back(), null);
+  reset();
+});
+
+Deno.test("undo: a merged remote edit becomes the new baseline", () => {
+  reset();
+  push(undoSnap("local-1"));
+  push(undoSnap("local-2"));
+  // a peer's update merged (store.ts), so main.ts resets and flushes the merge
+  reset();
+  push(undoSnap("local-2 + remote"));
+  push(undoSnap("local-2 + remote + local"));
+  assertEquals(
+    back()?.rootJSON,
+    "local-2 + remote",
+    "undo keeps the remote edit",
+  );
+  assertEquals(back(), null, "pre-remote snapshots are unreplayable");
+  reset();
 });

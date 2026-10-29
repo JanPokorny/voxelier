@@ -10,20 +10,12 @@ import { peekUid, seedUid } from "./math.ts";
 import { findById } from "./model.ts";
 import { rebuild } from "./render.ts";
 import { updateChrome } from "./ui.ts";
+import { back, forward, push, replaceTop, top } from "./undo.ts";
+import type { Snap } from "./undo.ts";
 import type { Node, ObjectNode, SceneNode } from "./types.ts";
 
-type Snap = {
-  rootJSON: string;
-  uid: number;
-  pathIds: string[];
-  selection: string[];
-  editId: string | null;
-  collapsed: string[];
-};
+export { reset } from "./undo.ts";
 
-const MAX = 200; // cap on retained snapshots
-const stack: Snap[] = [];
-let index = -1; // position of the current state within stack
 let restoring = false; // true while applying a snapshot, so save() won't re-record
 
 const snapshot = (rootJSON: string): Snap => ({
@@ -43,16 +35,13 @@ const snapshot = (rootJSON: string): Snap => ({
 export function record(rootJSON: string): void {
   if (restoring) return;
   const snap = snapshot(rootJSON);
-  const prev = stack[index];
+  const prev = top();
   // dedup on the document only: record() is only reached via save() (after a
   // real mutation) or a baseline flush; navigation that changes editId alone
   // never calls save(), and restore() reproduces rootJSON exactly — so the
   // editId is never the deciding difference here.
   if (prev && prev.rootJSON === snap.rootJSON) return;
-  stack.length = index + 1; // drop any redo tail
-  stack.push(snap);
-  if (stack.length > MAX) stack.shift();
-  index = stack.length - 1;
+  push(snap);
 }
 
 // Replace the top snapshot in place — for a document whose geometry is
@@ -60,8 +49,8 @@ export function record(rootJSON: string): void {
 // Undo semantics must be unaffected, so no new step is recorded and stepping
 // back still lands on the same previous state.
 export function amend(rootJSON: string): void {
-  if (restoring || index < 0) return;
-  stack[index] = snapshot(rootJSON);
+  if (restoring || !top()) return;
+  replaceTop(snapshot(rootJSON));
 }
 
 function restore(snap: Snap): void {
@@ -98,9 +87,11 @@ function restore(snap: Snap): void {
 // as the current top of the stack before we step off it.
 export function undo(): void {
   flush();
-  if (index > 0) restore(stack[--index]);
+  const snap = back();
+  if (snap) restore(snap);
 }
 export function redo(): void {
   flush();
-  if (index < stack.length - 1) restore(stack[++index]);
+  const snap = forward();
+  if (snap) restore(snap);
 }

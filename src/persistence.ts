@@ -6,7 +6,7 @@
 // whatever is currently open. save is debounced.
 import { S } from "./state.ts";
 import { seedUid } from "./math.ts";
-import { amend, record } from "./history.ts";
+import { amend, record, reset } from "./history.ts";
 import { commitLocal } from "./crdt/store.ts";
 import type { Node, ObjectNode, SceneNode, Vis } from "./types.ts";
 
@@ -123,6 +123,9 @@ export function sceneFromEnvelope(
 // groups you have folded is your view of the scene, not part of it.
 export function adoptRemote(root: SceneNode): void {
   S.root = root;
+  // A wholesale tree swap (another document, or a peer's edit) can't be replayed
+  // by the local snapshots; the caller flushes a fresh baseline right after.
+  reset();
 }
 export const loadUI = (): string[] => {
   try {
