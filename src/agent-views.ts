@@ -180,10 +180,18 @@ function makeCamera(view: string, b: Box): { camera: THREE.Camera; half: number 
   const c = new THREE.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2);
   const w = Math.max(1, b.max.x - b.min.x), h = Math.max(1, b.max.y - b.min.y), d = Math.max(1, b.max.z - b.min.z);
   const dims = [w, h, d], diag = Math.hypot(w, h, d);
-  const axes = view === "top" ? [0, 2] : view === "front" ? [0, 1] : view === "side" ? [2, 1] : [0, 2];
-  const half = (view === "iso" ? diag : Math.max(dims[axes[0]], dims[axes[1]])) / 2 * 1.12 + 2;
-  const dir = view === "top" ? [0, 1, 0] : view === "front" ? [0, 0, 1] : view === "side" ? [1, 0, 0] : [1, 1, 1];
   const dist = diag * 2 + 100;
+  if (view === "iso") {
+    const fov = 35, radius = diag / 2, d0 = radius / Math.sin(THREE.MathUtils.degToRad(fov / 2)) * 1.08;
+    const el = Math.atan(1 / Math.SQRT2), az = E.cam.azim;
+    const camera = new THREE.PerspectiveCamera(fov, 1, d0 - radius * 3, d0 + radius * 3);
+    camera.position.copy(c).add(new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)).multiplyScalar(d0));
+    camera.lookAt(c);
+    return { camera, half: 0 };
+  }
+  const axes = view === "top" ? [0, 2] : view === "front" ? [0, 1] : [2, 1];
+  const half = Math.max(dims[axes[0]], dims[axes[1]]) / 2 * 1.12 + 2;
+  const dir = view === "top" ? [0, 1, 0] : view === "front" ? [0, 0, 1] : [1, 0, 0];
   const camera = new THREE.OrthographicCamera(-half, half, half, -half, 0.1, dist + diag * 2);
   camera.position.copy(c).add(new THREE.Vector3(dir[0], dir[1], dir[2]).normalize().multiplyScalar(dist));
   if (view === "top") camera.up.set(0, 0, -1);
@@ -217,7 +225,7 @@ function drawLabels(ctx: CanvasRenderingContext2D, camera: THREE.Camera, size: n
   }
 }
 // deno-fmt-ignore
-export function renderView(view: string, opts: { focus?: string | string[]; labels?: boolean; grid?: boolean; size?: number; cutY?: number } = {}): Promise<string> {
+export function renderView(view: string, opts: { focus?: string | string[]; isolate?: boolean; labels?: boolean; grid?: boolean; size?: number; cutY?: number } = {}): Promise<string> {
   if (!VIEWS.has(view)) throw new Error(`unknown view "${view}": use top, front, side or iso`);
   const size = Math.max(64, Math.min(2048, Math.round(opts.size ?? 900)));
   const focus = opts.focus === undefined ? [] : typeof opts.focus === "string" ? [opts.focus] : opts.focus;
@@ -233,9 +241,14 @@ export function renderView(view: string, opts: { focus?: string | string[]; labe
     Object.assign(b, S.sceneBox && !M.boxEmpty(S.sceneBox) ? S.sceneBox : { min: { x: -20, y: 0, z: -20 }, max: { x: 20, y: 40, z: 20 } });
   }
   const { camera, half } = makeCamera(view, b);
+  const owners = opts.isolate && focus.length ? new Set<string>() : null;
+  if (owners) for (const id of focus) {
+    const path = M.findPath(M.findById(id)!), child = path?.[path.indexOf(S.context) + 1];
+    if (child) owners.add(child.id);
+  }
   const objects: { id: string; b: Box }[] = [];
-  eachObject(S.root, O, 0, null, null, (n, off, rot, _owner, dRoot) => {
-    if (dRoot) return;
+  eachObject(S.root, O, 0, null, null, (n, off, rot, owner, dRoot) => {
+    if (dRoot || (owners && (!owner || !owners.has(owner)))) return;
     const nb = M.nodeBox(n, off, rot, M.emptyBox());
     if (!M.boxEmpty(nb)) objects.push({ id: n.id, b: nb });
   });
@@ -245,6 +258,7 @@ export function renderView(view: string, opts: { focus?: string | string[]; labe
   E.scene.traverse((o: THREE.Object3D) => {
     const m = o as THREE.Mesh, mat = m.material as THREE.Material | undefined;
     if ((m.isMesh && mat?.clippingPlanes?.length) || (o as THREE.LineSegments).isLineSegments || o.renderOrder < -1e8) hide(o);
+    if (owners && m.isMesh && o.parent !== E.editGroup && (!o.userData.childId || !owners.has(o.userData.childId))) hide(o);
   });
   const oldSize = E.renderer.getSize(new THREE.Vector2());
   const oldClip = E.renderer.clippingPlanes, oldShadow = E.renderer.shadowMap.enabled, oldBg = E.scene.background;
