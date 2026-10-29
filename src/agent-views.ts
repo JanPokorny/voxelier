@@ -75,10 +75,8 @@ export function outline(
   return lines.join("\n");
 }
 
-// deno-fmt-ignore
 type Rel = { kind: "overlap" | "gap"; max: number; text: string };
 // One real-box test: overlap reports its extent, gaps report every separated axis.
-// deno-fmt-ignore
 function separation(a: Box3[], b: Box3[]): Rel | null {
   let ov: { v: number; d: number[] } | null = null, near: { m: number; g: number[] } | null = null;
   for (const p of a) for (const q of b) {
@@ -98,7 +96,6 @@ function separation(a: Box3[], b: Box3[]): Rel | null {
   const parts = near.g.map((v, i) => v ? `${AXES[i]} gap ${v}` : "").filter(Boolean);
   return { kind: "gap", max: near.m, text: parts.length ? parts.join(" ") : "touch" };
 }
-// deno-fmt-ignore
 export function relations(ids?: string | string[], { within = 60 }: { within?: number } = {}): string {
   let list: Node[];
   if (ids !== undefined) list = (typeof ids === "string" ? [ids] : ids).map((id) => { const n = M.findById(id); if (!n) throw new Error(`unknown node id: ${id}`); return n; });
@@ -113,7 +110,6 @@ export function relations(ids?: string | string[], { within = 60 }: { within?: n
   return out.join("\n");
 }
 
-// deno-fmt-ignore
 export function diff(before: string): string {
   const j = JSON.parse(before), prev = de(j.root ?? j) as Node, out: string[] = [];
   const range = (b: Box | null) => b ? fmtBox(b) : "empty";
@@ -142,7 +138,6 @@ export function diff(before: string): string {
 }
 
 const VIEWS = new Set(["top", "front", "side", "iso"]);
-// deno-fmt-ignore
 function makeCamera(view: string, b: Box): { camera: THREE.Camera; half: number } {
   const c = new THREE.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2);
   const w = Math.max(1, b.max.x - b.min.x), h = Math.max(1, b.max.y - b.min.y), d = Math.max(1, b.max.z - b.min.z);
@@ -165,7 +160,6 @@ function makeCamera(view: string, b: Box): { camera: THREE.Camera; half: number 
   camera.lookAt(c);
   return { camera, half };
 }
-// deno-fmt-ignore
 function drawGrid(ctx: CanvasRenderingContext2D, size: number, b: Box, half: number): void {
   const s = size / (2 * half), mid = size / 2, cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
   ctx.strokeStyle = "rgba(0,0,0,0.14)"; ctx.lineWidth = 1;
@@ -181,7 +175,6 @@ function drawGrid(ctx: CanvasRenderingContext2D, size: number, b: Box, half: num
   ctx.moveTo(18, size - 20); ctx.lineTo(18 + 100 * s, size - 20); ctx.stroke();
   ctx.font = "12px ui-monospace, monospace"; ctx.fillStyle = "#111"; ctx.fillText("1 m", 18, size - 26);
 }
-// deno-fmt-ignore
 function drawLabels(ctx: CanvasRenderingContext2D, camera: THREE.Camera, size: number, objects: { id: string; b: Box }[]): void {
   ctx.font = "bold 11px ui-monospace, monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
   for (const { id, b } of objects) {
@@ -191,7 +184,6 @@ function drawLabels(ctx: CanvasRenderingContext2D, camera: THREE.Camera, size: n
     ctx.lineWidth = 3; ctx.strokeStyle = "#fff"; ctx.strokeText(id, x, y); ctx.fillStyle = "#111"; ctx.fillText(id, x, y);
   }
 }
-// deno-fmt-ignore
 export function renderView(view: string, opts: { focus?: string | string[]; isolate?: boolean; labels?: boolean; grid?: boolean; size?: number; cutY?: number } = {}): Promise<string> {
   if (!VIEWS.has(view)) throw new Error(`unknown view "${view}": use top, front, side or iso`);
   const raw = opts.size ?? 900;
