@@ -4,6 +4,7 @@
 // replaces the document and resets the editor to the scene root.
 import { S } from "./state.ts";
 import { flush, sceneFromEnvelope, ser } from "./persistence.ts";
+import { reset } from "./history.ts";
 import { createDocument } from "./crdt/docs.ts";
 import { peekUid } from "./math.ts";
 import { rebuild } from "./render.ts";
@@ -54,6 +55,7 @@ export async function openScene(json: string): Promise<void> {
   rebuild();
   updateChrome();
   frameView();
+  reset(); // the old document's snapshots don't apply here
   flush(); // synchronous baseline undo snapshot for the imported scene
 }
 

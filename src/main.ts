@@ -102,9 +102,10 @@ function applyRemote(): void {
   // may have merged in since, and this is the freshest merged state.
   const root = build(theDoc());
   if (!root) return;
-  adoptRemote(root);
+  adoptRemote(root); // resets undo: no local snapshot contains the remote edit
   rebuild();
   updateChrome();
+  flush(); // the merged state becomes the new undo baseline
   wake();
 }
 
