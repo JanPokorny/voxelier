@@ -13,7 +13,7 @@
 // Usage: bun run build && bun run smoke
 // Set VOXELIER_CHROME to a Chromium binary if Playwright's own download is absent.
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { chromium } from "playwright";
 
 const PORT = Number(process.env.VOXELIER_PORT ?? 8231);
@@ -453,9 +453,12 @@ try {
       }
       return { w: im.width, h: im.height, colored: n, blue };
     };
-    const top = await stats(
-      await v.render("top", { size: 256, grid: false, labels: false }),
-    );
+    const topUrl = await v.render("top", {
+      size: 256,
+      grid: false,
+      labels: false,
+    });
+    const top = await stats(topUrl);
     const before = v.exportJSON();
     const start = v.worldBounds("n56");
     const node = v.findById("n56");
@@ -611,6 +614,46 @@ try {
     );
     v.undo();
 
+    // labels: record the strings the renderer actually draws
+    const drawn: string[] = [];
+    const proto = CanvasRenderingContext2D.prototype;
+    const fillText = proto.fillText;
+    proto.fillText = function (
+      this: CanvasRenderingContext2D,
+      t: string,
+      ...a: [number, number]
+    ) {
+      drawn.push(t);
+      return fillText.call(this, t, ...a);
+    } as typeof proto.fillText;
+    await v.render("top", { size: 256, grid: false });
+    proto.fillText = fillText;
+
+    // relations(ids) against every visible object, not just the listed ones;
+    // a hidden variant is still answered, and a child never matches its parent
+    const doorRel = v.relations(["n79"]);
+    const hiddenVariant = v.relations(["n46"]);
+    const nested = v.relations(["n28"]);
+    // clearance: the chair's back to the mattress across a height gap
+    const clear = v.clearance("n107", "+z");
+    const nestedClear = v.clearance("n28", "+z");
+
+    // variants: clone as a sibling, show as one edit, undo reports the change
+    const cloneId = v.clone("n46");
+    const clone = v.findById(cloneId)!;
+    const cloneIsSibling = v.S.root.children.some((c: any) => c.id === cloneId);
+    const freshIds = clone.children.every((c: any, i: number) =>
+      c.id !== v.findById("n46").children[i].id
+    );
+    const showDiff = v.show(cloneId);
+    const shownSiblings = v.S.root.children
+      .filter((c: any) => c.vis === "visible")
+      .map((c: any) => c.id);
+    const undoDiff = v.undo();
+    const restored = v.findById("n46").vis;
+    v.undo(); // drop the clone again
+    const cloneGone = v.findById(cloneId) === null;
+
     return {
       before,
       undone,
@@ -635,9 +678,23 @@ try {
       rotatedDiff,
       pngW: top.w,
       pngH: top.h,
+      topMime: topUrl.slice(5, 15),
       colored: top.colored,
       isolatedColored: isolated.colored,
       isolatedBlue: isolated.blue,
+      drawn,
+      doorRel,
+      hiddenVariant,
+      nested,
+      clear,
+      nestedClear,
+      cloneIsSibling,
+      freshIds,
+      showDiff,
+      shownSiblings,
+      undoDiff,
+      restored,
+      cloneGone,
       allBlue: all.blue,
       editDiff,
     };
@@ -703,7 +760,11 @@ try {
   );
   check(
     agent.pngW === 256 && agent.pngH === 256 && agent.colored > 1000,
-    `agent views: render('top') returns a non-blank 256px PNG (${agent.colored} px)`,
+    `agent views: render('top') returns a non-blank 256px image (${agent.colored} px)`,
+  );
+  check(
+    agent.topMime === "image/webp",
+    `agent views: render defaults to a small webp payload (${agent.topMime})`,
   );
   check(
     agent.isolatedColored > 100 && agent.isolatedBlue < 10 &&
@@ -717,6 +778,72 @@ try {
   check(
     /n28/.test(agent.rotatedDiff) && /→/.test(agent.rotatedDiff),
     "agent views: diff tracks children under a rotated parent",
+  );
+
+  // ---- agent files: downloads instead of base64 in the tool result ----
+  const downloads: any[] = [];
+  d.on("download", (x: any) => downloads.push(x));
+  const saved = await d.evaluate(async () => {
+    const v = (globalThis as any).voxelier;
+    return [
+      await v.render("top", {
+        size: 256,
+        grid: false,
+        save: "smoke-render.webp",
+      }),
+      v.exportJSON({ save: "smoke-scene.voxelier.json" }),
+    ];
+  });
+  await waitFor(d, async () => downloads.length === 2, 5000);
+  const files = await Promise.all(downloads.map(async (x: any) => {
+    const p = await x.path(); // undefined when downloads are not accepted
+    return p ? { name: x.suggestedFilename(), size: (await stat(p)).size } : null;
+  }));
+  const savedBytes = files.filter(Boolean).map((f) => f!.size);
+  console.log(`  ..  downloads: ${JSON.stringify(files)}`);
+  check(
+    files.length === 2 && savedBytes.every((n) => n > 1000) &&
+      saved.every((s) => /^saved /.test(s)),
+    `agent API: save downloads files and returns a confirmation (${savedBytes.join("/")} bytes; ${saved[0]})`,
+  );
+  await d.evaluate(() =>
+    (document.getElementById("btn-save") as HTMLElement).click()
+  );
+  await waitFor(d, async () => downloads.length === 3, 5000);
+  check(
+    downloads.length === 3,
+    "the UI export button still downloads through the shared helper",
+  );
+  check(
+    agent.drawn.includes("Chair") &&
+      !agent.drawn.some((l: string) => /^(Walls|Floor|Ceiling)$/.test(l)),
+    `agent views: render labels names and skips shells (${
+      agent.drawn.join(", ")
+    })`,
+  );
+  check(
+    /n76 "Futon": z gap 4/.test(agent.doorRel) &&
+      /n110 "Shelving": overlap/.test(agent.hiddenVariant) &&
+      !/n44 "/.test(agent.nested),
+    `agent views: relations(ids) compares against every visible object (${
+      agent.hiddenVariant.split("\n")[0]
+    })`,
+  );
+  check(
+    agent.clear?.distance === 10 && agent.clear.id === "n3.cg40m8" &&
+      agent.nestedClear.id !== "n44",
+    `agent views: clearance measures the nearest box ahead (${
+      JSON.stringify(agent.clear)
+    })`,
+  );
+  check(
+    agent.cloneIsSibling && agent.freshIds && agent.cloneGone &&
+      agent.shownSiblings.length === 2 &&
+      agent.shownSiblings.includes("n75") &&
+      !agent.showDiff.includes("\"Immutable\"") &&
+      /vis visible→hidden/.test(agent.showDiff) &&
+      /→/.test(agent.undoDiff) && agent.restored === "hidden",
+    `agent views: clone/show switch a sibling variant and undo returns the diff`,
   );
   await d.close();
 
