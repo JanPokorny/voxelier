@@ -8,6 +8,7 @@ import { worldBox } from "./boxes.ts";
 import { eachObject } from "./render.ts";
 import { boxFaceGeo } from "./mesh.ts";
 import { de } from "./persistence.ts";
+import { download } from "./io.ts";
 import * as E from "./scene-env.ts";
 import type { Box, Box3, Node, Rot, Vec } from "./types.ts";
 
@@ -33,15 +34,17 @@ export const worldBounds = (id?: string): Box | null => {
 };
 const worldBoxes = (n: Node): Box3[] => {
   const out: Box3[] = [];
-  const walk = (x: Node, off: Vec, rot: Rot): void => {
-    if (x.vis === "hidden") return;
+  // the queried node's own visibility is not applied — asking about a hidden
+  // variant is legitimate — but hidden descendants are pruned as usual
+  const walk = (x: Node, off: Vec, rot: Rot, self = false): void => {
+    if (!self && x.vis === "hidden") return;
     const o = addv(off, rotY(x.pos, rot)), r = (rot + x.rot) & 3;
     if (x.type === "object") {
       for (const b of x.boxes) out.push(worldBox(b, r, o));
     } else for (const c of x.children) walk(c, o, r);
   };
   const w = pathXform(M.findPath(n, S.root)!.slice(0, -1));
-  walk(n, w.off, w.rot);
+  walk(n, w.off, w.rot, true);
   return out;
 };
 
@@ -96,18 +99,82 @@ function separation(a: Box3[], b: Box3[]): Rel | null {
   const parts = near.g.map((v, i) => v ? `${AXES[i]} gap ${v}` : "").filter(Boolean);
   return { kind: "gap", max: near.m, text: parts.length ? parts.join(" ") : "touch" };
 }
+// The objects an agent means by "the scene": visible root children, plus the
+// visible members of the "Immutable" shell group (walls, floor, ceiling).
+const visibleObjects = (): Node[] =>
+  S.root.children.flatMap((c) =>
+    c.vis === "hidden"
+      ? []
+      : c.type === "scene" && c.name === "Immutable"
+      ? c.children.filter((g) => g.vis !== "hidden")
+      : [c]
+  );
+const visibleBoxes = (n: Node): Box3[] =>
+  (M.findPath(n) ?? []).every((p) => p.vis !== "hidden")
+    ? worldBoxes(n)
+    : [];
+
 export function relations(ids?: string | string[], { within = 60 }: { within?: number } = {}): string {
-  let list: Node[];
-  if (ids !== undefined) list = (typeof ids === "string" ? [ids] : ids).map((id) => { const n = M.findById(id); if (!n) throw new Error(`unknown node id: ${id}`); return n; });
-  else list = S.root.children.flatMap((c) => c.vis === "hidden" ? [] : c.type === "scene" && c.name === "Immutable" ? c.children.filter((g) => g.vis !== "hidden") : [c]);
-  const items = list.filter((n) => (M.findPath(n) ?? []).every((p) => p.vis !== "hidden")).map((n) => ({ n, boxes: worldBoxes(n) })).filter((it) => it.boxes.length);
-  const out: string[] = [];
-  for (const [i, a] of items.entries()) for (const b of items.slice(i + 1)) {
+  const items = visibleObjects().map((n) => ({ n, boxes: visibleBoxes(n) })).filter((it) => it.boxes.length);
+  // ids given: each listed object against every visible object, not just the
+  // listed ones — "does this collide with anything" needs the whole scene.
+  const list = ids === undefined ? items : (typeof ids === "string" ? [ids] : ids).map((id) => { const n = M.findById(id); if (!n) throw new Error(`unknown node id: ${id}`); return { n, boxes: worldBoxes(n) }; }).filter((it) => it.boxes.length);
+  const out: string[] = [], seen = new Set<string>();
+  const pair = (a: { n: Node; boxes: Box3[] }, b: { n: Node; boxes: Box3[] }) => {
+    // a listed object is honoured even when hidden ("does this variant collide"),
+    // but a node is never compared with its own container: the parent's boxes
+    // include the child, so that would only ever report a self-overlap
+    if (M.isDescendant(a.n, b.n) || M.isDescendant(b.n, a.n)) return;
+    const k = a.n.id < b.n.id ? `${a.n.id}|${b.n.id}` : `${b.n.id}|${a.n.id}`;
+    if (seen.has(k)) return;
+    seen.add(k);
     const s = separation(a.boxes, b.boxes);
-    if (!s || (s.kind === "gap" && s.max > within)) continue;
+    if (!s || (s.kind === "gap" && s.max > within)) return;
     out.push(`${a.n.id} "${a.n.name}" ${s.kind === "overlap" ? "~" : "|"} ${b.n.id} "${b.n.name}": ${s.text}`);
-  }
+  };
+  if (ids === undefined) {
+    for (const [i, a] of items.entries()) for (const b of items.slice(i + 1)) pair(a, b);
+  } else for (const a of list) for (const b of items) pair(a, b);
   return out.join("\n");
+}
+
+// Nearest visible box along one world axis, projected from the object's face: a
+// corridor, not a ray. Distance 0 = a box crosses the face; boxes behind it are
+// not obstacles. Horizontal directions ignore height (a chair back and the mattress
+// beside it share no band, yet the walkway is the question) and skip slabs that
+// share the object's plan footprint but not its height — the floor it stands on,
+// the ceiling above it. ±y uses the plan footprint.
+export function clearance(id: string, dir: string): { id: string; name: string; distance: number } | null {
+  const n = M.findById(id);
+  if (!n) throw new Error(`unknown node id: ${id}`);
+  const sign = dir[0] === "+" ? 1 : dir[0] === "-" ? -1 : 0;
+  const axis = AXES.indexOf(dir.slice(1));
+  if (!sign || axis < 0) throw new Error(`bad dir "${dir}": use +x, -x, +y, -y, +z or -z`);
+  const mine = worldBoxes(n);
+  if (!mine.length) throw new Error(`object ${id} has no visible geometry`);
+  const lo = (b: Box3, a: number) => a === 0 ? b.x0 : a === 1 ? b.y0 : b.z0;
+  const hi = (b: Box3, a: number) => a === 0 ? b.x1 : a === 1 ? b.y1 : b.z1;
+  const min = [0, 1, 2].map((a) => Math.min(...mine.map((b) => lo(b, a))));
+  const max = [0, 1, 2].map((a) => Math.max(...mine.map((b) => hi(b, a))));
+  const face = sign > 0 ? max[axis] : min[axis];
+  const perp = axis === 1 ? [0, 2] : [axis === 0 ? 2 : 0];
+  const inPlan = (b: Box3) =>
+    lo(b, 0) < max[0] && min[0] < hi(b, 0) &&
+    lo(b, 2) < max[2] && min[2] < hi(b, 2);
+  const underOrOver = (b: Box3) =>
+    inPlan(b) && (hi(b, 1) <= min[1] || lo(b, 1) >= max[1]);
+  let best: { id: string; name: string; distance: number } | null = null;
+  for (const other of visibleObjects()) {
+    if (M.isDescendant(other, n) || M.isDescendant(n, other)) continue;
+    for (const b of visibleBoxes(other)) {
+      if (sign > 0 ? hi(b, axis) <= face : lo(b, axis) >= face) continue;
+      if (!perp.every((a) => lo(b, a) < max[a] && min[a] < hi(b, a))) continue;
+      if (axis !== 1 && underOrOver(b)) continue;
+      const d = Math.max(0, sign > 0 ? lo(b, axis) - face : face - hi(b, axis));
+      if (!best || d < best.distance) best = { id: other.id, name: other.name, distance: d };
+    }
+  }
+  return best;
 }
 
 export function diff(before: string): string {
@@ -175,22 +242,32 @@ function drawGrid(ctx: CanvasRenderingContext2D, size: number, b: Box, half: num
   ctx.moveTo(18, size - 20); ctx.lineTo(18 + 100 * s, size - 20); ctx.stroke();
   ctx.font = "12px ui-monospace, monospace"; ctx.fillStyle = "#111"; ctx.fillText("1 m", 18, size - 26);
 }
-function drawLabels(ctx: CanvasRenderingContext2D, camera: THREE.Camera, size: number, objects: { id: string; b: Box }[]): void {
+function drawLabels(ctx: CanvasRenderingContext2D, camera: THREE.Camera, size: number, objects: { label: string; b: Box }[], maxArea: number): void {
   ctx.font = "bold 11px ui-monospace, monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-  for (const { id, b } of objects) {
+  for (const { label, b } of objects) {
+    // structural shells (walls, floor, ceiling) span the frame; their centroid
+    // label would sit in the middle of the room and hide nothing useful
+    if ((b.max.x - b.min.x) * (b.max.z - b.min.z) >= maxArea) continue;
     const p = new THREE.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2).project(camera);
     const x = (p.x * 0.5 + 0.5) * size, y = (1 - (p.y * 0.5 + 0.5)) * size;
     if (x < 0 || y < 0 || x > size || y > size) continue;
-    ctx.lineWidth = 3; ctx.strokeStyle = "#fff"; ctx.strokeText(id, x, y); ctx.fillStyle = "#111"; ctx.fillText(id, x, y);
+    ctx.lineWidth = 3; ctx.strokeStyle = "#fff"; ctx.strokeText(label, x, y); ctx.fillStyle = "#111"; ctx.fillText(label, x, y);
   }
 }
-export function renderView(view: string, opts: { focus?: string | string[]; isolate?: boolean; labels?: boolean; grid?: boolean; size?: number; cutY?: number } = {}): Promise<string> {
+const FORMATS: Record<string, number> = { png: 1, webp: 0.8, jpeg: 0.8 };
+export async function renderView(view: string, opts: { focus?: string | string[]; isolate?: boolean; labels?: boolean; grid?: boolean; size?: number; cutY?: number; save?: string; format?: string } = {}): Promise<string> {
+  const fmt = opts.format ?? "webp";
+  if (!Object.hasOwn(FORMATS, fmt)) {
+    throw new Error(`unknown format "${fmt}": use png, webp or jpeg`);
+  }
+  const mime = `image/${fmt}`, quality = FORMATS[fmt];
   if (!VIEWS.has(view)) throw new Error(`unknown view "${view}": use top, front, side or iso`);
   const raw = opts.size ?? 900;
   if (!Number.isFinite(raw) || raw <= 0) throw new Error("size must be a positive finite number");
   if (opts.cutY !== undefined && !Number.isFinite(opts.cutY)) throw new Error("cutY must be finite");
   const size = Math.max(64, Math.min(2048, Math.round(raw)));
   const focus = opts.focus === undefined ? [] : typeof opts.focus === "string" ? [opts.focus] : opts.focus;
+  const frame = S.sceneBox && !M.boxEmpty(S.sceneBox) ? S.sceneBox : { min: { x: -20, y: 0, z: -20 }, max: { x: 20, y: 40, z: 20 } };
   const b = M.emptyBox();
   if (focus.length) {
     for (const id of focus) {
@@ -199,14 +276,14 @@ export function renderView(view: string, opts: { focus?: string | string[]; isol
       b.max.x = Math.max(b.max.x, w.max.x); b.max.y = Math.max(b.max.y, w.max.y); b.max.z = Math.max(b.max.z, w.max.z);
     }
     if (M.boxEmpty(b)) throw new Error(`focus has no geometry: ${focus}`);
-  } else Object.assign(b, S.sceneBox && !M.boxEmpty(S.sceneBox) ? S.sceneBox : { min: { x: -20, y: 0, z: -20 }, max: { x: 20, y: 40, z: 20 } });
+  } else Object.assign(b, frame);
   const { camera, half } = makeCamera(view, b);
   const focusIds = new Set<string>();
   const mark = (n: Node): void => { focusIds.add(n.id); if (n.type === "scene") for (const c of n.children) mark(c); };
   for (const id of focus) mark(M.findById(id)!);
   const isolate = opts.isolate && focus.length > 0;
-  const objects: { id: string; b: Box }[] = [], boxes: Box3[] = [];
-  const take = (n: Node, nb: Box) => { if (!M.boxEmpty(nb)) { objects.push({ id: n.id, b: nb }); boxes.push(...worldBoxes(n)); } };
+  const objects: { label: string; b: Box }[] = [], boxes: Box3[] = [];
+  const take = (n: Node, nb: Box) => { if (!M.boxEmpty(nb)) { objects.push({ label: n.name || n.id, b: nb }); boxes.push(...worldBoxes(n)); } };
   eachObject(S.root, O, 0, null, null, (n, off, rot, _owner, dRoot) => {
     if (!dRoot && (!isolate || focusIds.has(n.id))) take(n, M.nodeBox(n, off, rot, M.emptyBox()));
   });
@@ -229,8 +306,21 @@ export function renderView(view: string, opts: { focus?: string | string[]; isol
     const ctx = out.getContext("2d")!;
     ctx.drawImage(E.renderer.domElement, 0, 0, size, size);
     if (view === "top" && opts.grid !== false) drawGrid(ctx, size, b, half);
-    if (opts.labels !== false) drawLabels(ctx, camera, size, objects);
-    return Promise.resolve(out.toDataURL("image/png"));
+    if (opts.labels !== false) {
+      const area = (frame.max.x - frame.min.x) * (frame.max.z - frame.min.z);
+      drawLabels(ctx, camera, size, objects, area * 0.25);
+    }
+    if (opts.save) {
+      // a 900px PNG is ~100 kB of base64 in a tool result; a browser download
+      // keeps it out of the agent's context entirely
+      const blob = await new Promise<Blob | null>((r) =>
+        out.toBlob(r, mime, quality)
+      );
+      if (!blob) throw new Error("could not encode the render");
+      download(blob, opts.save);
+      return `saved ${size}px ${blob.type.replace("image/", "")} ${Math.round(blob.size / 1024)} kB to "${opts.save}"`;
+    }
+    return out.toDataURL(mime, quality);
   } finally {
     geo?.dispose();
     E.renderer.setSize(oldSize.x, oldSize.y, false); E.renderer.clippingPlanes = oldClip;

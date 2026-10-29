@@ -3,7 +3,13 @@
 // editor command uses, so each call is one undo step and persists.
 import { S } from "./state.ts";
 import { de, flush, ser } from "./persistence.ts";
-import { findById, newObject, newScene } from "./model.ts";
+import {
+  clone as copyNode,
+  findById,
+  newObject,
+  newScene,
+  parentOf,
+} from "./model.ts";
 import { uid } from "./math.ts";
 import { boxesOverlap, clipBoxes } from "./boxes.ts";
 import { rebuild } from "./render.ts";
@@ -11,9 +17,10 @@ import { updateChrome } from "./ui.ts";
 import { redo, undo } from "./history.ts";
 import { fitNode, frameBox, frameView } from "./camera.ts";
 import { cam, goal, wake } from "./scene-env.ts";
-import { openScene, sceneEnvelope } from "./io.ts";
+import { openScene, download, sceneEnvelope } from "./io.ts";
 import { isReady } from "./lock.ts";
 import {
+  clearance,
   diff,
   outline,
   relations,
@@ -142,6 +149,43 @@ function edit(fn: (root: SceneNode) => void): string {
   return diff(base);
 }
 
+// Deep-copy a subtree as its next sibling, with fresh ids throughout (model's
+// clone). Each of these runs its own edit step — one undo unit — so call them
+// outside edit(fn); a nested edit is refused by edit().
+function clone(id: string): string {
+  const n = findById(id);
+  if (!n) throw new Error(`unknown node id: ${id}`);
+  const parent = parentOf(n);
+  if (!parent) throw new Error("the root has no siblings to be cloned into");
+  const copy = copyNode(n);
+  edit(() => {
+    parent.children.splice(parent.children.indexOf(n) + 1, 0, copy);
+  });
+  return copy.id;
+}
+
+// Make one node visible and hide its siblings: the whole of a variant switch
+// (variants are sibling scenes or sibling objects) as a single undo step. The
+// "Immutable" group is the room shell and always stays, like in relations().
+function show(id: string): string {
+  const n = findById(id);
+  if (!n) throw new Error(`unknown node id: ${id}`);
+  const parent = parentOf(n);
+  if (!parent) throw new Error("the root has no siblings to hide");
+  return edit(() => {
+    for (const c of parent.children) {
+      if (c.name !== "Immutable") c.vis = c.id === id ? "visible" : "hidden";
+    }
+  });
+}
+
+const step = (f: () => void): string => {
+  editable();
+  const base = JSON.stringify(ser(S.root));
+  f();
+  return diff(base);
+};
+
 const VIEWS: Record<string, [number, number]> = {
   iso: [Math.PI / 4, Math.atan(1 / Math.SQRT2)],
   top: [Math.PI / 4, Math.PI / 2],
@@ -164,11 +208,19 @@ const help = {
   nodes:
     "S.root is a scene: {type:'scene', id, name, pos, rot, vis, children}. Objects add boxes: Box3[] = {x0,y0,z0,x1,y1,z1,c}, c is 0xRRGGBB. pos is an integer cell offset in the parent frame; rot is 90-degree Y turns 0..3; vis is 'visible'|'deemphasized'|'hidden'. Boxes need no ids; nodes do, and ids must be unique — mint them with uid(), or create nodes with newObject()/newScene(name). Boxes inside one object must be disjoint.",
   api:
-    "S, ser(node), de(serNode), findById(id), worldBounds(id?) -> Box|null in world cells (id omitted = root), load(json) -> Promise, exportJSON(), edit(fn) -> compact diff, undo(), redo(), frameView(), fitNode(node), frameBox(box), view('iso'|'top'|'front'|'side'), outline(id?, {depth=2, hidden=false}), relations(ids?, {within=60}) (overlap = largest overlapping box pair), render('top'|'front'|'side'|'iso', {focus, isolate, labels, grid, size=900, cutY}) -> Promise<PNG dataURL> (half-visible groups are omitted), diff(before), uid(), newObject(), newScene(name?), help.",
+    "S, ser(node), de(serNode), findById(id), worldBounds(id?) -> Box|null in world cells (id omitted = root), load(json) -> Promise, exportJSON({save}) -> envelope JSON string, edit(fn) -> compact diff, undo(), redo() -> compact diff (may be empty), frameView(), fitNode(node), frameBox(box), view('iso'|'top'|'front'|'side'), outline(id?, {depth=2, hidden=false}), render(view, opts) (own entry), relations(ids?, {within=60}) — ids: each listed object (even a hidden one) against every visible object, never against its own container (overlap = largest overlapping box pair, gap = distance to the nearest box), clearance(id, dir) (own entry), clone(id) -> new id, show(id) -> diff, diff(before), uid(), newObject(), newScene(name?), help.",
+  variants:
+    "There is no variant node type: a variant is one sibling subtree per alternative (a scene, or a plain object). Put them under one parent scene whose children are exactly the alternatives, keep one visible and the rest hidden, and switch with show(id) — that node visible, its siblings hidden (an 'Immutable' group stays), one undo step. clone(id) deep-copies a subtree (fresh ids, same pos) as the next sibling, so a new alternative is clone + move + tweak. Both run their own edit step: call them outside edit(fn). relations()/clearance()/renders ignore hidden alternatives, so they follow whichever is shown.",
+  files:
+    "render(view, {save:'plan.webp'}) and exportJSON({save:'plan.voxelier.json'}) hand the file to the browser as a download and return a one-line confirmation instead of the payload. Where it lands is the browser's download directory (a desk browser: ~/Downloads; a Playwright-driven browser: its downloads path). An embedded/automation webview may never write the file to disk — check before relying on it, and otherwise use the returned dataURL.",
+  clearance:
+    "clearance(id, dir) -> {id, name, distance} | null: free cm from one face of the object to the nearest visible object's box ahead of it, or null if nothing is there. dir is a world axis ('+x','-x','+y','-y','+z','-z'). Horizontally the corridor spans the object's other horizontal axis and ignores height — the chair-to-mattress walkway is a real answer even when nothing shares a height band — while the floor under it and ceiling over it are skipped; ±y uses the plan footprint. distance 0 means a box crosses the face. Never returns the object itself or a scene that contains it.",
+  render:
+    "render(view, {focus, isolate, labels, grid, size=900, cutY, save, format='webp'}) -> Promise<dataURL or 'saved …'>. Default webp is ~5x smaller than png (office scene, 900px, top: 20 kB vs 116 kB base64). Labels are object names (falling back to id), and structural shells — a footprint covering a quarter of the scene, i.e. walls, floor, ceiling — are left unlabelled so room-centre labels stay on furniture. Half-visible groups are omitted. Views: top is orthographic looking down with +x right and +z down, front looks along +z, side along +x, iso is a perspective overview. Grid pitch 50 cm, the bar is 1 m.",
   edit:
     "edit(root => { ... }) mutates the live tree. It flushes any pending UI save, snapshots the document, runs fn with S.root, then validates. On success it rebuilds, records one undo step, persists, and returns a compact diff of added/removed/moved/resized/rotated/visibility changes; on an invalid result (missing or duplicate node ids, non-integer positions, empty/inverted or non-integer or overlapping boxes) or a thrown error it restores the snapshot and rethrows. Node references go stale after undo, load or a rejected edit — look them up again inside fn.",
   example:
-    "await voxelier.load(json); voxelier.edit(() => { const o = voxelier.findById('n56'); o.boxes.push({x0:0,y0:0,z0:0,x1:2,y1:2,z1:2,c:0xff0000}); }); voxelier.worldBounds('n56');",
+    "await voxelier.load(json); voxelier.edit(() => { const o = voxelier.findById('n56'); o.boxes.push({x0:0,y0:0,z0:0,x1:2,y1:2,z1:2,c:0xff0000}); }); voxelier.worldBounds('n56'); const alt = voxelier.clone('n44'); voxelier.show(alt); voxelier.clearance(alt, '+z'); await voxelier.render('top', {save:'plan.webp'});",
 };
 
 const api = {
@@ -184,20 +236,24 @@ const api = {
     editable();
     await openScene(json);
   },
-  exportJSON: sceneEnvelope,
+  exportJSON: (opts?: { save?: string }): string => {
+    const data = sceneEnvelope();
+    if (!opts?.save) return data;
+    download(new Blob([data], { type: "application/json" }), opts.save);
+    return `saved ${Math.round(data.length / 1024)} kB of scene JSON to "${
+      opts.save
+    }"`;
+  },
   edit,
   diff,
   outline,
   relations,
+  clearance,
   render: renderView,
-  undo: (): void => {
-    editable();
-    undo();
-  },
-  redo: (): void => {
-    editable();
-    redo();
-  },
+  clone,
+  show,
+  undo: (): string => step(undo),
+  redo: (): string => step(redo),
   frameView,
   fitNode,
   frameBox,

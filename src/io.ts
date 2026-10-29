@@ -16,22 +16,28 @@ export function sceneEnvelope(): string {
   });
 }
 
+// Hand a Blob to the browser as a file download. The object URL is revoked late:
+// revoking right after click() cancels the download in some browsers.
+export function download(blob: Blob, name: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 export function exportScene(): void {
-  const data = sceneEnvelope();
-  const url = URL.createObjectURL(
-    new Blob([data], { type: "application/json" }),
-  );
   const name = S.root.name || "Project"; // matches the root's name in the scene tree
   // local-time stamp "YYYY-MM-DD HHhMMmSSs"
   const p = (n: number) => String(n).padStart(2, "0");
   const t = new Date();
   const stamp = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())} ` +
     `${p(t.getHours())}h${p(t.getMinutes())}m${p(t.getSeconds())}s`;
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${name} -- ${stamp}.voxelier.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  download(
+    new Blob([sceneEnvelope()], { type: "application/json" }),
+    `${name} -- ${stamp}.voxelier.json`,
+  );
 }
 
 export async function openScene(json: string): Promise<void> {
