@@ -207,6 +207,7 @@ export function boxFaceGeo(
                   u1 = Math.min(hi[j][u], fu0 + fw);
                 const v0 = Math.max(lo[j][v], fv0),
                   v1 = Math.min(hi[j][v], fv0 + fh);
+                if (v0 >= v1) continue; // below the field: a negative fill end would wrap
                 for (let iu = u0; iu < u1; iu++) {
                   s.fill(
                     1,
@@ -214,7 +215,7 @@ export function boxFaceGeo(
                     (iu - fu0) * fh + (v1 - fv0),
                   );
                 }
-                any = any || u0 < u1 && v0 < v1;
+                any = any || u0 < u1;
               }
             }
           }

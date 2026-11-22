@@ -434,6 +434,21 @@ test("mesher area matches exposed cell faces", () => {
   }
 });
 
+// An occluder beside a face but outside its AO field (here: just below it, and
+// spanning the field's first column) must not darken the face.
+test("AO ignores occluders outside the face's field", () => {
+  const g = boxFaceGeo([
+    { x0: 0, y0: 20, z0: 0, x1: 40, y1: 60, z1: 2, c: 1 },
+    { x0: -10, y0: 5, z0: 2, x1: 10, y1: 7, z1: 4, c: 1 },
+  ], () => new THREE.Color(1, 1, 1), true)!;
+  const p = g.getAttribute("position"), c = g.getAttribute("color");
+  for (let i = 0; i < p.count; i++) {
+    if (p.getZ(i) === 2 && p.getY(i) >= 20) {
+      assert(c.getX(i) === 1, `face vertex darkened to ${c.getX(i)}`);
+    }
+  }
+});
+
 // addBox's face-merge (absorb): re-adding the erased cell of a large box must
 // heal it back into exactly one box, not leave the six carve fragments — and
 // stacking exactly-abutting same-colour rows must coalesce instead of piling up.
